@@ -1,0 +1,7 @@
+flask
+flask-cors
+google-genai
+yfinance
+mplfinance
+playwright
+gunicorn

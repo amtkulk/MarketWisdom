@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.db
+backend/__pycache__/
+backend/*.pyc
+backend/watchlist.db
