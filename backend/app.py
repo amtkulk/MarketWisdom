@@ -890,5 +890,19 @@ def api_chartink():
         "common_count": len(common),
     })
 
+from flask import send_from_directory
+
+@app.route("/")
+def index():
+    return send_from_directory("../frontend", "index.html")
+
+@app.route("/<path:path>")
+def serve_frontend(path):
+    # Serve static file if it exists, otherwise fallback to index.html
+    static_path = os.path.join(os.path.dirname(__file__), "..", "frontend", path)
+    if os.path.exists(static_path) and os.path.isfile(static_path):
+        return send_from_directory(os.path.join("..", "frontend"), path)
+    return send_from_directory(os.path.join("..", "frontend"), "index.html")
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
