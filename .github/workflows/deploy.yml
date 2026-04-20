@@ -30,19 +30,7 @@ jobs:
         run: |
           if ! aws iam get-role --role-name ${{ env.ROLE_NAME }} 2>/dev/null; then
             echo "Creating IAM Role for App Runner to access ECR..."
-            cat <<EOF > trust-policy.json
-            {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Principal": { "Service": "build.apprunner.amazonaws.com" },
-                  "Action": "sts:AssumeRole"
-                }
-              ]
-            }
-          EOF
-            aws iam create-role --role-name ${{ env.ROLE_NAME }} --assume-role-policy-document file://trust-policy.json
+            aws iam create-role --role-name ${{ env.ROLE_NAME }} --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"build.apprunner.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
             aws iam attach-role-policy --role-name ${{ env.ROLE_NAME }} --policy-arn arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
             sleep 15 # Wait for role to propagate
           else
