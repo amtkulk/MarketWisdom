@@ -328,6 +328,7 @@ def fetch_gemini(company):
 
         except Exception as ex:
             err = str(ex)
+            last_err = err
             if "429" in err or "quota" in err.lower() or "RESOURCE_EXHAUSTED" in err:
                 continue
             if "404" in err or "not found" in err.lower():
@@ -338,7 +339,9 @@ def fetch_gemini(company):
                 continue
             return None, f"Gemini error: {err[:200]}"
 
-    return None, f"All Gemini models failed. Try again."
+    if "429" in last_err or "quota" in last_err.lower() or "RESOURCE_EXHAUSTED" in last_err:
+        return None, "Gemini API Free Tier rate limit exceeded (15 requests/minute). Please wait 60 seconds and try again."
+    return None, f"All Gemini models failed. Error: {last_err[:200]}"
 
 
 def fetch_pe(ticker):
