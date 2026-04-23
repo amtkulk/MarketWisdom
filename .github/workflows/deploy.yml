@@ -68,3 +68,5 @@ jobs:
           cpu: 1
           memory: 2
           port: 5000
+          runtime-environment-variables: |
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
