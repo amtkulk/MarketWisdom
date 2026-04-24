@@ -10,7 +10,7 @@ app = Flask(__name__)
 # Enable CORS for all routes so the React frontend can talk to this API
 CORS(app)
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "") # Fetch from environment (GitHub Secrets/App Runner Env)
 
 # Initialize SQLite database
 init_db()
