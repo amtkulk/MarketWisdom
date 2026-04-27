@@ -27,9 +27,11 @@ jobs:
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_A31B462452F74B12AA44D76C2F9A835C }}
 
       - name: Log in to ACR
-        run: |
-          # Use the Admin credentials we enabled earlier
-          az acr login --name ${{ env.ACR_NAME }}
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ env.ACR_NAME }}.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
 
       - name: Build and Push Docker Image
         run: |
