@@ -48,4 +48,10 @@ jobs:
 
       - name: Configure Web App Settings
         run: |
-          az webapp config appsettings set --name ${{ env.AZURE_WEBAPP_NAME }} --resource-group MarketWisdom --settings GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} PORT=5000 WEBSITES_PORT=5000
+          az webapp config appsettings set --name ${{ env.AZURE_WEBAPP_NAME }} --resource-group MarketWisdom --settings \
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
+            PORT=5000 \
+            WEBSITES_PORT=5000 \
+            DOCKER_REGISTRY_SERVER_URL="https://${{ env.ACR_NAME }}.azurecr.io" \
+            DOCKER_REGISTRY_SERVER_USERNAME="${{ secrets.ACR_USERNAME }}" \
+            DOCKER_REGISTRY_SERVER_PASSWORD="${{ secrets.ACR_PASSWORD }}"
