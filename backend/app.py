@@ -284,63 +284,68 @@ def fetch_gemini(company):
     )
 
     client   = genai.Client(api_key=GEMINI_API_KEY)
-    MODELS   = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash"]
+    # Target models for 2026. Fallback from latest/fastest to most stable.
+    MODELS   = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
     last_err = "No models available"
 
     for model in MODELS:
-        try:
-            cfg_args = {"temperature": 0.2, "max_output_tokens": 6000}
-            if "2.5" in model:
-                try:
-                    cfg_args["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
-                except Exception:
-                    pass
+        for attempt in range(3): # Try each model 3 times with backoff if 503
+            try:
+                cfg_args = {"temperature": 0.2, "max_output_tokens": 6000}
+                if "2.5" in model or "3.0" in model: # Future proofing
+                    try:
+                        cfg_args["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+                    except Exception:
+                        pass
 
-            resp = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=types.GenerateContentConfig(**cfg_args)
-            )
+                resp = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(**cfg_args)
+                )
 
-            text = ""
-            try: text = resp.text or ""
-            except Exception: pass
-
-            if not text:
-                try:
-                    for cand in resp.candidates:
-                        for part in cand.content.parts:
-                            if hasattr(part, "text") and part.text and len(part.text) > 30:
-                                text += part.text
+                text = ""
+                try: text = resp.text or ""
                 except Exception: pass
 
-            if not text:
-                continue
+                if not text:
+                    try:
+                        for cand in resp.candidates:
+                            for part in cand.content.parts:
+                                if hasattr(part, "text") and part.text and len(part.text) > 30:
+                                    text += part.text
+                    except Exception: pass
 
-            clean = text.replace("```json","").replace("```","").strip()
-            s = clean.find("{")
-            e = clean.rfind("}")
-            if s == -1 or e == -1:
-                continue
+                if not text:
+                    continue
 
-            data = json.loads(clean[s:e+1])
-            return data, None
+                clean = text.replace("```json","").replace("```","").strip()
+                s = clean.find("{")
+                e = clean.rfind("}")
+                if s == -1 or e == -1:
+                    continue
 
-        except Exception as ex:
-            err = str(ex)
-            last_err = err
-            if "429" in err or "quota" in err.lower() or "RESOURCE_EXHAUSTED" in err:
-                continue
-            if "404" in err or "not found" in err.lower():
-                continue
-            if "503" in err or "unavailable" in err.lower() or "500" in err:
-                import time
-                time.sleep(1) # tiny delay before fallback
-                continue
-            return None, f"Gemini error: {err[:200]}"
+                data = json.loads(clean[s:e+1])
+                return data, None
+
+            except Exception as ex:
+                err = str(ex)
+                last_err = err
+                # 429 = Rate Limit, 503 = Overloaded, 500 = Internal Error
+                if "429" in err or "quota" in err.lower() or "RESOURCE_EXHAUSTED" in err:
+                    time.sleep(2 * (attempt + 1)) # Wait longer for quota
+                    continue 
+                if "503" in err or "unavailable" in err.lower() or "500" in err:
+                    time.sleep(1 * (attempt + 1)) # Exponential backoff for demand
+                    continue
+                if "404" in err or "not found" in err.lower():
+                    break # Skip to next model immediately for 404
+                
+                # For other errors, skip to next model
+                break
 
     if "429" in last_err or "quota" in last_err.lower() or "RESOURCE_EXHAUSTED" in last_err:
-        return None, "Gemini API Free Tier rate limit exceeded (15 requests/minute). Please wait 60 seconds and try again."
+        return None, "Gemini API Free Tier rate limit exceeded. Please wait a moment and try again."
     return None, f"All Gemini models failed. Error: {last_err[:200]}"
 
 

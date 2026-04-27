@@ -1,0 +1,49 @@
+name: Deploy to Azure App Service
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AZURE_WEBAPP_NAME: MarketWisdom
+  ACR_NAME: marketwisdomregistry
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_4A14E78867DA44A99D7615A4EAEF94C0 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_001148C2EEBF42C0942C80DBE31DCCA9 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_A31B462452F74B12AA44D76C2F9A835C }}
+
+      - name: Log in to ACR
+        run: |
+          # Use the Admin credentials we enabled earlier
+          az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE_TAG=${{ github.sha }}
+          REGISTRY_SERVER=$(az acr show --name ${{ env.ACR_NAME }} --query loginServer -o tsv)
+          docker build -t $REGISTRY_SERVER/market-research:$IMAGE_TAG -t $REGISTRY_SERVER/market-research:latest .
+          docker push $REGISTRY_SERVER/market-research --all-tags
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          images: ${{ env.ACR_NAME }}.azurecr.io/market-research:${{ github.sha }}
+
+      - name: Configure Web App Settings
+        run: |
+          az webapp config appsettings set --name ${{ env.AZURE_WEBAPP_NAME }} --resource-group MarketWisdom --settings GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} PORT=5000
