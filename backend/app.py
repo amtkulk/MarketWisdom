@@ -284,8 +284,8 @@ def fetch_gemini(company):
     )
 
     client   = genai.Client(api_key=GEMINI_API_KEY)
-    # Target models for 2026. Fallback from latest/fastest to most stable.
-    MODELS   = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+    # Target models for 2026. Updated to handle current versioning.
+    MODELS   = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash-native-audio-latest"]
     last_err = "No models available"
 
     for model in MODELS:
