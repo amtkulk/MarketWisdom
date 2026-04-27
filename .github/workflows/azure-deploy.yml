@@ -36,7 +36,7 @@ jobs:
       - name: Build and Push Docker Image
         run: |
           IMAGE_TAG=${{ github.sha }}
-          REGISTRY_SERVER=$(az acr show --name ${{ env.ACR_NAME }} --query loginServer -o tsv)
+          REGISTRY_SERVER=${{ env.ACR_NAME }}.azurecr.io
           docker build -t $REGISTRY_SERVER/market-research:$IMAGE_TAG -t $REGISTRY_SERVER/market-research:latest .
           docker push $REGISTRY_SERVER/market-research --all-tags
 
