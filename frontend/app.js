@@ -79,6 +79,11 @@ const app = {
                     Market Research Hub
                 </h1>
                 <p style="color:var(--text-secondary);font-size:14px">Powered by Google Gemini · yfinance · Screener.in · Chartink</p>
+                <div style="margin-top: 24px;">
+                    <a href="#" target="_blank" style="display:inline-flex;align-items:center;gap:8px;background:#2AABEE;color:white;padding:10px 20px;border-radius:24px;text-decoration:none;font-weight:600;font-size:14px;box-shadow: 0 4px 15px rgba(42, 171, 238, 0.3);">
+                        <span style="font-size:18px;">✈️</span> This is our Telegram channel, you can visit this link for more details.
+                    </a>
+                </div>
             </div>
             <div class="two-col">
                 <a href="#stock">

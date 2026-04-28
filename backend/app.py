@@ -285,7 +285,7 @@ def fetch_gemini(company):
 
     client   = genai.Client(api_key=GEMINI_API_KEY)
     # Target models for 2026. Updated to handle current versioning.
-    MODELS   = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash-native-audio-latest"]
+    MODELS   = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     last_err = "No models available"
 
     for model in MODELS:
@@ -380,7 +380,7 @@ def fetch_stock_action_gemini(company):
     )
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    MODELS = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash"]
+    MODELS = ["gemini-2.5-flash", "gemini-2.0-flash-lite", "gemini-2.0-flash"]
     for model in MODELS:
         try:
             cfg_args = {"temperature": 0.2, "max_output_tokens": 1000}
@@ -693,7 +693,7 @@ def api_stock():
 
         data, err = fetch_gemini(company)
         if err:
-            return jsonify({"error": err}), 500
+            return jsonify({"error": err}), 400
 
         t = ticker or data.get("ticker","")
         if t:
@@ -736,7 +736,7 @@ def api_stock():
         import traceback
         tb = traceback.format_exc()
         print(f"Server Error: {ex}\n{tb}")
-        return jsonify({"error": f"Server error: {str(ex)}"}), 500
+        return jsonify({"error": f"Server error: {str(ex)}"}), 400
 
 
 @app.route("/api/stock_action", methods=["POST"])
@@ -761,7 +761,7 @@ def api_stock_action():
     except Exception as ex:
         import traceback
         print(traceback.format_exc())
-        return jsonify({"error": str(ex)}), 500
+        return jsonify({"error": str(ex)}), 400
 
 
 @app.route("/api/rate", methods=["POST"])
@@ -780,7 +780,7 @@ def api_rate():
         add_or_update_stock(ticker, name, sector, price, rating)
         return jsonify({"ok": True})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": str(e)}), 400
 
 
 @app.route("/api/watchlist/delete", methods=["POST"])
@@ -791,7 +791,7 @@ def api_watchlist_delete():
             delete_stock(ticker)
         return jsonify({"ok": True})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": str(e)}), 400
 
 
 @app.route("/api/watchlist/data")
@@ -800,7 +800,7 @@ def api_watchlist_data():
         stocks = get_all_stocks()
         return jsonify(stocks)
     except Exception as e:
-         return jsonify({"error": str(e)}), 500
+         return jsonify({"error": str(e)}), 400
 
 def fetch_vix_support_resistance(nifty_price):
     try:
@@ -855,7 +855,7 @@ def api_nifty():
         if fii: result["fii"] = fii
 
         if not result:
-            return jsonify({"error": "Could not fetch any data from NSE. Check internet connection."}), 500
+            return jsonify({"error": "Could not fetch any data from NSE. Check internet connection."}), 400
 
         result["timestamp"] = datetime.now().strftime("%d %b %Y  %H:%M:%S")
         return jsonify(result)
@@ -863,7 +863,7 @@ def api_nifty():
     except Exception as e:
         import traceback
         print(traceback.format_exc())
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e)}), 400
 
 
 @app.route("/api/chartink", methods=["POST"])
@@ -878,10 +878,10 @@ def api_chartink():
         return jsonify({"error": "Both URLs are required"}), 400
 
     list1, err1 = scrape_chartink(url1, max_pages=3)
-    if err1: return jsonify({"error": f"Screener 1 error: {err1}"}), 500
+    if err1: return jsonify({"error": f"Screener 1 error: {err1}"}), 400
 
     list2, err2 = scrape_chartink(url2, max_pages=3)
-    if err2: return jsonify({"error": f"Screener 2 error: {err2}"}), 500
+    if err2: return jsonify({"error": f"Screener 2 error: {err2}"}), 400
 
     set1   = set(list1)
     set2   = set(list2)
