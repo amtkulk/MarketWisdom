@@ -16,5 +16,5 @@ COPY . /app
 # Switch to backend dir to run app.py
 WORKDIR /app/backend
 
-# Run with gunicorn on the dynamic PORT provided by the host, defaulting to 5000
-CMD ["sh", "-c", "gunicorn -w 2 --timeout 300 -b 0.0.0.0:${PORT:-5000} app:app"]
+# Run with waitress on the dynamic PORT provided by the host, defaulting to 5000
+CMD ["sh", "-c", "waitress-serve --port=${PORT:-5000} app:app"]
