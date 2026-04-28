@@ -134,7 +134,6 @@ const app = {
             <div class="card">
                 <div style="display:flex;gap:10px;flex-wrap:wrap">
                     <input type="text" id="srch-company" placeholder="Company name e.g. Reliance Industries" style="flex:2;min-width:200px"/>
-                    <input type="text" id="srch-ticker" placeholder="NSE Ticker e.g. RELIANCE" style="flex:1;min-width:140px"/>
                     <button class="btn" id="btn-analyse">Analyse</button>
                 </div>
             </div>
@@ -143,7 +142,7 @@ const app = {
 
         document.getElementById('btn-analyse').addEventListener('click', async (e) => {
             const company = document.getElementById('srch-company').value;
-            const ticker = document.getElementById('srch-ticker').value;
+            const ticker = ""; // Automatically resolved by backend
             if (!company) return alert('Please enter a company name');
             
             const btn = e.target;
@@ -180,7 +179,6 @@ const app = {
             <div class="card">
                 <div style="display:flex;gap:10px;flex-wrap:wrap">
                     <input type="text" id="action-company" placeholder="Company name e.g. Reliance Industries" style="flex:2;min-width:200px"/>
-                    <input type="text" id="action-ticker" placeholder="NSE Ticker e.g. RELIANCE" style="flex:1;min-width:140px"/>
                     <button class="btn" id="btn-action-analyse">Fetch Action</button>
                 </div>
             </div>
@@ -189,8 +187,8 @@ const app = {
 
         document.getElementById('btn-action-analyse').addEventListener('click', async (e) => {
             const company = document.getElementById('action-company').value.trim();
-            const ticker = document.getElementById('action-ticker').value.trim();
-            if (!company || !ticker) return alert('Please enter both company name and ticker');
+            const ticker = ""; // Automatically resolved by backend
+            if (!company) return alert('Please enter a company name');
             
             const btn = e.target;
             const resDiv = document.getElementById('action-result');

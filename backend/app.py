@@ -405,6 +405,39 @@ def fetch_stock_action_gemini(company):
             continue
     return "No recent block deal information could be found or fetched."
 
+def resolve_ticker_gemini(company):
+    if not GEMINI_API_KEY:
+        return ""
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        return ""
+
+    prompt = f"Return ONLY the exact NSE (National Stock Exchange of India) ticker symbol for the company '{company}'. Example: For Reliance Industries return RELIANCE. Return strictly the uppercase ticker text and absolutely nothing else."
+    
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    MODELS = ["gemini-flash-latest", "gemini-pro-latest", "gemini-2.5-flash-lite"]
+    for model in MODELS:
+        try:
+            cfg_args = {"temperature": 0.0, "max_output_tokens": 10}
+            resp = client.models.generate_content(
+                model=model, contents=prompt, config=types.GenerateContentConfig(**cfg_args)
+            )
+            text = ""
+            try: text = resp.text or ""
+            except Exception: pass
+            if not text:
+                try:
+                    for cand in resp.candidates:
+                        for part in cand.content.parts:
+                            if hasattr(part, "text") and part.text: text += part.text
+                except Exception: pass
+            if text:
+                return text.strip().upper()
+        except Exception: pass
+    return ""
+
 
 def scrape_chartink(url, max_pages=3):
     try:
@@ -746,8 +779,13 @@ def api_stock_action():
         company = (body.get("company","") or "").strip()
         ticker = (body.get("ticker","") or "").strip().upper()
 
-        if not company or not ticker:
-            return jsonify({"error": "Company name and ticker are required"}), 400
+        if not company:
+            return jsonify({"error": "Company name is required"}), 400
+
+        if not ticker:
+            ticker = resolve_ticker_gemini(company)
+            if not ticker:
+                return jsonify({"error": f"Could not automatically find NSE ticker for {company}. Please try a more specific name."}), 400
 
         pe = fetch_pe(ticker)
         action_summary = fetch_stock_action_gemini(company)
