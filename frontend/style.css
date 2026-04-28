@@ -94,6 +94,82 @@ nav a:hover, nav a.active {
     border-color: var(--text-accent);
 }
 
+.feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+    margin-top: 24px;
+}
+
+.feature-card {
+    background: linear-gradient(145deg, rgba(15,23,42,0.9), rgba(15,23,42,0.4));
+    border: 1px solid rgba(99, 102, 241, 0.15);
+    border-radius: 16px;
+    padding: 24px;
+    text-decoration: none;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.feature-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--card-color, #6366f1), transparent);
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.feature-card:hover {
+    transform: translateY(-5px);
+    border-color: var(--card-color, #6366f1);
+    box-shadow: 0 10px 30px -10px var(--card-color, rgba(99,102,241,0.2));
+}
+
+.feature-card:hover::before {
+    opacity: 1;
+}
+
+.feature-icon {
+    font-size: 36px;
+    margin-bottom: 16px;
+    background: rgba(255,255,255,0.05);
+    width: 60px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 14px;
+}
+
+.feature-title {
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.feature-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    flex-grow: 1;
+}
+
+.feature-link {
+    margin-top: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--card-color, #6366f1);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
 /* Typography */
 .section-title {
     font-size: 11px;

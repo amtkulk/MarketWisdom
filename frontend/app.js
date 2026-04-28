@@ -85,37 +85,40 @@ const app = {
                     </a>
                 </div>
             </div>
-            <div class="two-col">
-                <a href="#stock">
-                    <div class="card" style="cursor:pointer;border-color:rgba(99,102,241,0.3)">
-                        <div style="font-size:32px;margin-bottom:12px">🔍</div>
-                        <div style="font-size:17px;font-weight:700;color:var(--text-primary);margin-bottom:8px">Stock Research</div>
-                        <div style="font-size:13px;color:var(--text-secondary);line-height:1.6">
-                            Enter any company name and get live price, CAGR, RSI, chart patterns,
-                            shareholding, quarterly results, fundamentals and news — all in one page.
-                        </div>
-                        <div style="margin-top:14px;font-size:12px;color:var(--text-accent)">Click to open →</div>
-                    </div>
+            <div class="feature-grid">
+                <a href="#stock" class="feature-card" style="--card-color: #818cf8">
+                    <div class="feature-icon">🔍</div>
+                    <div class="feature-title">Stock Research</div>
+                    <div class="feature-desc">This page will give user a high level data about fundaments about the company chart information and recent news in last 6months time period.</div>
+                    <div class="feature-link">Explore →</div>
                 </a>
-                <a href="#nifty">
-                    <div class="card" style="cursor:pointer;border-color:rgba(16,185,129,0.3)">
-                        <div style="font-size:32px;margin-bottom:12px">📈</div>
-                        <div style="font-size:17px;font-weight:700;color:var(--text-primary);margin-bottom:8px">Nifty Analysis</div>
-                        <div style="font-size:13px;color:var(--text-secondary);line-height:1.6">
-                            Live PCR, FII Data, and technical charts to gauge overall market sentiment.
-                        </div>
-                        <div style="margin-top:14px;font-size:12px;color:var(--green)">Click to open →</div>
-                    </div>
+                
+                <a href="#action" class="feature-card" style="--card-color: #f59e0b">
+                    <div class="feature-icon">⚡</div>
+                    <div class="feature-title">Stock Action</div>
+                    <div class="feature-desc">This page will give you news or Conference call details or company announcements in recent time.</div>
+                    <div class="feature-link">View Action →</div>
                 </a>
-                <a href="#action">
-                    <div class="card" style="cursor:pointer;border-color:rgba(245,158,11,0.3)">
-                        <div style="font-size:32px;margin-bottom:12px">⚡</div>
-                        <div style="font-size:17px;font-weight:700;color:var(--text-primary);margin-bottom:8px">Stock Action</div>
-                        <div style="font-size:13px;color:var(--text-secondary);line-height:1.6">
-                            Get latest PE ratio, recent news, and quick summaries of block deals or change of hands.
-                        </div>
-                        <div style="margin-top:14px;font-size:12px;color:var(--yellow)">Click to open →</div>
-                    </div>
+
+                <a href="#chartink" class="feature-card" style="--card-color: #c084fc">
+                    <div class="feature-icon">📋</div>
+                    <div class="feature-title">Chartink Comparator</div>
+                    <div class="feature-desc">This will give you common stocks between my favourite screeners.</div>
+                    <div class="feature-link">Compare Now →</div>
+                </a>
+                
+                <a href="#nifty" class="feature-card" style="--card-color: #10b981">
+                    <div class="feature-icon">📈</div>
+                    <div class="feature-title">Nifty Analysis</div>
+                    <div class="feature-desc">This page gives Nifty EMA data and weekly PCR and Nifty support Resistance based on VIX.</div>
+                    <div class="feature-link">Analyze Trend →</div>
+                </a>
+                
+                <a href="#watchlist" class="feature-card" style="--card-color: #ec4899">
+                    <div class="feature-icon">⭐</div>
+                    <div class="feature-title">WatchList</div>
+                    <div class="feature-desc">This page gives your saved watchlist and stock price when you added in watchlist and what is CMP.</div>
+                    <div class="feature-link">View Saved →</div>
                 </a>
             </div>
             <footer>Market Research Hub · For informational purposes only · Not investment advice</footer>
