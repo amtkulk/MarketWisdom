@@ -285,7 +285,7 @@ def fetch_gemini(company):
 
     client   = genai.Client(api_key=GEMINI_API_KEY)
     # Target models for 2026. Updated to handle current versioning.
-    MODELS   = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    MODELS   = ["gemini-flash-latest", "gemini-pro-latest", "gemini-2.5-flash-lite"]
     last_err = "No models available"
 
     for model in MODELS:
@@ -380,7 +380,7 @@ def fetch_stock_action_gemini(company):
     )
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    MODELS = ["gemini-2.5-flash", "gemini-2.0-flash-lite", "gemini-2.0-flash"]
+    MODELS = ["gemini-flash-latest", "gemini-pro-latest", "gemini-2.5-flash-lite"]
     for model in MODELS:
         try:
             cfg_args = {"temperature": 0.2, "max_output_tokens": 1000}
