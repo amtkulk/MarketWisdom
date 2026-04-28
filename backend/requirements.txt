@@ -5,3 +5,5 @@ yfinance
 mplfinance
 playwright
 waitress
+pymongo
+certifi
