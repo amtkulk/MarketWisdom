@@ -411,14 +411,14 @@ const app = {
             await api.rateStock(ticker, company, sector, price, rating);
             
             // Update UI buttons visually
-            const btnContainer = document.querySelector(`#rating-msg-${ticker}`).parentElement;
+            const msg = document.getElementById(`rating-msg-${ticker}`);
+            const btnContainer = msg.parentElement;
             btnContainer.querySelectorAll('.rating-btn').forEach(btn => btn.classList.remove('active'));
             
             if (rating === 'good') btnContainer.querySelector('.r-good').classList.add('active');
             if (rating === 'average') btnContainer.querySelector('.r-avg').classList.add('active');
             if (rating === 'bad') btnContainer.querySelector('.r-bad').classList.add('active');
             
-            const msg = document.getElementById(`rating-msg-${ticker}`);
             msg.textContent = 'Saved!';
             setTimeout(() => msg.textContent = '', 2000);
         } catch (e) {
