@@ -798,6 +798,16 @@ def api_watchlist_delete():
 def api_watchlist_data():
     try:
         stocks = get_all_stocks()
+        
+        import concurrent.futures
+        def enrich(stock):
+            live_p, _, _ = fetch_live_price(stock["ticker"])
+            stock["live_price"] = live_p if live_p else "N/A"
+            return stock
+            
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            stocks = list(executor.map(enrich, stocks))
+            
         return jsonify(stocks)
     except Exception as e:
          return jsonify({"error": str(e)}), 400

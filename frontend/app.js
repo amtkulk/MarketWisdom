@@ -464,12 +464,28 @@ const app = {
             }
 
             const rows = data.map((s, i) => {
+                let livePriceHtml = '';
+                if (s.live_price !== "N/A" && s.price !== "N/A") {
+                    const savedP = parseFloat(s.price.replace(/,/g, ''));
+                    const liveP = parseFloat(s.live_price);
+                    if (!isNaN(savedP) && !isNaN(liveP) && savedP > 0) {
+                        const pct = ((liveP - savedP) / savedP) * 100;
+                        const col = pct >= 0 ? 'var(--green)' : 'var(--red)';
+                        const sign = pct >= 0 ? '+' : '';
+                        livePriceHtml = `<div style="font-size:11px;color:${col};font-weight:600;margin-top:4px">${sign}${pct.toFixed(2)}%</div>`;
+                    }
+                }
+                
                 return `
                     <tr>
                         <td>${i+1}</td>
                         <td><b>${s.company_name}</b><br><span style="font-size:11px;color:var(--text-secondary)">${s.ticker}</span></td>
                         <td>${s.sector}</td>
-                        <td>Rs.${s.price}</td>
+                        <td>
+                            <div style="font-size:11px;color:var(--text-secondary)">Saved: Rs.${s.price}</div>
+                            <div style="font-weight:600;margin-top:2px">Live: Rs.${s.live_price}</div>
+                            ${livePriceHtml}
+                        </td>
                         <td>${getRatingBadge(s.rating)}</td>
                         <td><button onclick="app.removeWatchlist('${s.ticker}')" style="background:rgba(248,113,113,0.2);color:var(--red);border:none;padding:5px 10px;border-radius:5px;cursor:pointer;">Remove</button></td>
                     </tr>
