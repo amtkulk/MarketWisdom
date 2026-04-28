@@ -13,7 +13,8 @@ const api = {
             body: JSON.stringify({ company, ticker })
         });
         if (!res.ok) {
-            const err = await res.json();
+            let err;
+            try { err = await res.json(); } catch(e) { throw new Error(`Server returned HTML or invalid JSON (Status: ${res.status}). The task likely timed out on the cloud.`); }
             throw new Error(err.error || 'Failed to fetch stock data');
         }
         return res.json();
@@ -26,7 +27,8 @@ const api = {
             body: JSON.stringify({ company, ticker })
         });
         if (!res.ok) {
-            const err = await res.json();
+            let err;
+            try { err = await res.json(); } catch(e) { throw new Error(`Server returned HTML or invalid JSON (Status: ${res.status}). The task likely timed out.`); }
             throw new Error(err.error || 'Failed to fetch stock action');
         }
         return res.json();
@@ -35,7 +37,8 @@ const api = {
     async fetchNifty() {
         const res = await fetch(`${API_BASE_URL}/nifty`);
         if (!res.ok) {
-            const err = await res.json();
+            let err;
+            try { err = await res.json(); } catch(e) { throw new Error(`Server returned HTML or invalid JSON (Status: ${res.status}).`); }
             throw new Error(err.error || 'Failed to fetch Nifty data');
         }
         return res.json();
@@ -48,7 +51,8 @@ const api = {
             body: JSON.stringify({ url1, label1, url2, label2 })
         });
         if (!res.ok) {
-            const err = await res.json();
+            let err;
+            try { err = await res.json(); } catch(e) { throw new Error(`Server returned HTML or invalid JSON (Status: ${res.status}). The scrape likely timed out.`); }
             throw new Error(err.error || 'Failed to compare screeners');
         }
         return res.json();

@@ -17,4 +17,4 @@ COPY . /app
 WORKDIR /app/backend
 
 # Run with gunicorn on the dynamic PORT provided by the host, defaulting to 5000
-CMD ["sh", "-c", "gunicorn -w 2 -b 0.0.0.0:${PORT:-5000} app:app"]
+CMD ["sh", "-c", "gunicorn -w 2 --timeout 300 -b 0.0.0.0:${PORT:-5000} app:app"]
