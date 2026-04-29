@@ -56,6 +56,9 @@ const app = {
             case 'nifty':
                 this.renderNifty(container);
                 break;
+            case 'fno':
+                this.renderFnoDashboard(container);
+                break;
             case 'watchlist':
                 this.renderWatchlist(container);
                 break;
@@ -112,6 +115,13 @@ const app = {
                     <div class="feature-title">Nifty Analysis</div>
                     <div class="feature-desc">This page gives Nifty EMA data and weekly PCR and Nifty support Resistance based on VIX.</div>
                     <div class="feature-link">Analyze Trend →</div>
+                </a>
+
+                <a href="#fno" class="feature-card" style="--card-color: #f59e0b">
+                    <div class="feature-icon">⛓️</div>
+                    <div class="feature-title">Options Dashboard</div>
+                    <div class="feature-desc">Live NSE Option Chain data, Put-Call Ratio (PCR), Max Pain, and Major Support/Resistance levels.</div>
+                    <div class="feature-link">View Option Chain →</div>
                 </a>
                 
                 <a href="#watchlist" class="feature-card" style="--card-color: #ec4899">
@@ -424,6 +434,96 @@ const app = {
         } catch (e) {
             alert("Failed to save rating: " + e.message);
         }
+    },
+
+    renderFnoDashboard(container) {
+        container.innerHTML = `
+            <div style="margin-bottom:24px">
+                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">F&O Dashboard</h2>
+                <p style="font-size:13px;color:var(--text-secondary)">Live Option Chain from NSE India · PCR · Max Pain</p>
+            </div>
+            
+            <div class="card" style="margin-bottom:20px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                <label style="font-size:14px;font-weight:600;">Select Index:</label>
+                <select id="fno-index" class="btn" style="background:var(--bg-card); color:var(--text-primary); border:1px solid var(--border-color);">
+                    <option value="NIFTY">NIFTY</option>
+                    <option value="BANKNIFTY">BANKNIFTY</option>
+                    <option value="FINNIFTY">FINNIFTY</option>
+                    <option value="MIDCPNIFTY">MIDCPNIFTY</option>
+                </select>
+                <button id="btn-fetch-oc" class="btn" style="background:var(--accent-color);color:white">Load Live Data</button>
+            </div>
+            
+            <div id="fno-result"></div>
+        `;
+        
+        document.getElementById('btn-fetch-oc').addEventListener('click', async () => {
+            const sym = document.getElementById('fno-index').value;
+            const resDiv = document.getElementById('fno-result');
+            resDiv.innerHTML = '<div style="padding:40px;text-align:center"><div class="spinner"></div><div style="margin-top:10px;color:var(--text-secondary)">Fetching Live Data from NSE...</div></div>';
+            
+            try {
+                const data = await api.fetchOptionChain(sym);
+                if(data.error) throw new Error(data.error);
+                
+                // Render top stats
+                let html = `
+                <div class="stat-grid" style="margin-bottom:24px;">
+                    <div class="stat-card" style="border-left:4px solid var(--accent-color);">
+                        <div class="stat-label">Live PCR</div>
+                        <div class="stat-val" style="color: ${data.pcr > 1.2 ? 'var(--green)' : data.pcr < 0.8 ? 'var(--red)' : 'var(--yellow)'}">${data.pcr}</div>
+                    </div>
+                    <div class="stat-card" style="border-left:4px solid var(--red);">
+                        <div class="stat-label">Max Pain Strike</div>
+                        <div class="stat-val">${data.max_pain}</div>
+                    </div>
+                    <div class="stat-card" style="border-left:4px solid var(--green);">
+                        <div class="stat-label">Major Support (Put OI)</div>
+                        <div class="stat-val">${data.support_strike}</div>
+                    </div>
+                    <div class="stat-card" style="border-left:4px solid var(--red);">
+                        <div class="stat-label">Major Resistance (Call OI)</div>
+                        <div class="stat-val">${data.resistance_strike}</div>
+                    </div>
+                </div>
+                
+                <h3 style="margin-bottom:12px;font-size:16px;">Option Chain near ATM (${data.underlying})</h3>
+                <div style="overflow-x:auto;">
+                    <table style="width:100%; border-collapse:collapse; background:var(--bg-card); border-radius:8px; overflow:hidden;">
+                        <thead>
+                            <tr style="background:rgba(255,255,255,0.05);">
+                                <th style="padding:10px;text-align:right;color:var(--text-secondary);">Call OI</th>
+                                <th style="padding:10px;text-align:right;color:var(--text-secondary);">LTP</th>
+                                <th style="padding:10px;text-align:center;color:white;background:rgba(255,255,255,0.1);">STRIKE</th>
+                                <th style="padding:10px;text-align:left;color:var(--text-secondary);">LTP</th>
+                                <th style="padding:10px;text-align:left;color:var(--text-secondary);">Put OI</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+                
+                data.chain.forEach(row => {
+                    const isAtm = Math.abs(row.strike - data.underlying) < 50;
+                    const bgRow = isAtm ? 'background:rgba(16, 185, 129, 0.15); font-weight:bold;' : 'border-bottom:1px solid rgba(255,255,255,0.05);';
+                    html += `
+                        <tr style="${bgRow}">
+                            <td style="padding:10px;text-align:right;color:var(--red);">${row.ce_oi.toLocaleString()}</td>
+                            <td style="padding:10px;text-align:right;">₹${row.ce_price.toFixed(1)}</td>
+                            <td style="padding:10px;text-align:center;background:rgba(255,255,255,0.05);">${row.strike}</td>
+                            <td style="padding:10px;text-align:left;">₹${row.pe_price.toFixed(1)}</td>
+                            <td style="padding:10px;text-align:left;color:var(--green);">${row.pe_oi.toLocaleString()}</td>
+                        </tr>
+                    `;
+                });
+                
+                html += `</tbody></table></div>`;
+                html += `<div style="text-align:right;margin-top:10px;font-size:11px;color:var(--text-secondary)">Data as of: ${data.timestamp}</div>`;
+                
+                resDiv.innerHTML = html;
+            } catch(e) {
+                resDiv.innerHTML = `<div class="error">Failed to load NSE Data: ${e.message}</div>`;
+            }
+        });
     },
 
     renderWatchlist(container) {

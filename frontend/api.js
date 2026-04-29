@@ -82,6 +82,23 @@ const api = {
         return data;
     },
 
+    async fetchOptionChain(symbol = 'NIFTY') {
+        const cacheKey = `nse_oc_${symbol}`;
+        const cached = Cache.get(cacheKey);
+        if (cached) return cached;
+
+        const res = await fetch(`${API_BASE_URL}/nse/option_chain?symbol=${symbol}`);
+        if (!res.ok) {
+            let err;
+            try { err = await res.json(); } catch(e) { throw new Error(`Server returned HTML or invalid JSON (Status: ${res.status}).`); }
+            throw new Error(err.error || 'Failed to fetch Option Chain data');
+        }
+        const data = await res.json();
+        // Option chain changes rapidly. Cache for 2 mins to prevent spam but stay relatively live.
+        Cache.set(cacheKey, data, 2);
+        return data;
+    },
+
     async compareChartink(url1, label1, url2, label2) {
         const cacheKey = `chartink_${btoa(url1 + url2)}`;
         const cached = Cache.get(cacheKey);

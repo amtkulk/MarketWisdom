@@ -285,7 +285,7 @@ def fetch_gemini(company):
 
     client   = genai.Client(api_key=GEMINI_API_KEY)
     # Target models for 2026. Updated to handle current versioning.
-    MODELS   = ["gemini-flash-latest", "gemini-pro-latest", "gemini-2.5-flash-lite"]
+    MODELS   = ["gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview", "gemini-3-flash-preview", "gemini-flash-latest", "gemini-pro-latest"]
     last_err = "No models available"
 
     for model in MODELS:
@@ -380,7 +380,7 @@ def fetch_stock_action_gemini(company):
     )
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    MODELS = ["gemini-flash-latest", "gemini-pro-latest", "gemini-2.5-flash-lite"]
+    MODELS = ["gemini-3.1-flash-lite-preview", "gemini-3-flash-preview", "gemini-flash-latest", "gemini-pro-latest"]
     for model in MODELS:
         try:
             cfg_args = {"temperature": 0.2, "max_output_tokens": 1000}
@@ -417,7 +417,7 @@ def resolve_ticker_gemini(company):
     prompt = f"Return ONLY the exact NSE (National Stock Exchange of India) ticker symbol for the company '{company}'. Example: For Reliance Industries return RELIANCE. Return strictly the uppercase ticker text and absolutely nothing else."
     
     client = genai.Client(api_key=GEMINI_API_KEY)
-    MODELS = ["gemini-flash-latest", "gemini-pro-latest", "gemini-2.5-flash-lite"]
+    MODELS = ["gemini-3.1-flash-lite-preview", "gemini-3-flash-preview", "gemini-flash-latest", "gemini-pro-latest"]
     for model in MODELS:
         try:
             cfg_args = {"temperature": 0.0, "max_output_tokens": 10}
@@ -945,6 +945,16 @@ def api_chartink():
         "count2":       len(list2),
         "common_count": len(common),
     })
+
+from nse_api import get_option_chain
+@app.route("/api/nse/option_chain")
+def api_nse_option_chain():
+    symbol = request.args.get("symbol", "NIFTY")
+    data = get_option_chain(symbol)
+    if "error" in data:
+        return jsonify(data), 400
+    return jsonify(data)
+
 
 from flask import send_from_directory
 
