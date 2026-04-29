@@ -9,21 +9,24 @@ def get_option_chain(symbol="NIFTY"):
     })
     
     try:
-        # Get cookies
-        session.get("https://www.nseindia.com", timeout=10)
-        time.sleep(0.5)
+        # Get cookies from the derivatives page specifically
+        session.get(f"https://www.nseindia.com/get-quotes/derivatives?symbol={symbol}", timeout=10)
+        time.sleep(1.0) # Wait a full second for NSE to digest the session
         
         # Get data
         url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
         r = session.get(url, timeout=10)
         
         if r.status_code != 200:
-            return {"error": f"NSE API returned {r.status_code}"}
+            return {"error": f"NSE API returned {r.status_code}. This usually means NSE has temporarily blocked the request or is under maintenance."}
             
         data = r.json()
         records = data.get("records", {})
         if not records:
-            return {"error": "Invalid data format from NSE"}
+            # Check if market is closed or API returned empty object
+            if data == {}:
+                return {"error": "NSE returned empty data. This is common after market hours (3:30 PM IST) or during weekend maintenance when NSE clears their live API cache."}
+            return {"error": "Invalid data format from NSE. The API structure might have changed."}
             
         underlying_val = records.get("underlyingValue", 0)
         timestamp = records.get("timestamp", "")
