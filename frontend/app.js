@@ -5,13 +5,13 @@
 const app = {
     init() {
         this.bindNav();
-        // Load initial route based on hash or default to home
-        const initialRoute = window.location.hash.replace('#', '') || 'home';
+        // Load initial route based on hash or default to global market dashboard
+        const initialRoute = window.location.hash.replace('#', '') || 'global';
         this.navigate(initialRoute);
         
         // Handle browser back/forward buttons
         window.addEventListener('hashchange', () => {
-            this.navigate(window.location.hash.replace('#', '') || 'home');
+            this.navigate(window.location.hash.replace('#', '') || 'global');
         });
     },
 
@@ -44,6 +44,9 @@ const app = {
             case 'home':
                 this.renderHome(container);
                 break;
+            case 'global':
+                this.renderGlobalMarket(container);
+                break;
             case 'stock':
                 this.renderStock(container);
                 break;
@@ -63,13 +66,153 @@ const app = {
                 this.renderWatchlist(container);
                 break;
             default:
-                this.renderHome(container);
+                this.renderGlobalMarket(container);
         }
     },
 
     // -------------------------------------------------------------
     // VIEWS
     // -------------------------------------------------------------
+
+    renderGlobalMarket(container) {
+        container.innerHTML = `
+            <div style="margin-bottom:24px">
+                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🌍 Global Market Overview</h2>
+                <p style="font-size:13px;color:var(--text-secondary)">Real-time indices, futures, and curated global market news.</p>
+            </div>
+            <div id="global-content">
+                <div class="card" style="text-align:center;padding:40px">
+                    <div class="big-spinner"></div>
+                    <div style="color:var(--text-accent);font-weight:600">Fetching Global Data...</div>
+                    <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">Gemini is curating news & fetching prices...</div>
+                </div>
+            </div>
+        `;
+
+        const load = async () => {
+            const content = document.getElementById('global-content');
+            try {
+                const data = await api.fetchGlobalMarket();
+                const m = data.market_data;
+                
+                const getColor = (val) => {
+                    if (val === "N/A" || isNaN(val)) return 'var(--text-secondary)';
+                    return val > 0 ? 'var(--green)' : val < 0 ? 'var(--red)' : 'var(--text-secondary)';
+                };
+                const getSign = (val) => {
+                    if (val === "N/A" || isNaN(val)) return '';
+                    return val > 0 ? '+' : '';
+                };
+
+                let html = `
+                    <div class="card" style="padding:0; overflow:hidden; margin-bottom:24px;">
+                        <table style="width:100%; border-collapse:collapse;">
+                            <thead>
+                                <tr style="background:rgba(255,255,255,0.05); text-align:left;">
+                                    <th style="padding:15px; color:var(--text-secondary); font-size:12px; text-transform:uppercase; letter-spacing:1px;">Market / Asset</th>
+                                    <th style="padding:15px; color:var(--text-secondary); font-size:12px; text-transform:uppercase; letter-spacing:1px;">Price</th>
+                                    <th style="padding:15px; color:var(--text-secondary); font-size:12px; text-transform:uppercase; letter-spacing:1px;">Change</th>
+                                    <th style="padding:15px; color:var(--text-secondary); font-size:12px; text-transform:uppercase; letter-spacing:1px;">% Change</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Row 1: US Indices CMP -->
+                                <tr style="border-bottom:1px solid rgba(255,255,255,0.05); background:rgba(99,102,241,0.05);">
+                                    <td style="padding:15px; font-weight:800; color:var(--text-primary);">US Indices (Spot)</td>
+                                    <td colspan="3" style="padding:15px;">
+                                        <div style="display:flex; gap:32px; flex-wrap:wrap;">
+                                            <div><span style="font-size:11px; color:var(--text-secondary);">DOW:</span> <b style="color:${getColor(m.dow.change)}; margin-left:6px;">${m.dow.price}</b></div>
+                                            <div><span style="font-size:11px; color:var(--text-secondary);">NASDAQ:</span> <b style="color:${getColor(m.nasdaq.change)}; margin-left:6px;">${m.nasdaq.price}</b></div>
+                                            <div><span style="font-size:11px; color:var(--text-secondary);">S&P 500:</span> <b style="color:${getColor(m.sp500.change)}; margin-left:6px;">${m.sp500.price}</b></div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <!-- Row 2: US Futures -->
+                                <tr style="border-bottom:1px solid rgba(255,255,255,0.05); background:rgba(245,158,11,0.05);">
+                                    <td style="padding:15px; font-weight:800; color:var(--text-primary);">US Futures</td>
+                                    <td colspan="3" style="padding:15px;">
+                                        <div style="display:flex; gap:32px; flex-wrap:wrap;">
+                                            <div><span style="font-size:11px; color:var(--text-secondary);">DOW FUT:</span> <b style="color:${getColor(m.dow_f.change)}; margin-left:6px;">${m.dow_f.price}</b></div>
+                                            <div><span style="font-size:11px; color:var(--text-secondary);">NAS FUT:</span> <b style="color:${getColor(m.nasdaq_f.change)}; margin-left:6px;">${m.nasdaq_f.price}</b></div>
+                                            <div><span style="font-size:11px; color:var(--text-secondary);">S&P FUT:</span> <b style="color:${getColor(m.sp500_f.change)}; margin-left:6px;">${m.sp500_f.price}</b></div>
+                                        </div>
+                                    </td>
+                                </tr>
+                `;
+
+                const addRow = (label, key, isBold=false) => {
+                    const d = m[key];
+                    const col = getColor(d.change);
+                    html += `
+                        <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                            <td style="padding:15px; ${isBold ? 'font-weight:800; color:var(--text-primary);' : 'color:var(--text-secondary);'}">${label}</td>
+                            <td style="padding:15px; font-weight:700; color:var(--text-primary);">${d.price}</td>
+                            <td style="padding:15px; color:${col}; font-weight:700;">${getSign(d.change)}${d.change}</td>
+                            <td style="padding:15px; color:${col}; font-weight:700;">${getSign(d.change)}${d.pct_change}%</td>
+                        </tr>
+                    `;
+                };
+
+                addRow('DAX Futures (Proxy)', 'dax');
+                addRow('Gift Nifty (Spot Proxy)', 'nifty', true);
+                addRow('Crude Oil (WTI)', 'crude');
+                addRow('Silver', 'silver');
+                addRow('Gold', 'gold');
+                addRow('USD / INR', 'usdinr', true);
+                addRow('India VIX', 'india_vix');
+                addRow('US VIX', 'us_vix');
+                addRow('Hang Seng BeES (ETF)', 'hangseng_bees');
+                addRow('Nikkei 225 (Japan)', 'nikkei');
+
+                html += `</tbody></table></div>`;
+
+                // News Section
+                if (data.news && data.news.length > 0) {
+                    html += `
+                        <div style="margin-top:40px; margin-bottom:20px;">
+                            <h3 style="font-size:18px; font-weight:900; color:var(--text-primary); display:flex; align-items:center; gap:10px;">
+                                <span style="font-size:24px;">📰</span> Top Global Market News (by Gemini AI)
+                            </h3>
+                        </div>
+                        <div class="card" style="padding:0; overflow:hidden;">
+                            <table style="width:100%; border-collapse:collapse;">
+                                <thead>
+                                    <tr style="background:rgba(255,255,255,0.05); text-align:left;">
+                                        <th style="padding:15px; color:var(--text-secondary); font-size:12px; text-transform:uppercase; width:25%;">Headline</th>
+                                        <th style="padding:15px; color:var(--text-secondary); font-size:12px; text-transform:uppercase;">Summary & Market Impact</th>
+                                        <th style="padding:15px; color:var(--text-secondary); font-size:12px; text-transform:uppercase; width:15%;">Source</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                    `;
+                    data.news.forEach(n => {
+                        html += `
+                            <tr style="border-bottom:1px solid rgba(255,255,255,0.05); vertical-align:top;">
+                                <td style="padding:15px; font-weight:800; color:var(--text-primary); line-height:1.4;">${n.headline}</td>
+                                <td style="padding:15px; font-size:13px; color:var(--text-secondary); line-height:1.6;">${n.summary}</td>
+                                <td style="padding:15px; font-size:12px; color:var(--text-accent); font-weight:700;">${n.source}</td>
+                            </tr>
+                        `;
+                    });
+                    html += `</tbody></table></div>`;
+                }
+
+                html += `<div style="text-align:right; margin-top:20px; font-size:11px; color:var(--text-secondary); font-style:italic;">Data provided by yfinance & Gemini AI • Last Refreshed: ${data.timestamp}</div>`;
+                content.innerHTML = html;
+
+            } catch (err) {
+                console.error(err);
+                content.innerHTML = `<div class="card" style="text-align:center; padding:40px; border-color:var(--red);">
+                    <div style="font-size:40px; margin-bottom:16px;">⚠️</div>
+                    <div style="color:var(--red); font-weight:800; font-size:18px;">Failed to load Global Market Data</div>
+                    <div style="color:var(--text-secondary); margin-top:8px;">${err.message}</div>
+                    <button class="btn" style="margin-top:20px;" onclick="window.location.reload()">Retry</button>
+                </div>`;
+            }
+        };
+
+        load();
+    },
 
     renderHome(container) {
         container.innerHTML = `

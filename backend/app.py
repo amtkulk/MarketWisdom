@@ -710,9 +710,93 @@ def fetch_fii_derivative_stats():
         return None
 
 
+def fetch_global_market_data():
+    import yfinance as yf
+    import concurrent.futures
+    
+    tickers = {
+        "dow": "^DJI", "nasdaq": "^IXIC", "sp500": "^GSPC",
+        "dow_f": "YM=F", "nasdaq_f": "NQ=F", "sp500_f": "ES=F",
+        "dax": "^GDAXI", "nifty": "^NSEI", 
+        "crude": "CL=F", "silver": "SI=F", "gold": "GC=F",
+        "usdinr": "USDINR=X", "india_vix": "^INDIAVIX", "us_vix": "^VIX",
+        "hangseng_bees": "HANGSENG.NS", "nikkei": "^N225"
+    }
+    
+    def fetch_single(key, symbol):
+        try:
+            t = yf.Ticker(symbol)
+            hist = t.history(period="5d")
+            if not hist.empty:
+                curr = float(hist["Close"].iloc[-1])
+                prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else curr
+                return key, {
+                    "price": round(curr, 2),
+                    "prev_close": round(prev, 2),
+                    "change": round(curr - prev, 2),
+                    "pct_change": round(((curr - prev) / prev) * 100, 2) if prev != 0 else 0
+                }
+        except Exception:
+            pass
+        return key, {"price": "N/A", "change": 0, "pct_change": 0}
+
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_key = {executor.submit(fetch_single, k, s): k for k, s in tickers.items()}
+        for future in concurrent.futures.as_completed(future_to_key):
+            key, val = future.result()
+            results[key] = val
+    return results
+
+
+def fetch_global_news_gemini():
+    if not GEMINI_API_KEY:
+        return []
+    try:
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        prompt = (
+            "You are a global market news aggregator. "
+            "Identify the top 7 most important global market news stories from the last 24 hours. "
+            "Focus on US markets, European markets, and major commodities/currencies. "
+            "Return ONLY valid JSON — no markdown, no backticks. "
+            "JSON structure: [{\"headline\": \"...\", \"summary\": \"...\", \"source\": \"...\"}]"
+        )
+        MODELS = ["gemini-3.1-flash-lite-preview", "gemini-3-flash-preview", "gemini-flash-latest"]
+        for model in MODELS:
+            try:
+                resp = client.models.generate_content(model=model, contents=prompt)
+                text = resp.text or ""
+                clean = text.replace("```json","").replace("```","").strip()
+                s = clean.find("[")
+                e = clean.rfind("]")
+                if s != -1 and e != -1:
+                    return json.loads(clean[s:e+1])
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return []
+
+
 # ══════════════════════════════════════════════════════════════
 #  API ROUTES
 # ══════════════════════════════════════════════════════════════
+
+@app.route("/api/global_market")
+def api_global_market():
+    try:
+        data = fetch_global_market_data()
+        news = fetch_global_news_gemini()
+        return jsonify({
+            "market_data": data,
+            "news": news,
+            "timestamp": datetime.now().strftime("%d %b %Y  %H:%M:%S")
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
 
 @app.route("/api/stock", methods=["POST"])
 def api_stock():

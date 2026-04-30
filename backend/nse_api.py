@@ -2,29 +2,42 @@ from curl_cffi import requests
 import time
 
 def get_option_chain(symbol="NIFTY"):
-    session = requests.Session(impersonate="chrome110")
+    session = requests.Session(impersonate="chrome120")
     session.headers.update({
-        'Accept': '*/*',
+        'Accept': 'application/json, text/plain, */*',
         'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.nseindia.com/option-chain',
+        'X-Requested-With': 'XMLHttpRequest',
     })
     
     try:
-        # Get cookies from the derivatives page specifically
-        session.get(f"https://www.nseindia.com/get-quotes/derivatives?symbol={symbol}", timeout=10)
-        time.sleep(1.0) # Wait a full second for NSE to digest the session
+        # Step 1: Establish session
+        session.get("https://www.nseindia.com/", timeout=10)
+        time.sleep(0.5)
+        session.get("https://www.nseindia.com/option-chain", timeout=10)
+        time.sleep(1.0) 
         
-        # Get data
+        # Step 2: Get API data with retries
         url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
-        r = session.get(url, timeout=10)
-        
-        if r.status_code != 200:
-            return {"error": f"NSE API returned {r.status_code}. This usually means NSE has temporarily blocked the request or is under maintenance."}
+        if symbol not in ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]:
+            url = f"https://www.nseindia.com/api/option-chain-equities?symbol={symbol}"
             
-        data = r.json()
+        data = {}
+        for attempt in range(3):
+            r = session.get(url, timeout=10)
+            if r.status_code == 200:
+                try:
+                    data = r.json()
+                    if data.get("records"):
+                        break
+                except:
+                    pass
+            time.sleep(1.0)
+            
         records = data.get("records", {})
         if not records:
             # Check if market is closed or API returned empty object
-            if data == {}:
+            if data == {} or not data:
                 return {"error": "NSE returned empty data. This is common after market hours (3:30 PM IST) or during weekend maintenance when NSE clears their live API cache."}
             return {"error": "Invalid data format from NSE. The API structure might have changed."}
             
