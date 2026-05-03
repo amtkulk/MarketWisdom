@@ -1040,6 +1040,23 @@ def api_nse_option_chain():
     return jsonify(data)
 
 
+from screener import run_screener
+
+@app.route("/api/screener")
+def api_screener():
+    market = request.args.get("market", "india").lower()
+    if market not in ("india", "us"):
+        return jsonify({"error": "Invalid market. Use 'india' or 'us'."}), 400
+    try:
+        data = run_screener(market)
+        data["timestamp"] = datetime.now().strftime("%d %b %Y  %H:%M:%S")
+        return jsonify(data)
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 400
+
+
 from flask import send_from_directory
 
 @app.route("/")

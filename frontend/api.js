@@ -156,5 +156,21 @@ const api = {
         const data = await res.json();
         Cache.set('global_market', data, 10);
         return data;
+    },
+
+    async fetchScreener(market) {
+        const cacheKey = `screener_${market}`;
+        const cached = Cache.get(cacheKey);
+        if (cached) return cached;
+
+        const res = await fetch(`${API_BASE_URL}/screener?market=${market}`);
+        if (!res.ok) {
+            let err;
+            try { err = await res.json(); } catch(e) { throw new Error(`Server returned HTML or invalid JSON (Status: ${res.status}).`); }
+            throw new Error(err.error || 'Failed to run Stock Screener');
+        }
+        const data = await res.json();
+        Cache.set(cacheKey, data, 5);
+        return data;
     }
 };

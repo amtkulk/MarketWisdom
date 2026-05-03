@@ -8,3 +8,5 @@ waitress
 pymongo
 certifi
 curl_cffi
+pandas
+lxml
