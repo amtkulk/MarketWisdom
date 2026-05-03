@@ -147,15 +147,21 @@ def scan_stock(ticker):
     """
     Scan a single stock. Returns a dict if it passes all filters, else None.
     Filters: P/E < 20, Volume > 2x 20-day avg, RSI > 50
+    Works on weekends/holidays by using last available trading day data.
     """
     try:
         import yfinance as yf
 
         stock = yf.Ticker(ticker)
 
-        # Get 30 days of history for RSI and volume calculations
-        hist = stock.history(period="1mo", interval="1d")
+        # Get 2 months of history to ensure enough data even on weekends
+        hist = stock.history(period="2mo", interval="1d")
         if hist is None or len(hist) < 21:
+            return None
+
+        # Drop any rows with zero volume (non-trading days)
+        hist = hist[hist["Volume"] > 0]
+        if len(hist) < 21:
             return None
 
         closes = hist["Close"].tolist()
@@ -172,11 +178,11 @@ def scan_stock(ticker):
         except Exception:
             return None
 
-        # ── Volume Spike ──
+        # ── Volume Spike (uses last trading day vs 20-day avg) ──
         if len(volumes) < 21:
             return None
-        current_vol = volumes[-1]
-        avg_vol_20 = sum(volumes[-21:-1]) / 20  # 20-day avg excluding today
+        current_vol = volumes[-1]  # Last trading day volume
+        avg_vol_20 = sum(volumes[-21:-1]) / 20  # 20-day avg excluding last day
         if avg_vol_20 <= 0:
             return None
         vol_ratio = round(current_vol / avg_vol_20, 2)

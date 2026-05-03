@@ -1041,20 +1041,72 @@ def api_nse_option_chain():
 
 
 from screener import run_screener
+from database import save_screener_results, get_screener_results
+import threading
 
-@app.route("/api/screener")
-def api_screener():
+# In-memory state for background scans
+_screener_state = {}  # { "india": {"status": "running"/"done"/"error", "error": "..."} }
+_screener_lock = threading.Lock()
+
+
+def _run_screener_background(market):
+    """Run the screener in a background thread and save results to DB."""
+    try:
+        data = run_screener(market)
+        save_screener_results(market, data)
+        with _screener_lock:
+            _screener_state[market] = {"status": "done"}
+        print(f"[Screener] Background scan for {market} completed and saved.")
+    except Exception as e:
+        import traceback
+        print(f"[Screener] Background scan error: {traceback.format_exc()}")
+        with _screener_lock:
+            _screener_state[market] = {"status": "error", "error": str(e)}
+
+
+@app.route("/api/screener/start", methods=["POST"])
+def api_screener_start():
+    """Start a background scan. Returns immediately."""
     market = request.args.get("market", "india").lower()
     if market not in ("india", "us"):
         return jsonify({"error": "Invalid market. Use 'india' or 'us'."}), 400
-    try:
-        data = run_screener(market)
-        data["timestamp"] = datetime.now().strftime("%d %b %Y  %H:%M:%S")
-        return jsonify(data)
-    except Exception as e:
-        import traceback
-        print(traceback.format_exc())
-        return jsonify({"error": str(e)}), 400
+
+    with _screener_lock:
+        current = _screener_state.get(market, {})
+        if current.get("status") == "running":
+            return jsonify({"status": "already_running", "message": "A scan is already in progress."})
+
+        _screener_state[market] = {"status": "running"}
+
+    t = threading.Thread(target=_run_screener_background, args=(market,), daemon=True)
+    t.start()
+
+    return jsonify({"status": "started", "message": f"Scan started for {market}."})
+
+
+@app.route("/api/screener/status")
+def api_screener_status():
+    """Check if a background scan is running or done."""
+    market = request.args.get("market", "india").lower()
+    with _screener_lock:
+        state = _screener_state.get(market, {"status": "idle"})
+    return jsonify(state)
+
+
+@app.route("/api/screener/results")
+def api_screener_results():
+    """Get last saved results from the database."""
+    market = request.args.get("market", "india").lower()
+    if market not in ("india", "us"):
+        return jsonify({"error": "Invalid market."}), 400
+
+    data, updated_at = get_screener_results(market)
+    if data is None:
+        return jsonify({"empty": True, "message": "No previous scan results found. Click 'Scan Now' to run your first scan."})
+
+    data["timestamp"] = updated_at
+    data["empty"] = False
+    return jsonify(data)
 
 
 from flask import send_from_directory

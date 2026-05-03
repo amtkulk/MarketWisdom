@@ -39,6 +39,13 @@ def init_db():
                 rated_at TEXT
             )
         ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS screener_results (
+                market TEXT PRIMARY KEY,
+                results_json TEXT,
+                updated_at TEXT
+            )
+        ''')
         conn.commit()
         conn.close()
 
@@ -94,3 +101,51 @@ def get_all_stocks():
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]
+
+
+def save_screener_results(market, data):
+    """Save screener scan results to database."""
+    import json
+    updated_at = datetime.now().strftime("%d %b %Y  %H:%M:%S")
+    results_json = json.dumps(data)
+
+    if USE_MONGO:
+        screener_col = db.get_collection("screener_results")
+        screener_col.update_one(
+            {"market": market},
+            {"$set": {"results_json": results_json, "updated_at": updated_at}},
+            upsert=True
+        )
+    else:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO screener_results (market, results_json, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(market) DO UPDATE SET
+                results_json=excluded.results_json,
+                updated_at=excluded.updated_at
+        ''', (market, results_json, updated_at))
+        conn.commit()
+        conn.close()
+
+
+def get_screener_results(market):
+    """Get last saved screener results from database."""
+    import json
+
+    if USE_MONGO:
+        screener_col = db.get_collection("screener_results")
+        doc = screener_col.find_one({"market": market}, {"_id": 0})
+        if doc:
+            return json.loads(doc["results_json"]), doc["updated_at"]
+        return None, None
+    else:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT results_json, updated_at FROM screener_results WHERE market = ?', (market,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return json.loads(row["results_json"]), row["updated_at"]
+        return None, None

@@ -221,179 +221,127 @@ const app = {
         container.innerHTML = `
             <div style="margin-bottom:24px">
                 <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">📊 Stock Screener</h2>
-                <p style="font-size:13px;color:var(--text-secondary)">Scan Nifty 500 or S&P 500 · Filter by P/E < 20 · Volume Spike > 2x · RSI > 50</p>
+                <p style="font-size:13px;color:var(--text-secondary)">Scan Nifty 500 or S&P 500 · P/E < 20 · Volume > 2x · RSI > 50</p>
             </div>
-            <div class="card" style="margin-bottom:20px; display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
-                <label style="font-size:14px;font-weight:600;">Select Market:</label>
-                <button id="btn-mkt-india" class="btn screener-mkt-btn active-mkt" style="padding:8px 20px;font-size:13px;"
-                    data-market="india">🇮🇳 Nifty 500</button>
-                <button id="btn-mkt-us" class="btn screener-mkt-btn" style="padding:8px 20px;font-size:13px;background:var(--bg-card);color:var(--text-secondary);border:1px solid var(--border-color);"
-                    data-market="us">🇺🇸 S&P 500</button>
+            <div class="card" style="margin-bottom:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+                <label style="font-size:14px;font-weight:600;">Market:</label>
+                <button id="btn-mkt-india" class="btn screener-mkt-btn active-mkt" style="padding:8px 20px;font-size:13px;" data-market="india">🇮🇳 Nifty 500</button>
+                <button id="btn-mkt-us" class="btn screener-mkt-btn" style="padding:8px 20px;font-size:13px;background:var(--bg-card);color:var(--text-secondary);border:1px solid var(--border-color);" data-market="us">🇺🇸 S&P 500</button>
                 <div style="flex:1"></div>
                 <button id="btn-scan" class="btn" style="background:var(--accent-color);color:white;padding:10px 24px;font-size:14px;font-weight:700;">🔍 Scan Now</button>
             </div>
-            <div class="card" style="margin-bottom:16px; padding:12px 16px; background:rgba(129,140,248,0.06); border-color:rgba(129,140,248,0.15); display:flex; gap:24px; flex-wrap:wrap; font-size:12px; color:var(--text-secondary);">
+            <div class="card" style="margin-bottom:16px;padding:12px 16px;background:rgba(129,140,248,0.06);border-color:rgba(129,140,248,0.15);display:flex;gap:24px;flex-wrap:wrap;font-size:12px;color:var(--text-secondary);">
                 <span><b style="color:var(--text-primary)">Filters:</b></span>
-                <span>📉 P/E Ratio < 20</span>
-                <span>📊 Volume > 2x 20-day Avg</span>
-                <span>📈 RSI (14) > 50</span>
-                <span>🏆 Ranked by Composite Score</span>
+                <span>P/E < 20</span><span>Volume > 2x 20d Avg</span><span>RSI(14) > 50</span><span>🏆 Ranked by Score</span>
             </div>
-            <div id="screener-result"></div>
+            <div id="screener-status-bar" style="display:none"></div>
+            <div id="screener-result"><div style="text-align:center;padding:30px;color:var(--text-secondary)"><div class="spinner"></div></div></div>
         `;
-
         let selectedMarket = 'india';
+        let pollTimer = null;
 
-        // Market selector button logic
         document.querySelectorAll('.screener-mkt-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 selectedMarket = btn.dataset.market;
                 document.querySelectorAll('.screener-mkt-btn').forEach(b => {
-                    b.style.background = 'var(--bg-card)';
-                    b.style.color = 'var(--text-secondary)';
-                    b.style.border = '1px solid var(--border-color)';
-                    b.classList.remove('active-mkt');
+                    b.style.background='var(--bg-card)';b.style.color='var(--text-secondary)';
+                    b.style.border='1px solid var(--border-color)';b.classList.remove('active-mkt');
                 });
-                btn.style.background = '';
-                btn.style.color = '';
-                btn.style.border = '';
-                btn.classList.add('active-mkt');
+                btn.style.background='';btn.style.color='';btn.style.border='';btn.classList.add('active-mkt');
+                loadLastResults(selectedMarket);
             });
         });
 
-        document.getElementById('btn-scan').addEventListener('click', async () => {
-            const btn = document.getElementById('btn-scan');
+        const renderTable = (data, market) => {
             const resDiv = document.getElementById('screener-result');
-            const mktLabel = selectedMarket === 'us' ? 'S&P 500' : 'Nifty 500';
-
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Scanning...';
-            resDiv.innerHTML = `
-                <div class="card" style="text-align:center;padding:50px">
-                    <div class="big-spinner"></div>
-                    <div style="color:var(--text-accent);font-weight:700;font-size:16px;margin-top:16px">Scanning ${mktLabel} stocks...</div>
-                    <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">Analyzing ~500 stocks for P/E, Volume Spike & RSI. This takes <b>3-5 minutes</b>.</div>
-                    <div style="margin-top:20px; width:80%; max-width:300px; height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden; margin-left:auto; margin-right:auto;">
-                        <div style="width:0%; height:100%; background:linear-gradient(90deg, #818cf8, #34d399); border-radius:3px; animation: screener-progress 180s linear forwards;"></div>
-                    </div>
-                </div>
-                <style>
-                    @keyframes screener-progress { from { width: 0%; } to { width: 95%; } }
-                </style>
-            `;
-
-            try {
-                const data = await api.fetchScreener(selectedMarket);
-                let html = '';
-
-                // Stats bar
-                html += `
-                    <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:20px;">
-                        <div class="card" style="flex:1; min-width:150px; text-align:center; padding:16px; border-left:4px solid var(--accent-color);">
-                            <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:1px;">Market</div>
-                            <div style="font-size:20px; font-weight:800; color:var(--text-primary); margin-top:6px;">${data.market}</div>
-                        </div>
-                        <div class="card" style="flex:1; min-width:150px; text-align:center; padding:16px; border-left:4px solid #818cf8;">
-                            <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:1px;">Stocks Scanned</div>
-                            <div style="font-size:20px; font-weight:800; color:#818cf8; margin-top:6px;">${data.total_scanned}</div>
-                        </div>
-                        <div class="card" style="flex:1; min-width:150px; text-align:center; padding:16px; border-left:4px solid var(--green);">
-                            <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:1px;">Passed Filters</div>
-                            <div style="font-size:20px; font-weight:800; color:var(--green); margin-top:6px;">${data.total_passed}</div>
-                        </div>
-                        <div class="card" style="flex:1; min-width:150px; text-align:center; padding:16px; border-left:4px solid var(--yellow);">
-                            <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:1px;">Scan Time</div>
-                            <div style="font-size:20px; font-weight:800; color:var(--yellow); margin-top:6px;">${data.scan_time_seconds}s</div>
-                        </div>
-                    </div>
-                `;
-
-                if (data.results && data.results.length > 0) {
-                    html += `
-                        <div class="card" style="padding:0; overflow:hidden;">
-                            <table style="width:100%; border-collapse:collapse;">
-                                <thead>
-                                    <tr style="background:rgba(255,255,255,0.05); text-align:left;">
-                                        <th style="padding:14px 12px; color:var(--text-secondary); font-size:11px; text-transform:uppercase; letter-spacing:1px; width:40px;">#</th>
-                                        <th style="padding:14px 12px; color:var(--text-secondary); font-size:11px; text-transform:uppercase; letter-spacing:1px;">Ticker</th>
-                                        <th style="padding:14px 12px; color:var(--text-secondary); font-size:11px; text-transform:uppercase; letter-spacing:1px; text-align:right;">Price</th>
-                                        <th style="padding:14px 12px; color:var(--text-secondary); font-size:11px; text-transform:uppercase; letter-spacing:1px; text-align:right;">P/E</th>
-                                        <th style="padding:14px 12px; color:var(--text-secondary); font-size:11px; text-transform:uppercase; letter-spacing:1px; text-align:right;">Vol Ratio</th>
-                                        <th style="padding:14px 12px; color:var(--text-secondary); font-size:11px; text-transform:uppercase; letter-spacing:1px; text-align:right;">RSI</th>
-                                        <th style="padding:14px 12px; color:var(--text-secondary); font-size:11px; text-transform:uppercase; letter-spacing:1px; text-align:right;">Score</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                    `;
-
-                    data.results.forEach((s, i) => {
-                        const rank = i + 1;
-                        const isTop3 = rank <= 3;
-                        const rowBg = isTop3 ? 'background:rgba(16,185,129,0.08);' : '';
-                        const rankEmoji = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : rank;
-
-                        // Volume spike badge color
-                        const volColor = s.vol_ratio >= 5 ? 'var(--red)' : s.vol_ratio >= 3 ? 'var(--yellow)' : 'var(--green)';
-                        const volBadge = `<span style="background:${volColor}20; color:${volColor}; padding:3px 8px; border-radius:10px; font-size:11px; font-weight:700;">${s.vol_ratio}x</span>`;
-
-                        // RSI color
-                        const rsiColor = s.rsi >= 70 ? 'var(--red)' : s.rsi >= 60 ? 'var(--yellow)' : 'var(--green)';
-
-                        // Score bar
-                        const scoreWidth = Math.min(s.score, 100);
-                        const scoreColor = s.score >= 60 ? 'var(--green)' : s.score >= 40 ? 'var(--yellow)' : 'var(--text-secondary)';
-
-                        html += `
-                            <tr style="border-bottom:1px solid rgba(255,255,255,0.05); ${rowBg}">
-                                <td style="padding:14px 12px; font-weight:800; font-size:14px;">${rankEmoji}</td>
-                                <td style="padding:14px 12px;">
-                                    <div style="font-weight:800; color:var(--text-primary); font-size:14px;">${s.ticker}</div>
-                                </td>
-                                <td style="padding:14px 12px; text-align:right; font-weight:700; color:var(--text-primary); font-size:14px;">${selectedMarket === 'us' ? '$' : '₹'}${s.price.toLocaleString()}</td>
-                                <td style="padding:14px 12px; text-align:right; color:var(--green); font-weight:600;">${s.pe}</td>
-                                <td style="padding:14px 12px; text-align:right;">${volBadge}</td>
-                                <td style="padding:14px 12px; text-align:right; color:${rsiColor}; font-weight:700;">${s.rsi}</td>
-                                <td style="padding:14px 12px; text-align:right;">
-                                    <div style="display:flex; align-items:center; justify-content:flex-end; gap:8px;">
-                                        <div style="width:60px; height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden;">
-                                            <div style="width:${scoreWidth}%; height:100%; background:${scoreColor}; border-radius:3px;"></div>
-                                        </div>
-                                        <span style="font-weight:800; color:${scoreColor}; font-size:13px;">${s.score}</span>
-                                    </div>
-                                </td>
-                            </tr>
-                        `;
-                    });
-
-                    html += `</tbody></table></div>`;
-                } else {
-                    html += `
-                        <div class="card" style="text-align:center; padding:40px; border-color:var(--yellow);">
-                            <div style="font-size:40px; margin-bottom:16px;">🔍</div>
-                            <div style="color:var(--yellow); font-weight:800; font-size:16px;">No stocks passed all filters</div>
-                            <div style="color:var(--text-secondary); margin-top:8px;">Try scanning again during market hours when volume is active.</div>
-                        </div>
-                    `;
-                }
-
-                html += `<div style="text-align:right; margin-top:16px; font-size:11px; color:var(--text-secondary); font-style:italic;">Scanned ${data.total_scanned} stocks in ${data.scan_time_seconds}s • ${data.timestamp}</div>`;
-                resDiv.innerHTML = html;
-
-            } catch (err) {
-                console.error(err);
-                resDiv.innerHTML = `
-                    <div class="card" style="text-align:center; padding:40px; border-color:var(--red);">
-                        <div style="font-size:40px; margin-bottom:16px;">⚠️</div>
-                        <div style="color:var(--red); font-weight:800; font-size:18px;">Screener Failed</div>
-                        <div style="color:var(--text-secondary); margin-top:8px;">${err.message}</div>
-                        <button class="btn" style="margin-top:20px;" onclick="document.getElementById('btn-scan').click()">Retry</button>
-                    </div>
-                `;
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '🔍 Scan Now';
+            if(!resDiv) return;
+            const cur = market==='us'?'$':'₹';
+            let h = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px">';
+            h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--accent-color)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Market</div><div style="font-size:20px;font-weight:800;margin-top:6px">'+data.market+'</div></div>';
+            h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid #818cf8"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Scanned</div><div style="font-size:20px;font-weight:800;color:#818cf8;margin-top:6px">'+data.total_scanned+'</div></div>';
+            h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--green)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Passed</div><div style="font-size:20px;font-weight:800;color:var(--green);margin-top:6px">'+data.total_passed+'</div></div>';
+            h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--yellow)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Time</div><div style="font-size:20px;font-weight:800;color:var(--yellow);margin-top:6px">'+data.scan_time_seconds+'s</div></div>';
+            h += '</div>';
+            if(data.results && data.results.length>0){
+                h+='<div class="card" style="padding:0;overflow:hidden"><table style="width:100%;border-collapse:collapse">';
+                h+='<thead><tr style="background:rgba(255,255,255,0.05);text-align:left">';
+                h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;width:40px">#</th>';
+                h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase">Ticker</th>';
+                h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">Price</th>';
+                h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">P/E</th>';
+                h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">Vol Ratio</th>';
+                h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">RSI</th>';
+                h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">Score</th>';
+                h+='</tr></thead><tbody>';
+                data.results.forEach((s,i)=>{
+                    const r=i+1;
+                    const bg=r<=3?'background:rgba(16,185,129,0.08);':'';
+                    const re=r===1?'🥇':r===2?'🥈':r===3?'🥉':r;
+                    const vc=s.vol_ratio>=5?'var(--red)':s.vol_ratio>=3?'var(--yellow)':'var(--green)';
+                    const rc=s.rsi>=70?'var(--red)':s.rsi>=60?'var(--yellow)':'var(--green)';
+                    const sc=s.score>=60?'var(--green)':s.score>=40?'var(--yellow)':'var(--text-secondary)';
+                    h+='<tr style="border-bottom:1px solid rgba(255,255,255,0.05);'+bg+'">';
+                    h+='<td style="padding:14px 12px;font-weight:800;font-size:14px">'+re+'</td>';
+                    h+='<td style="padding:14px 12px;font-weight:800;color:var(--text-primary);font-size:14px">'+s.ticker+'</td>';
+                    h+='<td style="padding:14px 12px;text-align:right;font-weight:700;font-size:14px">'+cur+s.price.toLocaleString()+'</td>';
+                    h+='<td style="padding:14px 12px;text-align:right;color:var(--green);font-weight:600">'+s.pe+'</td>';
+                    h+='<td style="padding:14px 12px;text-align:right"><span style="background:'+vc+'20;color:'+vc+';padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700">'+s.vol_ratio+'x</span></td>';
+                    h+='<td style="padding:14px 12px;text-align:right;color:'+rc+';font-weight:700">'+s.rsi+'</td>';
+                    h+='<td style="padding:14px 12px;text-align:right"><div style="display:flex;align-items:center;justify-content:flex-end;gap:8px"><div style="width:60px;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.score,100)+'%;height:100%;background:'+sc+';border-radius:3px"></div></div><span style="font-weight:800;color:'+sc+';font-size:13px">'+s.score+'</span></div></td>';
+                    h+='</tr>';
+                });
+                h+='</tbody></table></div>';
+            } else {
+                h+='<div class="card" style="text-align:center;padding:40px;border-color:var(--yellow)"><div style="font-size:40px;margin-bottom:16px">🔍</div><div style="color:var(--yellow);font-weight:800">No stocks passed all filters</div><div style="color:var(--text-secondary);margin-top:8px">Try during market hours.</div></div>';
             }
+            h+='<div style="text-align:right;margin-top:16px;font-size:11px;color:var(--text-secondary);font-style:italic">Last scanned: '+data.timestamp+'</div>';
+            resDiv.innerHTML=h;
+        };
+
+        const loadLastResults = async (market) => {
+            const resDiv = document.getElementById('screener-result');
+            if(!resDiv) return;
+            try {
+                const data = await api.getScreenerResults(market);
+                if(data.empty){
+                    resDiv.innerHTML='<div class="card" style="text-align:center;padding:40px;border-color:rgba(129,140,248,0.2)"><div style="font-size:40px;margin-bottom:16px">📊</div><div style="color:var(--text-accent);font-weight:800;font-size:16px">No previous scan results</div><div style="color:var(--text-secondary);margin-top:8px">Click <b>Scan Now</b> to run your first scan. You can navigate away and results will be saved.</div></div>';
+                } else { renderTable(data, market); }
+            } catch(e) { resDiv.innerHTML='<div class="card" style="text-align:center;padding:20px;color:var(--text-secondary)">Could not load previous results.</div>'; }
+            try {
+                const st = await api.getScreenerStatus(market);
+                if(st.status==='running') startPolling(market);
+            } catch(e){}
+        };
+
+        const startPolling = (market) => {
+            if(pollTimer) clearInterval(pollTimer);
+            const btn=document.getElementById('btn-scan');
+            const bar=document.getElementById('screener-status-bar');
+            if(btn){btn.disabled=true;btn.innerHTML='<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Scanning...';}
+            if(bar){bar.style.display='block';bar.innerHTML='<div class="card" style="padding:12px 16px;background:rgba(16,185,129,0.08);border-color:rgba(16,185,129,0.2);display:flex;align-items:center;gap:12px;margin-bottom:16px"><span class="spinner"></span><span style="color:var(--green);font-weight:600">Background scan running... You can navigate away. Results will be saved.</span></div>';}
+            pollTimer = setInterval(async()=>{
+                try {
+                    const st = await api.getScreenerStatus(market);
+                    if(st.status==='done'){
+                        clearInterval(pollTimer);pollTimer=null;
+                        if(btn){btn.disabled=false;btn.innerHTML='🔍 Scan Now';}
+                        if(bar) bar.style.display='none';
+                        loadLastResults(market);
+                    } else if(st.status==='error'){
+                        clearInterval(pollTimer);pollTimer=null;
+                        if(btn){btn.disabled=false;btn.innerHTML='🔍 Scan Now';}
+                        if(bar){bar.style.display='block';bar.innerHTML='<div class="card" style="padding:12px 16px;border-color:var(--red);margin-bottom:16px"><span style="color:var(--red);font-weight:600">Scan failed: '+(st.error||'Unknown error')+'</span></div>';}
+                    }
+                } catch(e){}
+            }, 5000);
+        };
+
+        document.getElementById('btn-scan').addEventListener('click', async()=>{
+            try { await api.startScreenerScan(selectedMarket); startPolling(selectedMarket); }
+            catch(err) { alert('Failed to start scan: '+err.message); }
         });
+
+        loadLastResults(selectedMarket);
     },
 
     renderHome(container) {

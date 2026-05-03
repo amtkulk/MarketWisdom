@@ -158,19 +158,29 @@ const api = {
         return data;
     },
 
-    async fetchScreener(market) {
-        const cacheKey = `screener_${market}`;
-        const cached = Cache.get(cacheKey);
-        if (cached) return cached;
-
-        const res = await fetch(`${API_BASE_URL}/screener?market=${market}`);
+    async startScreenerScan(market) {
+        const res = await fetch(`${API_BASE_URL}/screener/start?market=${market}`, { method: 'POST' });
         if (!res.ok) {
             let err;
-            try { err = await res.json(); } catch(e) { throw new Error(`Server returned HTML or invalid JSON (Status: ${res.status}).`); }
-            throw new Error(err.error || 'Failed to run Stock Screener');
+            try { err = await res.json(); } catch(e) { throw new Error(`Server error (Status: ${res.status}).`); }
+            throw new Error(err.error || 'Failed to start scan');
         }
-        const data = await res.json();
-        Cache.set(cacheKey, data, 5);
-        return data;
+        return res.json();
+    },
+
+    async getScreenerStatus(market) {
+        const res = await fetch(`${API_BASE_URL}/screener/status?market=${market}`);
+        if (!res.ok) return { status: 'error' };
+        return res.json();
+    },
+
+    async getScreenerResults(market) {
+        const res = await fetch(`${API_BASE_URL}/screener/results?market=${market}`);
+        if (!res.ok) {
+            let err;
+            try { err = await res.json(); } catch(e) { throw new Error(`Server error (Status: ${res.status}).`); }
+            throw new Error(err.error || 'Failed to fetch results');
+        }
+        return res.json();
     }
 };
