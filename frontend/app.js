@@ -47,6 +47,9 @@ const app = {
             case 'global':
                 this.renderGlobalMarket(container);
                 break;
+            case 'war-news':
+                this.renderWarNews(container);
+                break;
             case 'screener':
                 this.renderScreener(container);
                 break;
@@ -217,6 +220,105 @@ const app = {
         load();
     },
 
+    renderWarNews(container) {
+        container.innerHTML = `
+            <div style="margin-bottom:24px; display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">📰 War & Geopolitics News</h2>
+                    <p style="font-size:13px;color:var(--text-secondary)">Perspectives from US, Iran, Crude Oil, and Hormuz.</p>
+                </div>
+                <button id="btn-refresh-warnews" class="btn" style="background:var(--accent-color);color:white;padding:8px 16px;font-size:13px;">Refresh News</button>
+            </div>
+            <div id="warnews-content">
+                <div class="card" style="text-align:center;padding:40px">
+                    <div class="big-spinner"></div>
+                    <div style="color:var(--text-accent);font-weight:600">Fetching Perspectives...</div>
+                    <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">Gemini is curating war news...</div>
+                </div>
+            </div>
+        `;
+
+        const load = async (forceRefresh = false) => {
+            const content = document.getElementById('warnews-content');
+            if (forceRefresh) {
+                content.innerHTML = `
+                    <div class="card" style="text-align:center;padding:40px">
+                        <div class="big-spinner"></div>
+                        <div style="color:var(--text-accent);font-weight:600">Fetching Fresh News...</div>
+                        <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">Gemini is looking for the latest updates...</div>
+                    </div>
+                `;
+            }
+
+            try {
+                const data = await api.fetchWarNews(forceRefresh);
+                if (!data.news || data.news.length === 0) {
+                    content.innerHTML = \`<div class="card" style="text-align:center;padding:40px;color:var(--text-secondary)">No news found.</div>\`;
+                    return;
+                }
+
+                // Group news by perspective
+                const grouped = {
+                    'US': [], 'Iran': [], 'Crude Oil': [], 'Hormuz': [], 'Other': []
+                };
+                data.news.forEach(n => {
+                    const p = n.perspective || 'Other';
+                    if (grouped[p]) grouped[p].push(n);
+                    else grouped['Other'].push(n);
+                });
+
+                const getColors = (p) => {
+                    switch(p) {
+                        case 'US': return { bg: 'rgba(59,130,246,0.1)', border: '#3b82f6', text: '#60a5fa' }; // Blue
+                        case 'Iran': return { bg: 'rgba(239,68,68,0.1)', border: '#ef4444', text: '#f87171' }; // Red
+                        case 'Crude Oil': return { bg: 'rgba(245,158,11,0.1)', border: '#f59e0b', text: '#fbbf24' }; // Yellow
+                        case 'Hormuz': return { bg: 'rgba(16,185,129,0.1)', border: '#10b981', text: '#34d399' }; // Green
+                        default: return { bg: 'rgba(255,255,255,0.05)', border: 'var(--border-color)', text: 'var(--text-primary)' };
+                    }
+                };
+
+                let html = '<div class="feature-grid">';
+                Object.keys(grouped).forEach(p => {
+                    if (grouped[p].length === 0) return;
+                    const c = getColors(p);
+                    html += \`<div class="card" style="background:\${c.bg}; border-top: 4px solid \${c.border}; margin-bottom:20px; display:block; width:100%;">
+                        <div class="section-title" style="color:\${c.text}; display:flex; align-items:center; gap:8px;">
+                            \${p === 'US' ? '🇺🇸' : p === 'Iran' ? '🇮🇷' : p === 'Crude Oil' ? '🛢️' : p === 'Hormuz' ? '🌊' : '📰'} \${p} Perspective
+                        </div>
+                        <div style="display:flex;flex-direction:column;gap:16px;margin-top:12px;">\`;
+                    
+                    grouped[p].forEach(n => {
+                        html += \`
+                            <div style="padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.05)">
+                                <div style="font-size:15px;font-weight:800;margin-bottom:6px;color:var(--text-primary);line-height:1.4;">\${n.headline}</div>
+                                <div style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin-bottom:8px;">\${n.summary}</div>
+                                <div style="font-size:11px;font-weight:700;color:var(--text-accent);">\${n.source}</div>
+                            </div>
+                        \`;
+                    });
+                    
+                    html += \`</div></div>\`;
+                });
+                html += '</div>';
+                html += \`<div style="text-align:right; margin-top:12px; font-size:11px; color:var(--text-secondary); font-style:italic;">Generated by Gemini AI • Last Refreshed: \${data.timestamp}</div>\`;
+                content.innerHTML = html;
+            } catch (err) {
+                content.innerHTML = \`<div class="card" style="text-align:center; padding:40px; border-color:var(--red);">
+                    <div style="font-size:40px; margin-bottom:16px;">⚠️</div>
+                    <div style="color:var(--red); font-weight:800; font-size:18px;">Failed to load War News</div>
+                    <div style="color:var(--text-secondary); margin-top:8px;">\${err.message}</div>
+                </div>\`;
+            }
+        };
+
+        const refreshBtn = document.getElementById('btn-refresh-warnews');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => load(true));
+        }
+
+        load(false);
+    },
+
     renderScreener(container) {
         container.innerHTML = `
             <div style="margin-bottom:24px">
@@ -369,6 +471,13 @@ const app = {
                     <div class="feature-link">Explore →</div>
                 </a>
                 
+                <a href="#war-news" class="feature-card" style="--card-color: #ef4444">
+                    <div class="feature-icon">📰</div>
+                    <div class="feature-title">War News</div>
+                    <div class="feature-desc">Global war & geopolitical news from US, Iran, Crude Oil, and Hormuz perspectives.</div>
+                    <div class="feature-link">Read News →</div>
+                </a>
+
                 <a href="#action" class="feature-card" style="--card-color: #f59e0b">
                     <div class="feature-icon">⚡</div>
                     <div class="feature-title">Stock Action</div>

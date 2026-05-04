@@ -780,9 +780,53 @@ def fetch_global_news_gemini():
     return []
 
 
+def fetch_war_news_gemini():
+    if not GEMINI_API_KEY:
+        return []
+    try:
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        prompt = (
+            "You are a global war and geopolitical news aggregator. "
+            "Identify the most important recent war-related news stories from the last 24-48 hours. "
+            "Provide news from exactly these 4 perspectives: US, Iran, Crude Oil, and Hormuz. "
+            "Return a maximum of 15 news items in total. "
+            "Return ONLY valid JSON \u2014 no markdown, no backticks. "
+            "JSON structure: [{\"headline\": \"...\", \"summary\": \"...\", \"perspective\": \"US\"|\"Iran\"|\"Crude Oil\"|\"Hormuz\", \"source\": \"...\"}]"
+        )
+        MODELS = ["gemini-3.1-flash-lite-preview", "gemini-3-flash-preview", "gemini-flash-latest"]
+        for model in MODELS:
+            try:
+                resp = client.models.generate_content(model=model, contents=prompt)
+                text = resp.text or ""
+                clean = text.replace("```json","").replace("```","").strip()
+                s = clean.find("[")
+                e = clean.rfind("]")
+                if s != -1 and e != -1:
+                    return json.loads(clean[s:e+1])
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return []
+
+
 # ══════════════════════════════════════════════════════════════
 #  API ROUTES
 # ══════════════════════════════════════════════════════════════
+
+@app.route("/api/war_news")
+def api_war_news():
+    try:
+        news = fetch_war_news_gemini()
+        return jsonify({
+            "news": news,
+            "timestamp": datetime.now().strftime("%d %b %Y  %H:%M:%S")
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
 
 @app.route("/api/global_market")
 def api_global_market():
