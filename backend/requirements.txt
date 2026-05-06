@@ -10,3 +10,4 @@ certifi
 curl_cffi
 pandas
 lxml
+beautifulsoup4

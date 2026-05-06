@@ -50,6 +50,9 @@ const app = {
             case 'war-news':
                 this.renderWarNews(container);
                 break;
+            case 'telegram':
+                this.renderTelegramFeed(container);
+                break;
             case 'screener':
                 this.renderScreener(container);
                 break;
@@ -319,6 +322,68 @@ const app = {
         load(false);
     },
 
+    renderTelegramFeed(container) {
+        container.innerHTML = `
+            <div style="margin-bottom:24px; display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">💬 Telegram Feed</h2>
+                    <p style="font-size:13px;color:var(--text-secondary)">Live updates from our official Telegram channel.</p>
+                </div>
+                <button id="btn-refresh-telegram" class="btn" style="background:#2AABEE;color:white;padding:8px 16px;font-size:13px;border-radius:24px;">🔄 Refresh Feed</button>
+            </div>
+            <div id="telegram-content">
+                <div class="card" style="text-align:center;padding:40px">
+                    <div class="big-spinner"></div>
+                    <div style="color:#2AABEE;font-weight:600;margin-top:16px;">Loading Telegram Messages...</div>
+                </div>
+            </div>
+        `;
+
+        const load = async () => {
+            const content = document.getElementById('telegram-content');
+            try {
+                const data = await api.fetchTelegramFeed();
+                if (data.error) throw new Error(data.error);
+                
+                if (!data.messages || data.messages.length === 0) {
+                    content.innerHTML = `<div class="card" style="text-align:center;padding:40px;color:var(--text-secondary)">No recent messages found.</div>`;
+                    return;
+                }
+
+                let html = '<div style="display:flex; flex-direction:column; gap:16px; max-width:700px; margin:0 auto;">';
+                data.messages.forEach(msg => {
+                    html += `
+                        <div class="card" style="border-left: 4px solid #2AABEE; padding:16px;">
+                            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
+                                <div style="font-weight:700; color:#2AABEE;">Market Wisdom</div>
+                                <div style="font-size:11px; color:var(--text-secondary);">${msg.timestamp.replace('+00:00', '')}</div>
+                            </div>
+                            <div style="font-size:14px; line-height:1.6; color:var(--text-primary); white-space:pre-wrap;">${msg.text}</div>
+                            ${msg.link ? `<div style="margin-top:12px;text-align:right;"><a href="${msg.link}" target="_blank" style="font-size:12px; color:#2AABEE; text-decoration:none;">View on Telegram →</a></div>` : ''}
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                html += `<div style="text-align:center; margin-top:20px; font-size:11px; color:var(--text-secondary); font-style:italic;">Last Refreshed: ${data.fetch_time}</div>`;
+                content.innerHTML = html;
+            } catch (err) {
+                content.innerHTML = `<div class="card" style="text-align:center; padding:40px; border-color:var(--red);">
+                    <div style="font-size:40px; margin-bottom:16px;">⚠️</div>
+                    <div style="color:var(--red); font-weight:800; font-size:18px;">Failed to load Telegram Feed</div>
+                    <div style="color:var(--text-secondary); margin-top:8px;">${err.message}</div>
+                </div>`;
+            }
+        };
+
+        const refreshBtn = document.getElementById('btn-refresh-telegram');
+        if (refreshBtn) refreshBtn.addEventListener('click', () => {
+            document.getElementById('telegram-content').innerHTML = '<div class="card" style="text-align:center;padding:40px"><div class="big-spinner"></div></div>';
+            load();
+        });
+
+        load();
+    },
+
     renderScreener(container) {
         container.innerHTML = `
             <div style="margin-bottom:24px">
@@ -458,12 +523,19 @@ const app = {
                 </h1>
                 <p style="color:var(--text-secondary);font-size:14px">Powered by Google Gemini · yfinance · Screener.in · Chartink</p>
                 <div style="margin-top: 24px;">
-                    <a href="#" target="_blank" style="display:inline-flex;align-items:center;gap:8px;background:#2AABEE;color:white;padding:10px 20px;border-radius:24px;text-decoration:none;font-weight:600;font-size:14px;box-shadow: 0 4px 15px rgba(42, 171, 238, 0.3);">
-                        <span style="font-size:18px;">✈️</span> This is our Telegram channel, you can visit this link for more details.
+                    <a href="https://t.me/marketwisdom_official" target="_blank" style="display:inline-flex;align-items:center;gap:8px;background:#2AABEE;color:white;padding:10px 20px;border-radius:24px;text-decoration:none;font-weight:600;font-size:14px;box-shadow: 0 4px 15px rgba(42, 171, 238, 0.3);">
+                        <span style="font-size:18px;">✈️</span> Join our official Telegram channel for live updates.
                     </a>
                 </div>
             </div>
             <div class="feature-grid">
+                <a href="#telegram" class="feature-card" style="--card-color: #2AABEE">
+                    <div class="feature-icon" style="color:#2AABEE">💬</div>
+                    <div class="feature-title">Telegram Feed</div>
+                    <div class="feature-desc">Live messages and updates directly from our Telegram group.</div>
+                    <div class="feature-link">View Feed →</div>
+                </a>
+
                 <a href="#stock" class="feature-card" style="--card-color: #818cf8">
                     <div class="feature-icon">🔍</div>
                     <div class="feature-title">Stock Research</div>

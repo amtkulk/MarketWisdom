@@ -5,6 +5,8 @@ from datetime import datetime, date
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from database import init_db, add_or_update_stock, delete_stock, get_all_stocks
+from curl_cffi import requests as cffi_requests
+from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 # Enable CORS for all routes so the React frontend can talk to this API
@@ -816,16 +818,71 @@ def fetch_war_news_gemini():
 #  API ROUTES
 # ══════════════════════════════════════════════════════════════
 
-@app.route("/api/war_news")
-def api_war_news():
+@app.route('/api/war_news', methods=['GET'])
+def get_war_news():
+    data = fetch_war_news_gemini()
+    return jsonify(data)
+
+def fetch_telegram_messages(channel_name="marketwisdom_official"):
+    """Scrapes the public preview page of a Telegram channel."""
+    url = f"https://t.me/s/{channel_name}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
     try:
-        news = fetch_war_news_gemini()
-        return jsonify({
-            "news": news,
-            "timestamp": datetime.now().strftime("%d %b %Y  %H:%M:%S")
-        })
+        res = cffi_requests.get(url, headers=headers, impersonate="chrome110", timeout=10)
+        if res.status_code != 200:
+            return {"error": f"Failed to fetch Telegram channel (Status {res.status_code})"}
+            
+        soup = BeautifulSoup(res.content, "html.parser")
+        messages = []
+        
+        # Telegram preview page uses 'tgme_widget_message' class for each post
+        post_elements = soup.find_all("div", class_="tgme_widget_message")
+        
+        for post in post_elements:
+            # Extract text
+            text_el = post.find("div", class_="tgme_widget_message_text")
+            # Convert <br> to newlines for better JSON formatting
+            if text_el:
+                for br in text_el.find_all("br"):
+                    br.replace_with("\\n")
+                text = text_el.get_text().replace("\\n", "\n").strip()
+            else:
+                text = ""
+                
+            # Extract timestamp
+            time_el = post.find("time")
+            timestamp = time_el.get("datetime") if time_el else ""
+            
+            # Extract post link
+            link_el = post.find("a", class_="tgme_widget_message_date")
+            link = link_el.get("href") if link_el else ""
+            
+            # Skip empty messages without text (like pure image posts if we don't handle them)
+            # Or we can include them. Let's include them.
+            messages.append({
+                "text": text,
+                "timestamp": timestamp,
+                "link": link
+            })
+            
+        # Return the last 20 messages in reverse chronological order (newest first)
+        messages.reverse()
+        return {
+            "channel": channel_name,
+            "messages": messages[:20],
+            "fetch_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        return {"error": str(e)}
+
+@app.route('/api/telegram_feed', methods=['GET'])
+def telegram_feed():
+    data = fetch_telegram_messages("marketwisdom_official")
+    return jsonify(data)
+
 
 
 @app.route("/api/global_market")
@@ -1154,6 +1211,70 @@ def api_screener_results():
 
 
 from flask import send_from_directory
+
+def fetch_telegram_messages(channel_name="marketwisdom_official"):
+    """Scrapes the public preview page of a Telegram channel."""
+    url = f"https://t.me/s/{channel_name}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    try:
+        res = cffi_requests.get(url, headers=headers, impersonate="chrome110", timeout=10, verify=False)
+        if res.status_code != 200:
+            return {"error": f"Failed to fetch Telegram channel (Status {res.status_code})"}
+            
+        soup = BeautifulSoup(res.content, "html.parser")
+        messages = []
+        
+        # Telegram preview page uses 'tgme_widget_message' class for each post
+        post_elements = soup.find_all("div", class_="tgme_widget_message")
+        
+        for post in post_elements:
+            # Extract text
+            text_el = post.find("div", class_="tgme_widget_message_text")
+            # Convert <br> to newlines for better JSON formatting
+            if text_el:
+                for br in text_el.find_all("br"):
+                    br.replace_with("\\n")
+                text = text_el.get_text().replace("\\n", "\n").strip()
+            else:
+                text = ""
+                
+            # Extract timestamp
+            time_el = post.find("time")
+            timestamp = time_el.get("datetime") if time_el else ""
+            
+            # Extract post link
+            link_el = post.find("a", class_="tgme_widget_message_date")
+            link = link_el.get("href") if link_el else ""
+            
+            # Skip empty messages without text
+            if not text:
+                continue
+                
+            messages.append({
+                "text": text,
+                "timestamp": timestamp,
+                "link": link
+            })
+            
+        # Return the last 20 messages in reverse chronological order (newest first)
+        messages.reverse()
+        return {
+            "channel": channel_name,
+            "messages": messages[:20],
+            "fetch_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.route("/api/telegram_feed")
+def api_telegram_feed():
+    # Use the public channel provided by the user
+    channel = "marketwisdom_official"
+    data = fetch_telegram_messages(channel)
+    return jsonify(data)
 
 @app.route("/")
 def index():

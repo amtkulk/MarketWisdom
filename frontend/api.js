@@ -201,5 +201,15 @@ const api = {
         // Cache for a long time (e.g. 600 mins = 10 hours) so it persists across tab switching
         Cache.set(cacheKey, data, 600);
         return data;
+    },
+
+    async fetchTelegramFeed() {
+        const res = await fetch(`${API_BASE_URL}/telegram_feed`);
+        if (!res.ok) {
+            let err;
+            try { err = await res.json(); } catch(e) { throw new Error(`Server returned HTML or invalid JSON (Status: ${res.status}).`); }
+            throw new Error(err.error || 'Failed to fetch Telegram Feed');
+        }
+        return res.json();
     }
 };
