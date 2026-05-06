@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "in.co.marketwisdom.twa",
+    "sha256_cert_fingerprints": ["FC:57:C7:80:E5:B9:8A:06:07:B6:BE:63:54:DF:B1:73:83:FB:D7:71:C9:5E:F5:BA:FE:B9:61:16:2E:37:44:BF"]
+  }
+}]
