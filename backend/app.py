@@ -18,8 +18,64 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "") # Fetch from environment (
 init_db()
 
 # ══════════════════════════════════════════════════════════════
+#  SIMPLE IN-PROCESS TTL CACHE
+#  Most endpoints re-fetch slow external data (yfinance / NSE / Gemini /
+#  Playwright) on every request even though that data barely changes minute
+#  to minute. This decorator stores a result for `ttl_seconds` and serves it
+#  instantly to everyone until it expires. No Redis needed.
+#
+#  Notes:
+#   - Thread-safe (we run many Waitress threads).
+#   - By default, empty/None/error results are NOT cached, so a transient
+#     failure is retried on the next request instead of being stuck.
+#   - Cache is per-process and clears on restart/redeploy (which is fine).
+# ══════════════════════════════════════════════════════════════
+import threading as _threading
+
+_cache_store = {}
+_cache_lock  = _threading.Lock()
+
+def _is_empty_result(val):
+    """Treat None, empty containers, {'error': ...}, and failed tuples as 'don't cache'."""
+    if val is None:
+        return True
+    if isinstance(val, dict) and "error" in val:
+        return True
+    if isinstance(val, (list, dict, str)) and len(val) == 0:
+        return True
+    # Several fetchers return a tuple whose FIRST element is the payload
+    # (e.g. (price, hi, lo) or (data, error)). A None first element = failure.
+    if isinstance(val, tuple):
+        if len(val) == 0 or val[0] is None:
+            return True
+    return False
+
+def cached(ttl_seconds, cache_empty=False):
+    def decorator(fn):
+        def wrapper(*args, **kwargs):
+            key = (fn.__name__, args, tuple(sorted(kwargs.items())))
+            now = time.time()
+            with _cache_lock:
+                entry = _cache_store.get(key)
+                if entry is not None:
+                    value, ts = entry
+                    if now - ts < ttl_seconds:
+                        return value
+            # Compute outside the lock so slow fetches don't block other keys.
+            result = fn(*args, **kwargs)
+            if cache_empty or not _is_empty_result(result):
+                with _cache_lock:
+                    _cache_store[key] = (result, now)
+            return result
+        wrapper.__name__ = fn.__name__
+        wrapper.__doc__  = fn.__doc__
+        return wrapper
+    return decorator
+
+# ══════════════════════════════════════════════════════════════
 #  HELPERS (Extracted directly from old app.py)
 # ══════════════════════════════════════════════════════════════
+@cached(120)            # live price: 2 min
 def fetch_live_price(ticker):
     try:
         import yfinance as yf
@@ -41,6 +97,7 @@ def fetch_live_price(ticker):
     return None, None, None
 
 
+@cached(900)            # 6mo daily candles: 15 min
 def fetch_ohlcv(ticker):
     """Fetch 6 months of daily OHLCV data from yfinance for candlestick chart."""
     try:
@@ -76,6 +133,7 @@ def fetch_ohlcv(ticker):
     return []
 
 
+@cached(1800)           # shareholding/quarterly: 30 min
 def fetch_screener_data(ticker):
     """Fetch live shareholding + quarterly results from Screener.in via Playwright."""
     try:
@@ -214,6 +272,7 @@ def fetch_screener_data(ticker):
     return result
 
 
+@cached(900)            # news: 15 min
 def fetch_news_rss(company_name):
     try:
         import urllib.request, urllib.parse, xml.etree.ElementTree as ET
@@ -243,6 +302,7 @@ def fetch_news_rss(company_name):
         return []
 
 
+@cached(1800)           # company analysis (Gemini): 30 min; only successes cached
 def fetch_gemini(company):
     if not GEMINI_API_KEY:
         return None, "GEMINI_API_KEY not set. Run: setx GEMINI_API_KEY your_key — then restart CMD."
@@ -351,6 +411,7 @@ def fetch_gemini(company):
     return None, f"All Gemini models failed. Error: {last_err[:200]}"
 
 
+@cached(1800)           # P/E (slow .info call): 30 min
 def fetch_pe(ticker):
     try:
         import yfinance as yf
@@ -527,6 +588,25 @@ def scrape_chartink(url, max_pages=3):
     return list(dict.fromkeys(all_names)), None
 
 
+_nse_cookie_cache = {"cookie": None, "ts": 0}
+_nse_cookie_lock  = _threading.Lock()
+
+def _get_nse_cookies(session_headers):
+    """Fetch NSE session cookies, reusing them for up to 3 min across requests."""
+    now = time.time()
+    with _nse_cookie_lock:
+        if _nse_cookie_cache["cookie"] and now - _nse_cookie_cache["ts"] < 180:
+            return _nse_cookie_cache["cookie"]
+    import urllib.request
+    req0 = urllib.request.Request("https://www.nseindia.com", headers=session_headers)
+    with urllib.request.urlopen(req0, timeout=3) as r:
+        raw_cookies = r.headers.get_all("Set-Cookie") or []
+        cookie_str  = "; ".join([c.split(";")[0] for c in raw_cookies])
+    with _nse_cookie_lock:
+        _nse_cookie_cache["cookie"] = cookie_str
+        _nse_cookie_cache["ts"]     = now
+    return cookie_str
+
 def get_nse_data(endpoint):
     import urllib.request, urllib.error
     session_headers = {
@@ -538,12 +618,7 @@ def get_nse_data(endpoint):
         "Connection":      "keep-alive",
     }
     try:
-        req0 = urllib.request.Request("https://www.nseindia.com", headers=session_headers)
-        with urllib.request.urlopen(req0, timeout=3) as r:
-            raw_cookies = r.headers.get_all("Set-Cookie") or []
-            cookie_str  = "; ".join([c.split(";")[0] for c in raw_cookies])
-
-        session_headers["Cookie"] = cookie_str
+        session_headers["Cookie"] = _get_nse_cookies(session_headers)
         req = urllib.request.Request(
             f"https://www.nseindia.com{endpoint}",
             headers=session_headers
@@ -555,8 +630,12 @@ def get_nse_data(endpoint):
                 raw = gzip.decompress(raw)
             return json.loads(raw.decode("utf-8"))
     except Exception as e:
+        # On failure, drop cached cookies so the next call re-handshakes.
+        with _nse_cookie_lock:
+            _nse_cookie_cache["cookie"] = None
         return None
 
+@cached(180)            # option PCR: 3 min
 def fetch_pcr_data(symbol="NIFTY"):
     try:
         url = f"https://webapi.niftytrader.in/webapi/option/option-chain-data?symbol={symbol.lower()}"
@@ -615,6 +694,7 @@ def fetch_pcr_data(symbol="NIFTY"):
         return None
 
 
+@cached(300)            # nifty 1y chart: 5 min
 def fetch_nifty_chart_data():
     try:
         import yfinance as yf
@@ -665,6 +745,7 @@ def fetch_nifty_chart_data():
     except Exception as e:
         return None
 
+@cached(600)            # FII stats: 10 min
 def fetch_fii_data():
     try:
         data = get_nse_data("/api/fii-stats?type=equity")
@@ -700,6 +781,7 @@ def fetch_fii_data():
     except Exception as e:
         return None
 
+@cached(600)            # FII derivatives: 10 min
 def fetch_fii_derivative_stats():
     try:
         data = get_nse_data("/api/participant-wise-trading-date-wise?tradeDate=&category=FIIS")
@@ -712,6 +794,7 @@ def fetch_fii_derivative_stats():
         return None
 
 
+@cached(180)            # 16 global tickers: 3 min
 def fetch_global_market_data():
     import yfinance as yf
     import concurrent.futures
@@ -751,6 +834,7 @@ def fetch_global_market_data():
     return results
 
 
+@cached(900)            # global news (Gemini): 15 min
 def fetch_global_news_gemini():
     if not GEMINI_API_KEY:
         return []
@@ -782,6 +866,7 @@ def fetch_global_news_gemini():
     return []
 
 
+@cached(900)            # war news (Gemini): 15 min
 def fetch_war_news_gemini():
     if not GEMINI_API_KEY:
         return []
@@ -913,27 +998,50 @@ def api_stock():
         if err:
             return jsonify({"error": err}), 400
 
-        t = ticker or data.get("ticker","")
-        if t:
-            price, hi52, lo52 = fetch_live_price(t)
-            if price:
-                data["current_price"] = str(price)
-                data["week_52_high"]  = str(hi52)
-                data["week_52_low"]   = str(lo52)
-                
-            sc = fetch_screener_data(t)
-            if sc.get("holdings"):
-                data["holdings"] = sc["holdings"]
-            if sc.get("quarterly_results"):
-                data["quarterly_results"] = sc["quarterly_results"]
+        # Gemini must run first (it resolves the ticker + base analysis).
+        # Everything below is independent, so run it all concurrently instead
+        # of one-after-another. This is the main latency win for this endpoint.
+        import concurrent.futures
+        t        = ticker or data.get("ticker", "")
+        news_for = data.get("company_name", company)
 
-            ohlcv = fetch_ohlcv(t)
-            if ohlcv:
-                data["ohlcv"] = ohlcv
+        tasks = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+            if t:
+                tasks["price"]    = ex.submit(fetch_live_price, t)
+                tasks["screener"] = ex.submit(fetch_screener_data, t)
+                tasks["ohlcv"]    = ex.submit(fetch_ohlcv, t)
+            tasks["news"] = ex.submit(fetch_news_rss, news_for)
 
-        news = fetch_news_rss(data.get("company_name", company))
-        if news:
-            data["news"] = news
+            def _safe(key, default):
+                fut = tasks.get(key)
+                if not fut:
+                    return default
+                try:
+                    return fut.result()
+                except Exception:
+                    return default
+
+            if t:
+                price, hi52, lo52 = _safe("price", (None, None, None))
+                if price:
+                    data["current_price"] = str(price)
+                    data["week_52_high"]  = str(hi52)
+                    data["week_52_low"]   = str(lo52)
+
+                sc = _safe("screener", {}) or {}
+                if sc.get("holdings"):
+                    data["holdings"] = sc["holdings"]
+                if sc.get("quarterly_results"):
+                    data["quarterly_results"] = sc["quarterly_results"]
+
+                ohlcv = _safe("ohlcv", []) 
+                if ohlcv:
+                    data["ohlcv"] = ohlcv
+
+            news = _safe("news", [])
+            if news:
+                data["news"] = news
 
         today    = date.today()
         live_mtg = []

@@ -16,5 +16,8 @@ COPY . /app
 # Switch to backend dir to run app.py
 WORKDIR /app/backend
 
-# Run with waitress on the dynamic PORT provided by the host, defaulting to 5000
-CMD ["sh", "-c", "waitress-serve --port=${PORT:-5000} app:app"]
+# Run with waitress on the dynamic PORT provided by the host, defaulting to 5000.
+# --threads raised from the default 4 to 24: every endpoint is I/O-bound (waiting on
+# yfinance / NSE / Gemini / Playwright), so extra threads let many users be served at
+# once instead of queueing behind 4 slots. Tune down if the instance runs low on memory.
+CMD ["sh", "-c", "waitress-serve --port=${PORT:-5000} --threads=24 app:app"]
