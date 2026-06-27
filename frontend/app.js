@@ -59,6 +59,9 @@ const app = {
             case 'stock':
                 this.renderStock(container);
                 break;
+            case 'overview':
+                this.renderStockOverview(container);
+                break;
             case 'action':
                 this.renderStockAction(container);
                 break;
@@ -587,6 +590,199 @@ const app = {
             </div>
             <footer>Market Research Hub · For informational purposes only · Not investment advice</footer>
         `;
+    },
+
+    renderStockOverview(container) {
+        container.innerHTML = `
+            <div style="margin-bottom:24px">
+                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🧭 Stock Overview</h2>
+                <p style="font-size:13px;color:var(--text-secondary)">Live price · CAGR · RSI · Chart · Shareholding · Quarterly Results · News — sourced from NSE, Screener.in &amp; computed indicators</p>
+            </div>
+            <div class="card">
+                <div style="display:flex;gap:10px;flex-wrap:wrap">
+                    <input type="text" id="ovr-company" placeholder="Company name or NSE ticker e.g. Reliance / RELIANCE" style="flex:2;min-width:200px"/>
+                    <button class="btn" id="btn-overview">Get Overview</button>
+                </div>
+                <div style="font-size:11px;color:var(--text-secondary);margin-top:10px">⚡ Fast mode: numbers are pulled from real sources and computed, not AI-generated. Typically 5-10 seconds; repeat lookups are instant.</div>
+            </div>
+            <div id="overview-result"></div>
+        `;
+
+        const run = async () => {
+            const raw = document.getElementById('ovr-company').value.trim();
+            if (!raw) return alert('Please enter a company name or ticker');
+            // If the user typed something that looks like a bare ticker (all caps, no spaces), pass it as ticker.
+            const looksLikeTicker = /^[A-Z0-9&.-]{2,20}$/.test(raw) && !raw.includes(' ');
+            const company = looksLikeTicker ? raw : raw;
+            const ticker  = looksLikeTicker ? raw.toUpperCase() : '';
+
+            const btn = document.getElementById('btn-overview');
+            const resDiv = document.getElementById('overview-result');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span>';
+            resDiv.innerHTML = `
+                <div class="card" style="text-align:center;padding:40px">
+                    <div class="big-spinner"></div>
+                    <div style="color:var(--text-accent);font-weight:600">Building overview for ${raw}...</div>
+                    <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">Fetching NSE price, Screener.in fundamentals &amp; computing technicals.</div>
+                </div>
+            `;
+            try {
+                const data = await api.fetchStockOverview(company, ticker);
+                this.renderOverviewResult(resDiv, data);
+            } catch (err) {
+                resDiv.innerHTML = `<div class="error">❌ ${err.message}</div>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Get Overview';
+            }
+        };
+
+        document.getElementById('btn-overview').addEventListener('click', run);
+        document.getElementById('ovr-company').addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+    },
+
+    renderOverviewResult(container, d) {
+        let html = '';
+
+        // Header
+        html += `
+            <div class="card" style="background:linear-gradient(135deg,rgba(16,185,129,0.1),rgba(99,102,241,0.05)); border-color:var(--border-color)">
+                <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px">
+                    <div style="flex:1;min-width:240px">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+                            <span style="font-size:20px;font-weight:800">${d.company_name || ''}</span>
+                            <span class="badge badge-blue">${d.ticker || ''}</span>
+                            <span style="font-size:11px;color:var(--text-secondary)">${d.sector || ''}</span>
+                        </div>
+                        <p style="font-size:13px;color:#94a3b8;line-height:1.7;max-width:520px;margin-bottom:12px">${d.description || ''}</p>
+                        ${Components.RatingButtons(d.ticker, d.company_name, d.sector, d.current_price)}
+                    </div>
+                    <div style="text-align:right">
+                        <div style="font-size:28px;font-weight:800">Rs.${d.current_price || 'N/A'}</div>
+                        <div style="font-size:12px;margin-top:4px">
+                            <span style="color:var(--green)">52W H: Rs.${d.week_52_high || 'N/A'}</span>
+                            <span style="color:var(--text-secondary)"> | </span>
+                            <span style="color:var(--red)">52W L: Rs.${d.week_52_low || 'N/A'}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // CAGR
+        if (d.cagr) {
+            html += `<div class="card"><div class="section-title">CAGR Returns <span style="font-size:11px;font-weight:500;color:var(--text-secondary)">· computed from price history</span></div><div class="stat-grid">`;
+            Object.entries({ 'YTD': 'ytd', '3 Year': '3yr', '5 Year': '5yr', '10 Year': '10yr' }).forEach(([lbl, key]) => {
+                const val = d.cagr[key] || 'N/A';
+                const num = parseFloat(val);
+                const col = isNaN(num) ? 'var(--text-secondary)' : num >= 0 ? 'var(--green)' : 'var(--red)';
+                html += Components.StatCard(lbl, val, col);
+            });
+            html += `</div></div>`;
+        }
+
+        // Technical Analysis (computed)
+        if (d.candle_analysis) {
+            const ca = d.candle_analysis;
+            html += `<div class="card" style="border-color:rgba(16,185,129,0.2)">`;
+            html += `<div class="section-title">Technical Analysis <span style="font-size:11px;font-weight:500;color:var(--text-secondary)">· computed</span></div>`;
+            html += Components.RsiGauge(ca.rsi_value, ca.rsi_signal);
+            if (ca.rsi_note) html += `<p style="font-size:12px;color:var(--text-secondary);margin-bottom:14px">${ca.rsi_note}</p>`;
+            html += Components.CheckRow('Trading above 21 EMA', ca.above_21_ema_daily, '', ca.ema_note);
+            html += Components.CheckRow('Price-volume breakout', ca.price_volume_breakout, '', ca.breakout_note);
+            html += Components.CheckRow('Volume spurt detected', ca.volume_spurt, '', ca.volume_note);
+            html += `</div>`;
+        }
+
+        // Fundamentals (Screener.in)
+        if (d.fundamental_checks) {
+            const fc = d.fundamental_checks;
+            html += `<div class="card" style="border-color:rgba(251,191,36,0.15)">`;
+            html += `<div class="section-title">Fundamental Checks <span style="font-size:11px;font-weight:500;color:var(--text-secondary)">· Screener.in</span></div>`;
+            html += Components.CheckRow('ROE > 20%', fc.roe_above_20, fc.roe_value, fc.roe_note);
+            html += Components.CheckRow('ROCE > 20%', fc.roce_above_20, fc.roce_value, fc.roce_note);
+            html += Components.CheckRow('Sales CAGR (15-20%)', fc.sales_cagr_15_to_20, fc.sales_cagr_value, fc.sales_cagr_note);
+            html += `</div>`;
+        }
+
+        // Quarterly Results
+        if (d.quarterly_results) {
+            const qr = d.quarterly_results;
+            html += `<div class="card"><div class="section-title">Quarterly Results <span style="font-size:11px;font-weight:500;color:var(--text-secondary)">· Screener.in</span></div><div style="overflow-x:auto"><table style="width:100%;text-align:right"><thead><tr><th style="text-align:left;padding-bottom:8px;color:var(--text-secondary)">Metric</th>`;
+            qr.quarters.forEach(q => html += `<th style="padding-bottom:8px;color:var(--text-secondary)">${q}</th>`);
+            html += `</tr></thead><tbody>`;
+            const addQrRow = (label, dataArr, yoyArr) => {
+                if (!dataArr) return;
+                html += `<tr><td style="text-align:left;font-weight:600;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">${label}</td>`;
+                dataArr.forEach((v, i) => {
+                    const yoy = yoyArr ? yoyArr[i] : null;
+                    const yoyHtml = yoy && yoy !== 'N/A' ? `<br><span style="font-size:10px;color:${yoy.startsWith('+') ? 'var(--green)' : 'var(--red)'}">${yoy} YoY</span>` : '';
+                    html += `<td style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">${v}${yoyHtml}</td>`;
+                });
+                html += `</tr>`;
+            };
+            addQrRow('Revenue', qr.revenue, qr.revenue_yoy);
+            addQrRow('Net Profit', qr.profit, qr.profit_yoy);
+            addQrRow('EPS', qr.eps, qr.eps_yoy);
+            html += `</tbody></table></div></div>`;
+        }
+
+        // Shareholding
+        if (d.holdings) {
+            const sh = d.holdings;
+            html += `<div class="card"><div class="section-title">Shareholding Pattern <span style="font-size:11px;font-weight:500;color:var(--text-secondary)">· Screener.in</span></div><div style="overflow-x:auto"><table style="width:100%;text-align:right"><thead><tr><th style="text-align:left;padding-bottom:8px;color:var(--text-secondary)">Investor</th>`;
+            sh.quarters.forEach(q => html += `<th style="padding-bottom:8px;color:var(--text-secondary)">${q}</th>`);
+            html += `</tr></thead><tbody>`;
+            const addShRow = (label, dataArr) => {
+                if (!dataArr || dataArr[0] === 'N/A') return;
+                html += `<tr><td style="text-align:left;font-weight:600;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">${label}</td>`;
+                dataArr.forEach(v => html += `<td style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">${v}${v !== 'N/A' ? '%' : ''}</td>`);
+                html += `</tr>`;
+            };
+            addShRow('Promoters', sh.promoter);
+            addShRow('FIIs', sh.fii);
+            addShRow('DIIs', sh.dii);
+            html += `</tbody></table></div></div>`;
+        }
+
+        // Chart
+        if (d.ohlcv && d.ohlcv.length > 0) {
+            html += `
+            <div class="card">
+                <div class="section-title">6-Month Price Action (Daily)</div>
+                <canvas id="overviewCanvas-${d.ticker}" style="width:100%;height:320px;background:#0d1424;border-radius:6px"></canvas>
+                <div style="display:flex;gap:16px;margin-top:10px;font-size:11px;color:var(--text-secondary);flex-wrap:wrap">
+                    <span><span style="display:inline-block;width:10px;height:10px;background:var(--green);border-radius:2px;margin-right:4px"></span>Bullish</span>
+                    <span><span style="display:inline-block;width:10px;height:10px;background:var(--red);border-radius:2px;margin-right:4px"></span>Bearish</span>
+                    <span><span style="display:inline-block;width:20px;height:2px;background:#f59e0b;vertical-align:middle;margin-right:4px"></span>21 EMA</span>
+                    <span><span style="display:inline-block;width:20px;height:2px;background:#818cf8;vertical-align:middle;margin-right:4px"></span>200 DMA</span>
+                </div>
+            </div>`;
+            setTimeout(() => app.drawChart(`overviewCanvas-${d.ticker}`, d.ohlcv), 100);
+        }
+
+        // News
+        if (d.news && d.news.length > 0) {
+            html += `<div class="card"><div class="section-title">Recent News</div><div style="display:flex;flex-direction:column;gap:12px">`;
+            d.news.slice(0, 5).forEach(n => {
+                html += `
+                <div style="padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.05)">
+                    <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${n.headline}</div>
+                    <div style="font-size:11px;color:var(--text-secondary)">
+                        <span style="color:var(--text-accent)">${n.source}</span> • ${n.date}
+                    </div>
+                </div>`;
+            });
+            html += `</div></div>`;
+        }
+
+        // Sources footer
+        html += `<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin:8px 0 24px">
+            Sources: Price &amp; 52W — NSE / yfinance · Fundamentals &amp; shareholding — Screener.in · RSI / EMA / CAGR — computed · Description — Gemini · News — Google News
+        </div>`;
+
+        container.innerHTML = html;
     },
 
     renderStock(container) {

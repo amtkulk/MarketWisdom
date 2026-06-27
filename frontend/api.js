@@ -47,6 +47,26 @@ const api = {
         return data;
     },
 
+    async fetchStockOverview(company, ticker) {
+        const cacheKey = `overview_${company}_${ticker}`;
+        const cached = Cache.get(cacheKey);
+        if (cached) return cached;
+
+        const res = await fetch(`${API_BASE_URL}/stock_overview`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ company, ticker })
+        });
+        if (!res.ok) {
+            let err;
+            try { err = await res.json(); } catch(e) { throw new Error(`Server returned HTML or invalid JSON (Status: ${res.status}). The task likely timed out.`); }
+            throw new Error(err.error || 'Failed to fetch stock overview');
+        }
+        const data = await res.json();
+        Cache.set(cacheKey, data, 60);
+        return data;
+    },
+
     async fetchStockAction(company, ticker) {
         const cacheKey = `action_${company}_${ticker}`;
         const cached = Cache.get(cacheKey);
