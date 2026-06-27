@@ -76,10 +76,36 @@ def cached(ttl_seconds, cache_empty=False):
 #  HELPERS (Extracted directly from old app.py)
 # ══════════════════════════════════════════════════════════════
 @cached(120)            # live price: 2 min
+def fetch_quote_nse(ticker):
+    """Fast live price + 52-week high/low from NSE's own quote API (uses cached NSE
+    session cookies). Returns (price, hi52, lo52) or (None, None, None)."""
+    try:
+        data = get_nse_data(f"/api/quote-equity?symbol={ticker}")
+        if not data:
+            return None, None, None
+        pi = data.get("priceInfo", {}) or {}
+        wk = pi.get("weekHighLow", {}) or {}
+        price = pi.get("lastPrice")
+        if price:
+            price = round(float(price), 2)
+            hi52  = round(float(wk.get("max")), 2) if wk.get("max") else price
+            lo52  = round(float(wk.get("min")), 2) if wk.get("min") else price
+            return price, hi52, lo52
+    except Exception:
+        pass
+    return None, None, None
+
+
 def fetch_live_price(ticker):
+    # Fast path: NSE's official quote endpoint.
+    p, hi, lo = fetch_quote_nse(ticker)
+    if p:
+        return p, hi, lo
+    # Fallback: yfinance (.NS then .BO only — dropping the bare-symbol attempt that
+    # rarely matches Indian tickers and just added a slow extra round trip).
     try:
         import yfinance as yf
-        for suffix in [".NS", ".BO", ""]:
+        for suffix in [".NS", ".BO"]:
             try:
                 t    = yf.Ticker(ticker + suffix)
                 hist = t.history(period="5d")
@@ -102,7 +128,7 @@ def fetch_ohlcv(ticker):
     """Fetch 6 months of daily OHLCV data from yfinance for candlestick chart."""
     try:
         import yfinance as yf
-        for suffix in [".NS", ".BO", ""]:
+        for suffix in [".NS", ".BO"]:
             try:
                 t    = yf.Ticker(ticker + suffix)
                 df   = t.history(period="6mo", interval="1d")
@@ -133,9 +159,172 @@ def fetch_ohlcv(ticker):
     return []
 
 
+# ── Screener.in parsing helpers (shared by the fast HTTP path and the Playwright fallback) ──
+def _build_holdings(hdrs, rows):
+    """Build the 'holdings' dict from an extracted shareholding table {hdrs, rows}."""
+    if not hdrs or not rows:
+        return None
+    n   = len(hdrs)
+    idx = list(range(max(0, n - 4), n))
+    q4  = [hdrs[i] for i in idx]
+
+    def get_row(keys):
+        for k, v in rows.items():
+            if any(key in k for key in keys):
+                return [str(v[i]) if i < len(v) else 'N/A' for i in idx]
+        return ['N/A'] * 4
+
+    promoter = get_row(['promoter'])
+    fii      = get_row(['fii', 'foreign'])
+    dii      = get_row(['dii', 'domestic'])
+    if q4 and promoter[0] != 'N/A':
+        return {'quarters': q4, 'promoter': promoter, 'fii': fii, 'dii': dii}
+    return None
+
+
+def _build_quarterly(hdrs, rows):
+    """Build the 'quarterly_results' dict from an extracted quarterly table {hdrs, rows}."""
+    if not hdrs or not rows:
+        return None
+    n     = len(hdrs)
+    num_q = min(3, n)
+    ci    = list(range(n - num_q, n))
+    yi    = [max(0, i - 4) for i in ci]
+    qlbls = [hdrs[i] for i in ci]
+
+    def get_qr(keys):
+        for k, v in rows.items():
+            if any(key in k for key in keys):
+                return [str(v[i]).strip() + ' cr' if i < len(v) else 'N/A' for i in ci]
+        return ['N/A'] * num_q
+
+    def get_yoy(keys):
+        for k, v in rows.items():
+            if any(key in k for key in keys):
+                out = []
+                for c2, p2 in zip(ci, yi):
+                    try:
+                        cv2 = float(str(v[c2]).replace(',', ''))
+                        pv2 = float(str(v[p2]).replace(',', ''))
+                        if pv2 != 0 and c2 != p2:
+                            pct = round((cv2 - pv2) / abs(pv2) * 100, 1)
+                            out.append(f"+{pct}%" if pct >= 0 else f"{pct}%")
+                        else:
+                            out.append('N/A')
+                    except Exception:
+                        out.append('N/A')
+                return out          # (fix: original dropped successful YoY rows)
+        return ['N/A'] * num_q
+
+    revenue = get_qr(['sales', 'revenue', 'net sales'])
+    profit  = get_qr(['net profit', 'profit after tax', 'pat'])
+    eps_v   = get_qr(['eps', 'earning'])
+    if qlbls and revenue[0] != 'N/A':
+        return {
+            'quarters':    qlbls,
+            'revenue':     revenue,
+            'revenue_yoy': get_yoy(['sales', 'revenue', 'net sales']),
+            'profit':      profit,
+            'profit_yoy':  get_yoy(['net profit', 'profit after tax', 'pat']),
+            'eps':         [e.replace(' cr', '') for e in eps_v],
+            'eps_yoy':     get_yoy(['eps', 'earning']),
+        }
+    return None
+
+
+def _extract_screener_table(table):
+    """Extract (hdrs, rows) from a BeautifulSoup <table>, mirroring the JS extraction."""
+    hdrs = []
+    thead = table.find("thead")
+    if thead:
+        hdrs = [th.get_text(strip=True) for th in thead.find_all("th")]
+    rows = {}
+    tbody = table.find("tbody")
+    if tbody:
+        for tr in tbody.find_all("tr"):
+            cells = [td.get_text(strip=True) for td in tr.find_all("td")]
+            if len(cells) > 1:
+                rows[cells[0].lower()] = cells[1:]
+    return hdrs, rows
+
+
+def fetch_screener_http(ticker):
+    """FAST path: Screener.in shareholding + quarterly via a plain HTTP GET (no browser).
+    Screener renders these tables server-side, so this is ~1-2s vs ~10s for a Chromium
+    launch. Returns {} on any failure so the caller falls back to Playwright."""
+    result = {}
+    url     = f"https://www.screener.in/company/{ticker}/consolidated/"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    try:
+        res = cffi_requests.get(url, headers=headers, impersonate="chrome120", timeout=8)
+        if res.status_code != 200:
+            return {}
+        soup = BeautifulSoup(res.content, "html.parser")
+
+        # Shareholding
+        try:
+            sec = soup.find(id="shareholding")
+            if sec is None:
+                for s in soup.find_all("section"):
+                    if "Shareholding Pattern" in (s.get_text() or ""):
+                        sec = s
+                        break
+            if sec is not None:
+                best, best_cols = None, 0
+                for t in sec.find_all("table"):
+                    cols = len(t.select("thead th"))
+                    if cols > best_cols:
+                        best_cols, best = cols, t
+                if best is not None:
+                    hdrs, rows = _extract_screener_table(best)
+                    hdrs = [h for h in hdrs if h and len(h) > 2]
+                    rows = {k: [c.replace('%', '') for c in v] for k, v in rows.items()}
+                    holdings = _build_holdings(hdrs, rows)
+                    if holdings:
+                        result['holdings'] = holdings
+        except Exception:
+            pass
+
+        # Quarterly results
+        try:
+            sec = soup.find(id="quarters")
+            if sec is None:
+                for s in soup.find_all("section"):
+                    if (s.get_text() or "").strip().startswith("Quarterly"):
+                        sec = s
+                        break
+            if sec is not None:
+                table = sec.find("table")
+                if table is not None:
+                    hdrs, rows = _extract_screener_table(table)
+                    hdrs = [h for h in hdrs if h and len(h) > 1]
+                    rows = {k: [c.replace(',', '') for c in v] for k, v in rows.items()}
+                    quarterly = _build_quarterly(hdrs, rows)
+                    if quarterly:
+                        result['quarterly_results'] = quarterly
+        except Exception:
+            pass
+
+        return result
+    except Exception:
+        return {}
+
+
 @cached(1800)           # shareholding/quarterly: 30 min
 def fetch_screener_data(ticker):
-    """Fetch live shareholding + quarterly results from Screener.in via Playwright."""
+    """Dispatcher: try the fast HTTP path first; fall back to the Playwright scrape
+    only if HTTP returns nothing. Result is cached for 30 min either way."""
+    data = fetch_screener_http(ticker)
+    if data.get("holdings") or data.get("quarterly_results"):
+        return data
+    return _fetch_screener_playwright(ticker)
+
+
+def _fetch_screener_playwright(ticker):
+    """Fallback: Screener.in shareholding + quarterly via Playwright (slow, launches Chromium)."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -347,7 +536,10 @@ def fetch_gemini(company):
 
     client   = genai.Client(api_key=GEMINI_API_KEY)
     # Target models for 2026. Updated to handle current versioning.
-    MODELS   = ["gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview", "gemini-3-flash-preview", "gemini-flash-latest", "gemini-pro-latest"]
+    # Fast models first (flash) — the big research JSON on Pro was a major chunk of the
+    # 30-60s. Pro is kept as a last-resort fallback. Reorder if you prefer Pro's quality
+    # over speed.
+    MODELS   = ["gemini-3-flash-preview", "gemini-3.1-flash-lite-preview", "gemini-flash-latest", "gemini-3.1-pro-preview", "gemini-pro-latest"]
     last_err = "No models available"
 
     for model in MODELS:
@@ -994,24 +1186,24 @@ def api_stock():
         if not company:
             return jsonify({"error": "Company name is required"}), 400
 
-        data, err = fetch_gemini(company)
-        if err:
-            return jsonify({"error": err}), 400
+        # ── Resolve the ticker cheaply FIRST so we don't have to wait for the big
+        # Gemini analysis before starting the data fetches. If the client didn't pass
+        # a ticker, a tiny 10-token Gemini call (~1s) gets it. ──
+        if not ticker:
+            ticker = resolve_ticker_gemini(company) or ""
+        t = ticker
 
-        # Gemini must run first (it resolves the ticker + base analysis).
-        # Everything below is independent, so run it all concurrently instead
-        # of one-after-another. This is the main latency win for this endpoint.
+        # ── Now fire EVERYTHING at once: the heavy Gemini research call runs alongside
+        # price / screener / candles / news instead of blocking them. Total time becomes
+        # ~the single slowest call rather than the sum of all of them. ──
         import concurrent.futures
-        t        = ticker or data.get("ticker", "")
-        news_for = data.get("company_name", company)
-
-        tasks = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            tasks = {"gemini": pool.submit(fetch_gemini, company)}
             if t:
-                tasks["price"]    = ex.submit(fetch_live_price, t)
-                tasks["screener"] = ex.submit(fetch_screener_data, t)
-                tasks["ohlcv"]    = ex.submit(fetch_ohlcv, t)
-            tasks["news"] = ex.submit(fetch_news_rss, news_for)
+                tasks["price"]    = pool.submit(fetch_live_price, t)
+                tasks["screener"] = pool.submit(fetch_screener_data, t)
+                tasks["ohlcv"]    = pool.submit(fetch_ohlcv, t)
+            tasks["news"] = pool.submit(fetch_news_rss, company)
 
             def _safe(key, default):
                 fut = tasks.get(key)
@@ -1021,6 +1213,22 @@ def api_stock():
                     return fut.result()
                 except Exception:
                     return default
+
+            data, err = _safe("gemini", (None, "Gemini analysis failed"))
+            if err or not data:
+                return jsonify({"error": err or "No analysis available"}), 400
+
+            # Prefer a real ticker from Gemini's analysis if the client gave none and
+            # the cheap resolver came back empty (data fetches just won't have run).
+            if not t and data.get("ticker"):
+                t = data["ticker"]
+
+            if t and "price" not in tasks:
+                # Rare path: ticker only became known from the Gemini analysis, so the
+                # data fetches weren't started above. Run them now (in parallel).
+                tasks["price"]    = pool.submit(fetch_live_price, t)
+                tasks["screener"] = pool.submit(fetch_screener_data, t)
+                tasks["ohlcv"]    = pool.submit(fetch_ohlcv, t)
 
             if t:
                 price, hi52, lo52 = _safe("price", (None, None, None))
@@ -1035,7 +1243,7 @@ def api_stock():
                 if sc.get("quarterly_results"):
                     data["quarterly_results"] = sc["quarterly_results"]
 
-                ohlcv = _safe("ohlcv", []) 
+                ohlcv = _safe("ohlcv", [])
                 if ohlcv:
                     data["ohlcv"] = ohlcv
 
