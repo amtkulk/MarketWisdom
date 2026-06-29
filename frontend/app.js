@@ -88,141 +88,132 @@ const app = {
 
     renderGlobalMarket(container) {
         container.innerHTML = `
-            <div style="margin-bottom:24px">
-                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🌍 Global Market Overview</h2>
-                <p style="font-size:13px;color:var(--text-secondary)">Real-time indices, futures, and curated global market news.</p>
+            <div style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                <div>
+                    <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🌍 Global Market Overview</h2>
+                    <p style="font-size:13px;color:var(--text-secondary)">Live indices, commodities & FX · accurate values · newest market news on top</p>
+                </div>
+                <button id="btn-refresh-global" class="btn" style="padding:8px 16px;font-size:13px;">🔄 Refresh</button>
             </div>
             <div id="global-content">
                 <div class="card" style="text-align:center;padding:40px">
                     <div class="big-spinner"></div>
-                    <div style="color:var(--text-accent);font-weight:600">Fetching Global Data...</div>
-                    <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">Gemini is curating news & fetching prices...</div>
+                    <div style="color:var(--text-accent);font-weight:600">Fetching global data...</div>
                 </div>
             </div>
         `;
 
+        const esc = (s) => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        const col = (v) => (v>0?'var(--green)':v<0?'var(--red)':'var(--text-secondary)');
+        const sign = (v) => (v>0?'+':'');
+        const fmtPrice = (p) => (p==='N/A'||p==null)?'N/A':Number(p).toLocaleString(undefined,{maximumFractionDigits:2});
+
+        const tableHTML = (title, emoji, items, accent) => {
+            if (!items || !items.length) return '';
+            let h = '<div class="card" style="padding:0;overflow:hidden;border-top:3px solid '+accent+'">'
+                + '<div style="padding:14px 16px;font-weight:800;color:var(--text-primary);font-size:15px">'+emoji+' '+esc(title)+'</div>'
+                + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">'
+                + '<thead><tr style="background:rgba(255,255,255,0.04);text-align:left">'
+                + '<th style="padding:10px 16px;color:var(--text-secondary);font-size:11px;text-transform:uppercase">Name</th>'
+                + '<th style="padding:10px 16px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">Price</th>'
+                + '<th style="padding:10px 16px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">Change</th>'
+                + '<th style="padding:10px 16px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">%</th>'
+                + '</tr></thead><tbody>';
+            items.forEach(d => {
+                const c = col(d.change);
+                const unit = d.unit ? ' <span style="font-size:10px;color:var(--text-secondary)">'+esc(d.unit)+'</span>' : '';
+                const na = d.price==='N/A';
+                h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05)">'
+                    + '<td style="padding:12px 16px;font-weight:600;color:var(--text-primary)">'+esc(d.name)+'</td>'
+                    + '<td style="padding:12px 16px;text-align:right;font-weight:700">'+fmtPrice(d.price)+unit+'</td>'
+                    + '<td style="padding:12px 16px;text-align:right;color:'+c+';font-weight:600">'+(na?'—':sign(d.change)+d.change)+'</td>'
+                    + '<td style="padding:12px 16px;text-align:right;color:'+c+';font-weight:700">'+(na?'—':sign(d.pct)+d.pct+'%')+'</td>'
+                    + '</tr>';
+            });
+            h += '</tbody></table></div></div>';
+            return h;
+        };
+
         const load = async () => {
             const content = document.getElementById('global-content');
+            content.innerHTML = '<div class="card" style="text-align:center;padding:40px"><div class="big-spinner"></div><div style="color:var(--text-accent);font-weight:600">Fetching global data...</div></div>';
             try {
                 const data = await api.fetchGlobalMarket();
-                const m = data.market_data;
-                
-                const getColor = (val) => {
-                    if (val === "N/A" || isNaN(val)) return 'var(--text-secondary)';
-                    return val > 0 ? 'var(--green)' : val < 0 ? 'var(--red)' : 'var(--text-secondary)';
-                };
-                const getSign = (val) => {
-                    if (val === "N/A" || isNaN(val)) return '';
-                    return val > 0 ? '+' : '';
-                };
+                let html = '';
 
-                let html = `
-                    <div class="card" style="padding:0; overflow:hidden; margin-bottom:24px;">
-                        <table style="width:100%; border-collapse:collapse;">
-                            <thead>
-                                <tr style="background:rgba(255,255,255,0.05); text-align:left;">
-                                    <th style="padding:15px; color:var(--text-secondary); font-size:12px; text-transform:uppercase; letter-spacing:1px;">Market / Asset</th>
-                                    <th style="padding:15px; color:var(--text-secondary); font-size:12px; text-transform:uppercase; letter-spacing:1px;">Price</th>
-                                    <th style="padding:15px; color:var(--text-secondary); font-size:12px; text-transform:uppercase; letter-spacing:1px;">Change</th>
-                                    <th style="padding:15px; color:var(--text-secondary); font-size:12px; text-transform:uppercase; letter-spacing:1px;">% Change</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <!-- Row 1: US Indices CMP -->
-                                <tr style="border-bottom:1px solid rgba(255,255,255,0.05); background:rgba(99,102,241,0.05);">
-                                    <td style="padding:15px; font-weight:800; color:var(--text-primary);">US Indices (Spot)</td>
-                                    <td colspan="3" style="padding:15px;">
-                                        <div style="display:flex; gap:32px; flex-wrap:wrap;">
-                                            <div><span style="font-size:11px; color:var(--text-secondary);">DOW:</span> <b style="color:${getColor(m.dow.change)}; margin-left:6px;">${m.dow.price}</b></div>
-                                            <div><span style="font-size:11px; color:var(--text-secondary);">NASDAQ:</span> <b style="color:${getColor(m.nasdaq.change)}; margin-left:6px;">${m.nasdaq.price}</b></div>
-                                            <div><span style="font-size:11px; color:var(--text-secondary);">S&P 500:</span> <b style="color:${getColor(m.sp500.change)}; margin-left:6px;">${m.sp500.price}</b></div>
-                                        </div>
-                                    </td>
-                                </tr>
-                                <!-- Row 2: US Futures -->
-                                <tr style="border-bottom:1px solid rgba(255,255,255,0.05); background:rgba(245,158,11,0.05);">
-                                    <td style="padding:15px; font-weight:800; color:var(--text-primary);">US Futures</td>
-                                    <td colspan="3" style="padding:15px;">
-                                        <div style="display:flex; gap:32px; flex-wrap:wrap;">
-                                            <div><span style="font-size:11px; color:var(--text-secondary);">DOW FUT:</span> <b style="color:${getColor(m.dow_f.change)}; margin-left:6px;">${m.dow_f.price}</b></div>
-                                            <div><span style="font-size:11px; color:var(--text-secondary);">NAS FUT:</span> <b style="color:${getColor(m.nasdaq_f.change)}; margin-left:6px;">${m.nasdaq_f.price}</b></div>
-                                            <div><span style="font-size:11px; color:var(--text-secondary);">S&P FUT:</span> <b style="color:${getColor(m.sp500_f.change)}; margin-left:6px;">${m.sp500_f.price}</b></div>
-                                        </div>
-                                    </td>
-                                </tr>
-                `;
-
-                const addRow = (label, key, isBold=false) => {
-                    const d = m[key];
-                    const col = getColor(d.change);
-                    html += `
-                        <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                            <td style="padding:15px; ${isBold ? 'font-weight:800; color:var(--text-primary);' : 'color:var(--text-secondary);'}">${label}</td>
-                            <td style="padding:15px; font-weight:700; color:var(--text-primary);">${d.price}</td>
-                            <td style="padding:15px; color:${col}; font-weight:700;">${getSign(d.change)}${d.change}</td>
-                            <td style="padding:15px; color:${col}; font-weight:700;">${getSign(d.change)}${d.pct_change}%</td>
-                        </tr>
-                    `;
-                };
-
-                addRow('DAX Futures (Proxy)', 'dax');
-                addRow('Gift Nifty (Spot Proxy)', 'nifty', true);
-                addRow('Crude Oil (WTI)', 'crude');
-                addRow('Silver', 'silver');
-                addRow('Gold', 'gold');
-                addRow('USD / INR', 'usdinr', true);
-                addRow('India VIX', 'india_vix');
-                addRow('US VIX', 'us_vix');
-                addRow('Hang Seng BeES (ETF)', 'hangseng_bees');
-                addRow('Nikkei 225 (Japan)', 'nikkei');
-
-                html += `</tbody></table></div>`;
-
-                // News Section
-                if (data.news && data.news.length > 0) {
-                    html += `
-                        <div style="margin-top:40px; margin-bottom:20px;">
-                            <h3 style="font-size:18px; font-weight:900; color:var(--text-primary); display:flex; align-items:center; gap:10px;">
-                                <span style="font-size:24px;">📰</span> Top Global Market News (by Gemini AI)
-                            </h3>
-                        </div>
-                        <div class="card" style="padding:0; overflow:hidden;">
-                            <table style="width:100%; border-collapse:collapse;">
-                                <thead>
-                                    <tr style="background:rgba(255,255,255,0.05); text-align:left;">
-                                        <th style="padding:15px; color:var(--text-secondary); font-size:12px; text-transform:uppercase; width:25%;">Headline</th>
-                                        <th style="padding:15px; color:var(--text-secondary); font-size:12px; text-transform:uppercase;">Summary & Market Impact</th>
-                                        <th style="padding:15px; color:var(--text-secondary); font-size:12px; text-transform:uppercase; width:15%;">Source</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                    `;
-                    data.news.forEach(n => {
-                        html += `
-                            <tr style="border-bottom:1px solid rgba(255,255,255,0.05); vertical-align:top;">
-                                <td style="padding:15px; font-weight:800; color:var(--text-primary); line-height:1.4;">${n.headline}</td>
-                                <td style="padding:15px; font-size:13px; color:var(--text-secondary); line-height:1.6;">${n.summary}</td>
-                                <td style="padding:15px; font-size:12px; color:var(--text-accent); font-weight:700;">${n.source}</td>
-                            </tr>
-                        `;
+                // Biggest moves strip (computed from real index data)
+                if (data.movers && data.movers.length) {
+                    html += '<div class="card" style="margin-bottom:16px;padding:14px 16px;background:rgba(99,102,241,0.06)">'
+                        + '<div style="font-size:12px;font-weight:800;color:var(--text-accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">⚡ Today\'s Biggest Moves</div>'
+                        + '<div style="display:flex;gap:10px;flex-wrap:wrap">';
+                    data.movers.forEach(mv => {
+                        const c = col(mv.pct);
+                        html += '<div style="background:'+c+'1a;border:1px solid '+c+'40;border-radius:8px;padding:8px 12px">'
+                            + '<span style="font-weight:700;color:var(--text-primary);font-size:13px">'+esc(mv.name)+'</span>'
+                            + '<span style="font-weight:800;color:'+c+';margin-left:8px">'+sign(mv.pct)+mv.pct+'%</span></div>';
                     });
-                    html += `</tbody></table></div>`;
+                    html += '</div></div>';
                 }
 
-                html += `<div style="text-align:right; margin-top:20px; font-size:11px; color:var(--text-secondary); font-style:italic;">Data provided by yfinance & Gemini AI • Last Refreshed: ${data.timestamp}</div>`;
-                content.innerHTML = html;
+                // Key events strip (grounded AI)
+                if (data.events && data.events.length) {
+                    html += '<div class="card" style="margin-bottom:24px;padding:14px 16px;background:rgba(245,158,11,0.06);border-color:rgba(245,158,11,0.2)">'
+                        + '<div style="font-size:12px;font-weight:800;color:var(--yellow);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">📅 Key Events This Week <span style="font-weight:500;text-transform:none;color:var(--text-secondary)">· AI-curated from web, verify times</span></div>'
+                        + '<div style="display:flex;flex-direction:column;gap:8px">';
+                    data.events.forEach(ev => {
+                        const hi = String(ev.importance||'').toLowerCase()==='high';
+                        html += '<div style="display:flex;gap:12px;align-items:center;font-size:13px;flex-wrap:wrap">'
+                            + '<span style="min-width:56px;font-weight:700;color:var(--text-primary)">'+esc(ev.date||'')+'</span>'
+                            + '<span style="background:rgba(255,255,255,0.08);border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700;color:var(--text-accent)">'+esc(ev.region||'')+'</span>'
+                            + '<span style="color:var(--text-primary)">'+(hi?'🔴 ':'')+esc(ev.title||'')+'</span></div>';
+                    });
+                    html += '</div></div>';
+                }
 
+                // Commodities (own table)
+                html += tableHTML('Commodities', '🛢️', data.commodities, '#f59e0b');
+                // Asia + Europe side by side
+                html += '<div class="two-col" style="margin-top:16px;align-items:start">';
+                html += tableHTML('Asian Markets', '🌏', data.asia, '#ef4444');
+                html += tableHTML('European Markets', '🇪🇺', data.europe, '#3b82f6');
+                html += '</div>';
+                // US full width
+                html += '<div style="margin-top:16px">' + tableHTML('US Markets', '🇺🇸', data.us, '#10b981') + '</div>';
+                // Currencies
+                if (data.currencies && data.currencies.length) {
+                    html += '<div style="margin-top:16px">' + tableHTML('Currencies', '💱', data.currencies, '#818cf8') + '</div>';
+                }
+
+                // Top market news (live, 15)
+                if (data.news && data.news.length) {
+                    html += '<div style="margin-top:32px;margin-bottom:14px"><h3 style="font-size:18px;font-weight:800;color:var(--text-primary)">📰 Top Market News <span style="font-size:12px;font-weight:500;color:var(--text-secondary)">· live, newest first</span></h3></div>';
+                    html += '<div class="card" style="display:flex;flex-direction:column;gap:14px">';
+                    data.news.forEach(n => {
+                        const ta = n.time_ago || '';
+                        const fresh = ta==='just now'||ta.endsWith('m ago')||ta==='1h ago';
+                        const headline = n.link ? '<a href="'+esc(n.link)+'" target="_blank" rel="noopener" style="color:var(--text-primary);text-decoration:none">'+esc(n.headline)+'</a>' : esc(n.headline);
+                        html += '<div style="padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.05)">'
+                            + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:4px">'
+                            + '<span style="font-size:11px;font-weight:700;color:'+(fresh?'var(--green)':'var(--text-secondary)')+'">'+(fresh?'🟢 ':'')+esc(ta)+'</span>'
+                            + '<span style="font-size:10px;color:var(--text-secondary)">'+esc(n.date||'')+'</span></div>'
+                            + '<div style="font-size:14px;font-weight:700;line-height:1.45;margin-bottom:5px">'+headline+'</div>'
+                            + '<div style="font-size:11px;font-weight:700;color:var(--text-accent)">'+esc(n.source||'')+'</div></div>';
+                    });
+                    html += '</div>';
+                }
+
+                html += '<div style="text-align:right;margin-top:16px;font-size:11px;color:var(--text-secondary);font-style:italic">Values: yfinance (batched) • News: Google News • Updated: '+esc(data.updated||data.timestamp||'')+'</div>';
+                content.innerHTML = html;
             } catch (err) {
-                console.error(err);
-                content.innerHTML = `<div class="card" style="text-align:center; padding:40px; border-color:var(--red);">
-                    <div style="font-size:40px; margin-bottom:16px;">⚠️</div>
-                    <div style="color:var(--red); font-weight:800; font-size:18px;">Failed to load Global Market Data</div>
-                    <div style="color:var(--text-secondary); margin-top:8px;">${err.message}</div>
-                    <button class="btn" style="margin-top:20px;" onclick="window.location.reload()">Retry</button>
-                </div>`;
+                content.innerHTML = '<div class="card" style="text-align:center;padding:40px;border-color:var(--red)">'
+                    + '<div style="font-size:40px;margin-bottom:16px">⚠️</div>'
+                    + '<div style="color:var(--red);font-weight:800;font-size:18px">Failed to load Global Market Data</div>'
+                    + '<div style="color:var(--text-secondary);margin-top:8px">'+esc(err.message)+'</div></div>';
             }
         };
 
+        const rb = document.getElementById('btn-refresh-global');
+        if (rb) rb.addEventListener('click', load);
         load();
     },
 

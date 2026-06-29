@@ -164,18 +164,14 @@ const api = {
     },
 
     async fetchGlobalMarket() {
-        const cached = Cache.get('global_market');
-        if (cached) return cached;
-
-        const res = await fetch(`${API_BASE_URL}/global_market`);
+        // Fetch fresh each open — user wants current values and newest news.
+        const res = await fetch(`${API_BASE_URL}/global_market`, { cache: 'no-store' });
         if (!res.ok) {
             let err;
-            try { err = await res.json(); } catch(e) { throw new Error(`Server returned HTML or invalid JSON (Status: ${res.status}).`); }
-            throw new Error(err.error || 'Failed to fetch Global Market data');
+            try { err = await res.json(); } catch(e) { throw new Error(`Server returned invalid response (Status: ${res.status}).`); }
+            throw new Error(err.error || 'Failed to fetch global market data');
         }
-        const data = await res.json();
-        Cache.set('global_market', data, 10);
-        return data;
+        return res.json();
     },
 
     async startScreenerScan(market) {

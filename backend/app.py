@@ -986,44 +986,160 @@ def fetch_fii_derivative_stats():
         return None
 
 
-@cached(180)            # 16 global tickers: 3 min
+# (group, display name, yfinance symbol, unit)
+GLOBAL_ASSETS = [
+    # Commodities
+    ("commodities", "Gold",          "GC=F", "$/oz"),
+    ("commodities", "Silver",        "SI=F", "$/oz"),
+    ("commodities", "Crude (WTI)",   "CL=F", "$/bbl"),
+    ("commodities", "Crude (Brent)", "BZ=F", "$/bbl"),
+    ("commodities", "Natural Gas",   "NG=F", "$/MMBtu"),
+    ("commodities", "Copper",        "HG=F", "$/lb"),
+    # Asia
+    ("asia", "Nikkei 225 (Japan)",     "^N225",     ""),
+    ("asia", "Hang Seng (HK)",         "^HSI",      ""),   # real index, not the India ETF
+    ("asia", "Shanghai Composite",     "000001.SS", ""),
+    ("asia", "KOSPI (Korea)",          "^KS11",     ""),
+    ("asia", "Taiwan Weighted",        "^TWII",     ""),
+    ("asia", "ASX 200 (Australia)",    "^AXJO",     ""),
+    ("asia", "Sensex (India)",         "^BSESN",    ""),
+    ("asia", "Nifty 50 (India)",       "^NSEI",     ""),
+    # Europe
+    ("europe", "DAX (Germany)",        "^GDAXI",    ""),
+    ("europe", "FTSE 100 (UK)",        "^FTSE",     ""),
+    ("europe", "CAC 40 (France)",      "^FCHI",     ""),
+    ("europe", "Euro Stoxx 50",        "^STOXX50E", ""),
+    ("europe", "FTSE MIB (Italy)",     "FTSEMIB.MI",""),
+    ("europe", "IBEX 35 (Spain)",      "^IBEX",     ""),
+    # US
+    ("us", "Dow Jones",        "^DJI",  ""),
+    ("us", "S&P 500",          "^GSPC", ""),
+    ("us", "Nasdaq",           "^IXIC", ""),
+    ("us", "Russell 2000",     "^RUT",  ""),
+    ("us", "S&P Futures",      "ES=F",  ""),
+    ("us", "Nasdaq Futures",   "NQ=F",  ""),
+    ("us", "Dow Futures",      "YM=F",  ""),
+    ("us", "VIX (Volatility)", "^VIX",  ""),
+    # Currencies
+    ("currencies", "USD / INR", "USDINR=X", ""),
+    ("currencies", "EUR / USD", "EURUSD=X", ""),
+    ("currencies", "USD / JPY", "JPY=X",    ""),
+]
+
+@cached(60)            # fresh values, but batch makes even a cache miss fast
 def fetch_global_market_data():
+    """All indices/commodities/FX in ONE batched yfinance call (was 16 separate calls)."""
     import yfinance as yf
-    import concurrent.futures
-    
-    tickers = {
-        "dow": "^DJI", "nasdaq": "^IXIC", "sp500": "^GSPC",
-        "dow_f": "YM=F", "nasdaq_f": "NQ=F", "sp500_f": "ES=F",
-        "dax": "^GDAXI", "nifty": "^NSEI", 
-        "crude": "CL=F", "silver": "SI=F", "gold": "GC=F",
-        "usdinr": "USDINR=X", "india_vix": "^INDIAVIX", "us_vix": "^VIX",
-        "hangseng_bees": "HANGSENG.NS", "nikkei": "^N225"
-    }
-    
-    def fetch_single(key, symbol):
+    from datetime import datetime, timezone
+    symbols = [a[2] for a in GLOBAL_ASSETS]
+    df = None
+    try:
+        df = yf.download(symbols, period="5d", interval="1d", group_by="ticker",
+                         threads=True, progress=False, auto_adjust=False)
+    except Exception:
+        df = None
+
+    def last_two(sym):
         try:
-            t = yf.Ticker(symbol)
-            hist = t.history(period="5d")
-            if not hist.empty:
-                curr = float(hist["Close"].iloc[-1])
-                prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else curr
-                return key, {
-                    "price": round(curr, 2),
-                    "prev_close": round(prev, 2),
-                    "change": round(curr - prev, 2),
-                    "pct_change": round(((curr - prev) / prev) * 100, 2) if prev != 0 else 0
-                }
+            sub = df[sym]
+            closes = [float(x) for x in sub["Close"].tolist() if x == x]
+            if closes:
+                return closes[-1], (closes[-2] if len(closes) > 1 else closes[-1])
         except Exception:
             pass
-        return key, {"price": "N/A", "change": 0, "pct_change": 0}
+        return None, None
 
-    results = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        future_to_key = {executor.submit(fetch_single, k, s): k for k, s in tickers.items()}
-        for future in concurrent.futures.as_completed(future_to_key):
-            key, val = future.result()
-            results[key] = val
-    return results
+    groups = {"commodities": [], "asia": [], "europe": [], "us": [], "currencies": []}
+    movers = []
+    for group, name, sym, unit in GLOBAL_ASSETS:
+        curr, prev = last_two(sym)
+        if curr is None:
+            groups[group].append({"name": name, "price": "N/A", "change": 0, "pct": 0, "unit": unit})
+            continue
+        change = curr - prev
+        pct = (change / prev * 100) if prev else 0
+        groups[group].append({
+            "name": name, "price": round(curr, 2), "change": round(change, 2),
+            "pct": round(pct, 2), "unit": unit,
+        })
+        if group in ("asia", "europe", "us") and prev:
+            movers.append({"name": name, "pct": round(pct, 2)})
+
+    movers.sort(key=lambda x: abs(x["pct"]), reverse=True)
+    return {
+        **groups,
+        "movers":  movers[:5],
+        "updated": datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC"),
+    }
+
+
+@cached(300)           # live market news: 5 min
+def fetch_global_market_news():
+    """Live, market-only headlines from Google News RSS — newest first, top 15."""
+    import concurrent.futures
+    queries = [
+        "stock market today when:2d",
+        "world stock markets when:2d",
+        "Wall Street Nasdaq S&P when:2d",
+        "Sensex Nifty India market when:2d",
+    ]
+    all_items = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(queries)) as pool:
+        futs = [pool.submit(_fetch_google_news, q, 10) for q in queries]
+        for f in concurrent.futures.as_completed(futs):
+            try:
+                all_items += f.result() or []
+            except Exception:
+                pass
+    seen, out = set(), []
+    for it in sorted(all_items, key=lambda x: x.get("timestamp", 0), reverse=True):
+        h = it["headline"].strip().lower()
+        if h in seen:
+            continue
+        seen.add(h)
+        out.append(it)
+        if len(out) >= 15:
+            break
+    return out
+
+
+@cached(21600)         # economic events: 6h
+def fetch_econ_events_grounded():
+    """This week's key macro events via Gemini + Google Search grounding (live, not memory).
+    Returns [] if grounding/keys unavailable so the UI simply hides the section."""
+    if not GEMINI_API_KEY:
+        return []
+    try:
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        prompt = (
+            "Use web search to find the most important SCHEDULED macroeconomic events for the "
+            "current week across US, Eurozone, UK, Japan, China and India — central-bank rate "
+            "decisions, CPI/inflation, PMI, GDP and jobs reports. "
+            "Return ONLY JSON (no markdown): "
+            "[{\"date\":\"Mon DD\",\"region\":\"US|EU|UK|Japan|China|India\","
+            "\"title\":\"short event name\",\"importance\":\"high|medium\"}]. "
+            "Max 10 items, sorted by date."
+        )
+        try:
+            tools = [types.Tool(google_search=types.GoogleSearch())]
+        except Exception:
+            tools = None
+        for model in ["gemini-3-flash-preview", "gemini-flash-latest"]:
+            try:
+                cfg = types.GenerateContentConfig(temperature=0.2,
+                                                  tools=tools) if tools else types.GenerateContentConfig(temperature=0.2)
+                resp = client.models.generate_content(model=model, contents=prompt, config=cfg)
+                text = resp.text or ""
+                s, e = text.find("["), text.rfind("]")
+                if s != -1 and e != -1:
+                    return json.loads(text[s:e + 1])
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return []
 
 
 @cached(900)            # global news (Gemini): 15 min
@@ -1255,13 +1371,24 @@ def telegram_feed():
 @app.route("/api/global_market")
 def api_global_market():
     try:
-        data = fetch_global_market_data()
-        news = fetch_global_news_gemini()
-        return jsonify({
-            "market_data": data,
-            "news": news,
-            "timestamp": datetime.now().strftime("%d %b %Y  %H:%M:%S")
-        })
+        import concurrent.futures
+        from datetime import datetime
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            f_mkt  = pool.submit(fetch_global_market_data)
+            f_news = pool.submit(fetch_global_market_news)
+            f_evt  = pool.submit(fetch_econ_events_grounded)
+
+            def safe(f, d):
+                try:
+                    return f.result()
+                except Exception:
+                    return d
+
+            market = safe(f_mkt, {}) or {}
+            market["news"]      = safe(f_news, [])
+            market["events"]    = safe(f_evt, [])
+            market["timestamp"] = datetime.now().strftime("%d %b %Y  %H:%M:%S")
+        return jsonify(market)
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
