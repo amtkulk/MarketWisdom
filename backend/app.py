@@ -694,7 +694,7 @@ def resolve_ticker_gemini(company):
     return ""
 
 
-def scrape_chartink(url, max_pages=3):
+def _scrape_chartink_playwright(url, max_pages=3):
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -778,6 +778,79 @@ def scrape_chartink(url, max_pages=3):
         return [], str(e)
 
     return list(dict.fromkeys(all_names)), None
+
+
+def scrape_chartink_http(url):
+    """FAST path: run a saved Chartink screener via its JSON 'process' endpoint — no browser.
+    Returns (names, None) on success, or ([], reason) so the caller can fall back."""
+    try:
+        import re
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        r = cffi_requests.get(url, headers=headers, impersonate="chrome120", timeout=10)
+        if r.status_code != 200:
+            return [], f"page status {r.status_code}"
+        html = r.text
+
+        m = re.search(r'name="csrf-token"\s+content="([^"]+)"', html)
+        if not m:
+            return [], "no csrf token"
+        csrf = m.group(1)
+
+        clause = None
+        for pat in (
+            r'name="scan_clause"[^>]*value="([^"]*)"',
+            r'"scan_clause"\s*:\s*"((?:[^"\\]|\\.)*)"',
+            r'scan_clause\\?":\\?"((?:[^"\\]|\\.)*)"',
+        ):
+            mm = re.search(pat, html)
+            if mm:
+                clause = mm.group(1)
+                break
+        if not clause:
+            return [], "no scan clause"
+        # Unescape HTML entities and backslash escapes
+        clause = clause.replace("&quot;", '"').replace("&amp;", "&")
+        try:
+            clause = clause.encode().decode("unicode_escape")
+        except Exception:
+            pass
+
+        post_headers = {
+            **headers,
+            "x-csrf-token":     csrf,
+            "x-requested-with": "XMLHttpRequest",
+            "Referer":          url,
+            "Origin":           "https://chartink.com",
+            "Content-Type":     "application/x-www-form-urlencoded; charset=UTF-8",
+        }
+        resp = cffi_requests.post(
+            "https://chartink.com/screener/process",
+            data={"scan_clause": clause}, headers=post_headers,
+            cookies=r.cookies, impersonate="chrome120", timeout=15,
+        )
+        if resp.status_code != 200:
+            return [], f"process status {resp.status_code}"
+        rows = (resp.json() or {}).get("data", []) or []
+        names = []
+        for row in rows:
+            sym = row.get("nsecode") or row.get("name") or row.get("bsecode")
+            if sym:
+                names.append(str(sym).strip())
+        return list(dict.fromkeys(names)), None
+    except Exception as e:
+        return [], str(e)
+
+
+def scrape_chartink(url, max_pages=3):
+    """Dispatcher: try the fast HTTP endpoint first; fall back to the Playwright scrape
+    only if HTTP returns nothing."""
+    names, err = scrape_chartink_http(url)
+    if names:
+        return names, None
+    return _scrape_chartink_playwright(url, max_pages=max_pages)
 
 
 _nse_cookie_cache = {"cookie": None, "ts": 0}
@@ -2087,10 +2160,21 @@ def api_chartink():
     if not url1 or not url2:
         return jsonify({"error": "Both URLs are required"}), 400
 
-    list1, err1 = scrape_chartink(url1, max_pages=3)
-    if err1: return jsonify({"error": f"Screener 1 error: {err1}"}), 400
+    # Fetch both screeners at once instead of one after the other.
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        f1 = pool.submit(scrape_chartink, url1, 3)
+        f2 = pool.submit(scrape_chartink, url2, 3)
+        try:
+            list1, err1 = f1.result()
+        except Exception as e:
+            list1, err1 = [], str(e)
+        try:
+            list2, err2 = f2.result()
+        except Exception as e:
+            list2, err2 = [], str(e)
 
-    list2, err2 = scrape_chartink(url2, max_pages=3)
+    if err1: return jsonify({"error": f"Screener 1 error: {err1}"}), 400
     if err2: return jsonify({"error": f"Screener 2 error: {err2}"}), 400
 
     set1   = set(list1)
