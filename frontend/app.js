@@ -1393,6 +1393,42 @@ const app = {
     },
 
     // Nifty Analysis Rendering
+    renderFiiData(fii) {
+        const esc = (s) => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const prettyKey = (k) => String(k).replace(/_/g,' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/\b\w/g, c=>c.toUpperCase());
+        const fmtVal = (v) => {
+            if (typeof v === 'number') return v.toLocaleString('en-IN');
+            if (typeof v === 'string' && v.trim()!=='' && !isNaN(Number(v.replace(/,/g,'')))) return Number(v.replace(/,/g,'')).toLocaleString('en-IN');
+            return esc(v);
+        };
+        const kvTable = (obj) => {
+            let h = '<table style="width:100%;font-size:13px;border-collapse:collapse">';
+            Object.entries(obj).forEach(([k,v]) => {
+                const valHtml = (v && typeof v === 'object')
+                    ? render(v)
+                    : '<span style="font-weight:700;color:var(--text-primary)">'+fmtVal(v)+'</span>';
+                h += '<tr><td style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.05);color:var(--text-secondary);vertical-align:top;white-space:nowrap">'+esc(prettyKey(k))+'</td>'
+                   + '<td style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.05);text-align:right;vertical-align:top">'+valHtml+'</td></tr>';
+            });
+            return h + '</table>';
+        };
+        const render = (val) => {
+            if (Array.isArray(val)) {
+                if (!val.length) return '<span style="color:var(--text-secondary)">—</span>';
+                return val.map(item => (item && typeof item === 'object')
+                    ? '<div style="margin-bottom:10px;padding:8px;background:#0d1424;border-radius:8px">'+kvTable(item)+'</div>'
+                    : '<div>'+fmtVal(item)+'</div>').join('');
+            }
+            if (val && typeof val === 'object') return kvTable(val);
+            return '<span style="font-weight:700">'+fmtVal(val)+'</span>';
+        };
+        try {
+            return '<div style="overflow-x:auto">'+render(fii)+'</div>';
+        } catch(e) {
+            return '<div style="font-size:12px;color:var(--text-secondary)">FII data unavailable in a readable format.</div>';
+        }
+    },
+
     renderNifty(container) {
         container.innerHTML = `
             <div style="margin-bottom:24px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
@@ -1417,14 +1453,30 @@ const app = {
                 const data = await api.fetchNifty();
                 let html = '';
                 
-                // DMA
+                // DMA + computed metrics
                 if (data.chart) {
                     const c = data.chart;
                     const dmaCol = c.above_200dma ? 'var(--green)' : 'var(--red)';
                     html += '<div class="card" style="border-color:rgba(99,102,241,0.3)"><div class="stat-grid">';
                     html += Components.StatCard('Nifty 50', c.current_price);
+                    if (c.day_change !== undefined) {
+                        const dc = c.day_change_pct;
+                        const dcCol = dc > 0 ? 'var(--green)' : dc < 0 ? 'var(--red)' : 'var(--text-secondary)';
+                        const sign = dc > 0 ? '+' : '';
+                        html += Components.StatCard("Day's Change", `${sign}${c.day_change} (${sign}${dc}%)`, dcCol);
+                    }
                     html += Components.StatCard('21 EMA', c.current_ema21, '#f59e0b');
                     html += Components.StatCard('200 DMA', c.current_200dma || 'N/A', '#818cf8');
+                    if (c.pct_from_200dma !== undefined) {
+                        const pCol = c.pct_from_200dma >= 0 ? 'var(--green)' : 'var(--red)';
+                        const ps = c.pct_from_200dma > 0 ? '+' : '';
+                        html += Components.StatCard('vs 200 DMA', `${ps}${c.pct_from_200dma}%`, pCol);
+                    }
+                    if (c.rsi !== undefined) {
+                        const rCol = c.rsi >= 70 ? 'var(--red)' : c.rsi <= 30 ? 'var(--green)' : 'var(--yellow)';
+                        const rLbl = c.rsi >= 70 ? 'Overbought' : c.rsi <= 30 ? 'Oversold' : 'Neutral';
+                        html += Components.StatCard('RSI (14)', `${c.rsi} · ${rLbl}`, rCol);
+                    }
                     html += Components.StatCard('DMA Signal', c.above_200dma ? 'Above (Bullish)' : 'Below (Bearish)', dmaCol);
                     html += '</div></div>';
                 }
@@ -1492,10 +1544,11 @@ const app = {
                     html += '</tbody></table></div></div>';
                 }
                 
-                // FII Data Summary
+                // FII Data Summary (readable, not raw JSON)
                 if (data.fii) {
-                    html += '<div class="card"><div class="section-title">FII Derivative Data (Index Futures)</div>';
-                    html += `<pre style="font-size:11px;color:var(--text-secondary);white-space:pre-wrap;background:#0d1424;padding:12px;border-radius:8px">${JSON.stringify(data.fii, null, 2)}</pre></div>`;
+                    html += '<div class="card"><div class="section-title">FII Derivative Activity</div>';
+                    html += this.renderFiiData(data.fii);
+                    html += '</div>';
                 }
 
                 res.innerHTML = html;

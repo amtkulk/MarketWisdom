@@ -88,18 +88,14 @@ const api = {
     },
 
     async fetchNifty() {
-        const cached = Cache.get('nifty');
-        if (cached) return cached;
-
-        const res = await fetch(`${API_BASE_URL}/nifty`);
+        // Fetch fresh — PCR/FII/VIX are intraday and the Refresh button should actually refresh.
+        const res = await fetch(`${API_BASE_URL}/nifty`, { cache: 'no-store' });
         if (!res.ok) {
             let err;
             try { err = await res.json(); } catch(e) { throw new Error(`Server returned HTML or invalid JSON (Status: ${res.status}).`); }
             throw new Error(err.error || 'Failed to fetch Nifty data');
         }
-        const data = await res.json();
-        Cache.set('nifty', data, 15);
-        return data;
+        return res.json();
     },
 
     async fetchOptionChain(symbol = 'NIFTY') {

@@ -1973,27 +1973,96 @@ def fetch_vix_support_resistance(nifty_price):
         print("VIX error:", traceback.format_exc())
         return None
 
+def _india_vix_pair():
+    """Return (current_vix, prev_close_vix) so VIX can be fetched in parallel."""
+    try:
+        import yfinance as yf
+        hist = yf.Ticker("^INDIAVIX").history(period="5d")
+        if len(hist) >= 2:
+            return float(hist["Close"].iloc[-1]), float(hist["Close"].iloc[-2])
+        if len(hist) == 1:
+            v = float(hist["Close"].iloc[-1])
+            return v, v
+    except Exception:
+        pass
+    return None, None
+
+def _vix_levels_from(nifty_price, cur_vix, prev_vix):
+    """Compute the VIX-implied expected range from already-fetched VIX values."""
+    import math
+    if not nifty_price or cur_vix is None:
+        return None
+    def calc(v_price, v_vix):
+        daily = v_price * (v_vix / 100) / math.sqrt(252)
+        return {
+            "vix": round(v_vix, 2),
+            "r2": round(v_price + 2 * daily, 2), "r1": round(v_price + daily, 2),
+            "s1": round(v_price - daily, 2),     "s2": round(v_price - 2 * daily, 2),
+        }
+    return {
+        "current": calc(nifty_price, cur_vix),
+        "close":   calc(nifty_price, prev_vix if prev_vix is not None else cur_vix),
+    }
+
+def _nifty_extra_metrics(chart):
+    """Day move, RSI(14) and distance from the 200-DMA — all computed from the chart series."""
+    out = {}
+    try:
+        closes = [r["close"] for r in chart.get("ohlcv", [])]
+        if len(closes) >= 2 and closes[-2]:
+            chg = closes[-1] - closes[-2]
+            out["day_change"]     = round(chg, 2)
+            out["day_change_pct"] = round(chg / closes[-2] * 100, 2)
+        rsi = _rsi(closes, 14)
+        if rsi is not None:
+            out["rsi"] = rsi
+        cp, d200 = chart.get("current_price"), chart.get("current_200dma")
+        if cp and d200:
+            out["pct_from_200dma"] = round((cp - d200) / d200 * 100, 2)
+    except Exception:
+        pass
+    return out
+
+
 @app.route("/api/nifty")
 def api_nifty():
     try:
+        import concurrent.futures
+        # All five sources are independent — fetch them at once instead of one-by-one.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+            f_chart = pool.submit(fetch_nifty_chart_data)
+            f_vix   = pool.submit(_india_vix_pair)
+            f_npcr  = pool.submit(fetch_pcr_data, "NIFTY")
+            f_bpcr  = pool.submit(fetch_pcr_data, "BANKNIFTY")
+            f_fii   = pool.submit(fetch_fii_derivative_stats)
+
+            def safe(f, d):
+                try:
+                    return f.result()
+                except Exception:
+                    return d
+
+            chart            = safe(f_chart, None)
+            cur_vix, prv_vix = safe(f_vix, (None, None))
+            nifty_pcr        = safe(f_npcr, None)
+            bnf_pcr          = safe(f_bpcr, None)
+            fii              = safe(f_fii, None)
+
         result = {}
-        chart = fetch_nifty_chart_data()
-        if chart: 
+        if chart:
+            chart.update(_nifty_extra_metrics(chart))
             result["chart"] = chart
-            vix_levels = fetch_vix_support_resistance(chart["current_price"])
-            if vix_levels:
-                result["vix_levels"] = vix_levels
-        
-        nifty_pcr = fetch_pcr_data("NIFTY")
-        if nifty_pcr: result["nifty_pcr"] = nifty_pcr
-        
-        bnf_pcr = fetch_pcr_data("BANKNIFTY")
-        if bnf_pcr: result["banknifty_pcr"] = bnf_pcr
-        
-        fii = fetch_fii_derivative_stats()
+            lv = _vix_levels_from(chart.get("current_price"), cur_vix, prv_vix)
+            if lv:
+                result["vix_levels"] = lv
+        if nifty_pcr:
+            result["nifty_pcr"] = nifty_pcr
+        if bnf_pcr:
+            result["banknifty_pcr"] = bnf_pcr
         if not fii:
-            fii = fetch_fii_data()
-        if fii: result["fii"] = fii
+            fii = fetch_fii_data()       # fallback only if the derivative feed was empty
+        if fii:
+            result["fii"] = fii
 
         if not result:
             return jsonify({"error": "Could not fetch any data from NSE. Check internet connection."}), 400
