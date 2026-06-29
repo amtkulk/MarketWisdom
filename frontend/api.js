@@ -204,23 +204,15 @@ const api = {
         return res.json();
     },
 
-    async fetchWarNews(forceRefresh = false) {
-        const cacheKey = 'war_news';
-        if (!forceRefresh) {
-            const cached = Cache.get(cacheKey);
-            if (cached) return cached;
-        }
-
-        const res = await fetch(`${API_BASE_URL}/war_news`);
+    async fetchWarNews() {
+        // Always fetch fresh — the user wants the latest headlines on every open.
+        const res = await fetch(`${API_BASE_URL}/war_news`, { cache: 'no-store' });
         if (!res.ok) {
             let err;
             try { err = await res.json(); } catch(e) { throw new Error(`Server returned HTML or invalid JSON (Status: ${res.status}).`); }
             throw new Error(err.error || 'Failed to fetch War News data');
         }
-        const data = await res.json();
-        // Cache for a long time (e.g. 600 mins = 10 hours) so it persists across tab switching
-        Cache.set(cacheKey, data, 600);
-        return data;
+        return res.json();
     },
 
     async fetchTelegramFeed() {

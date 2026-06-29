@@ -228,101 +228,82 @@ const app = {
 
     renderWarNews(container) {
         container.innerHTML = `
-            <div style="margin-bottom:24px; display:flex; justify-content:space-between; align-items:center;">
+            <div style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
                 <div>
-                    <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">📰 War & Geopolitics News</h2>
-                    <p style="font-size:13px;color:var(--text-secondary)">Perspectives from US, Iran, Crude Oil, and Hormuz.</p>
+                    <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">📰 War News — Live</h2>
+                    <p style="font-size:13px;color:var(--text-secondary)">Latest headlines · US-Iran-Middle East and Russia-Ukraine</p>
                 </div>
-                <button id="btn-refresh-warnews" class="btn" style="background:var(--accent-color);color:white;padding:8px 16px;font-size:13px;">Refresh News</button>
+                <button id="btn-refresh-warnews" class="btn" style="padding:8px 16px;font-size:13px;">🔄 Refresh</button>
             </div>
             <div id="warnews-content">
                 <div class="card" style="text-align:center;padding:40px">
                     <div class="big-spinner"></div>
-                    <div style="color:var(--text-accent);font-weight:600">Fetching Perspectives...</div>
-                    <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">Gemini is curating war news...</div>
+                    <div style="color:var(--text-accent);font-weight:600">Fetching latest headlines...</div>
                 </div>
             </div>
         `;
 
-        const load = async (forceRefresh = false) => {
-            const content = document.getElementById('warnews-content');
-            if (forceRefresh) {
-                content.innerHTML = `
-                    <div class="card" style="text-align:center;padding:40px">
-                        <div class="big-spinner"></div>
-                        <div style="color:var(--text-accent);font-weight:600">Fetching Fresh News...</div>
-                        <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">Gemini is looking for the latest updates...</div>
-                    </div>
-                `;
-            }
+        const esc = (s) => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
+        const load = async () => {
+            const content = document.getElementById('warnews-content');
+            content.innerHTML = `<div class="card" style="text-align:center;padding:40px"><div class="big-spinner"></div><div style="color:var(--text-accent);font-weight:600">Fetching latest headlines...</div></div>`;
             try {
-                const data = await api.fetchWarNews(forceRefresh);
-                if (!data.news || data.news.length === 0) {
-                    content.innerHTML = `<div class="card" style="text-align:center;padding:40px;color:var(--text-secondary)">No news found.</div>`;
+                const data = await api.fetchWarNews();
+                const conflicts = (data && data.conflicts) || [];
+                const hasAny = conflicts.some(c => (c.items || []).length > 0);
+                if (!hasAny) {
+                    content.innerHTML = `<div class="card" style="text-align:center;padding:40px;color:var(--text-secondary)">No live headlines right now — try Refresh in a moment.</div>`;
                     return;
                 }
 
-                // Group news by perspective
-                const grouped = {
-                    'US': [], 'Iran': [], 'Crude Oil': [], 'Hormuz': [], 'Other': []
-                };
-                data.news.forEach(n => {
-                    const p = n.perspective || 'Other';
-                    if (grouped[p]) grouped[p].push(n);
-                    else grouped['Other'].push(n);
-                });
-
-                const getColors = (p) => {
-                    switch(p) {
-                        case 'US': return { bg: 'rgba(59,130,246,0.1)', border: '#3b82f6', text: '#60a5fa' }; // Blue
-                        case 'Iran': return { bg: 'rgba(239,68,68,0.1)', border: '#ef4444', text: '#f87171' }; // Red
-                        case 'Crude Oil': return { bg: 'rgba(245,158,11,0.1)', border: '#f59e0b', text: '#fbbf24' }; // Yellow
-                        case 'Hormuz': return { bg: 'rgba(16,185,129,0.1)', border: '#10b981', text: '#34d399' }; // Green
-                        default: return { bg: 'rgba(255,255,255,0.05)', border: 'var(--border-color)', text: 'var(--text-primary)' };
-                    }
-                };
-
-                let html = '<div class="feature-grid">';
-                Object.keys(grouped).forEach(p => {
-                    if (grouped[p].length === 0) return;
-                    const c = getColors(p);
-                    html += `<div class="card" style="background:${c.bg}; border-top: 4px solid ${c.border}; margin-bottom:20px; display:block; width:100%;">
-                        <div class="section-title" style="color:${c.text}; display:flex; align-items:center; gap:8px;">
-                            ${p === 'US' ? '🇺🇸' : p === 'Iran' ? '🇮🇷' : p === 'Crude Oil' ? '🛢️' : p === 'Hormuz' ? '🌊' : '📰'} ${p} Perspective
+                let html = '<div class="two-col">';
+                conflicts.forEach(c => {
+                    const items = c.items || [];
+                    html += `<div class="card" style="border-top:4px solid ${c.color}; display:block; width:100%; align-self:start;">
+                        <div class="section-title" style="color:${c.color}; display:flex; align-items:center; gap:8px;">
+                            ${c.flag || '📰'} ${esc(c.title)}
+                            <span style="margin-left:auto; font-size:11px; font-weight:600; color:var(--text-secondary)">${items.length} stories</span>
                         </div>
-                        <div style="display:flex;flex-direction:column;gap:16px;margin-top:12px;">`;
-                    
-                    grouped[p].forEach(n => {
+                        <div style="display:flex;flex-direction:column;gap:14px;margin-top:12px;">`;
+                    if (items.length === 0) {
+                        html += `<div style="color:var(--text-secondary);font-size:13px">No recent headlines.</div>`;
+                    }
+                    items.forEach(n => {
+                        const ta = n.time_ago || '';
+                        const fresh = ta === 'just now' || ta.endsWith('m ago') || ta === '1h ago';
+                        const ago = ta ? `<span style="font-size:11px;font-weight:700;color:${fresh ? 'var(--green)' : 'var(--text-secondary)'}">${fresh ? '🟢 ' : ''}${esc(ta)}</span>` : '<span></span>';
+                        const headline = n.link
+                            ? `<a href="${esc(n.link)}" target="_blank" rel="noopener" style="color:var(--text-primary);text-decoration:none">${esc(n.headline)}</a>`
+                            : esc(n.headline);
                         html += `
                             <div style="padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.05)">
-                                <div style="font-size:15px;font-weight:800;margin-bottom:6px;color:var(--text-primary);line-height:1.4;">${n.headline}</div>
-                                <div style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin-bottom:8px;">${n.summary}</div>
-                                <div style="font-size:11px;font-weight:700;color:var(--text-accent);">${n.source}</div>
-                            </div>
-                        `;
+                                <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:5px">
+                                    ${ago}
+                                    <span style="font-size:10px;color:var(--text-secondary)">${esc(n.date)}</span>
+                                </div>
+                                <div style="font-size:14px;font-weight:700;line-height:1.45;margin-bottom:6px">${headline}</div>
+                                <div style="font-size:11px;font-weight:700;color:var(--text-accent)">${esc(n.source)}</div>
+                            </div>`;
                     });
-                    
                     html += `</div></div>`;
                 });
                 html += '</div>';
-                html += `<div style="text-align:right; margin-top:12px; font-size:11px; color:var(--text-secondary); font-style:italic;">Generated by Gemini AI • Last Refreshed: ${data.timestamp}</div>`;
+                html += `<div style="text-align:right; margin-top:12px; font-size:11px; color:var(--text-secondary); font-style:italic;">Live from Google News • Updated: ${esc(data.updated || '')}</div>`;
                 content.innerHTML = html;
             } catch (err) {
                 content.innerHTML = `<div class="card" style="text-align:center; padding:40px; border-color:var(--red);">
                     <div style="font-size:40px; margin-bottom:16px;">⚠️</div>
                     <div style="color:var(--red); font-weight:800; font-size:18px;">Failed to load War News</div>
-                    <div style="color:var(--text-secondary); margin-top:8px;">${err.message}</div>
+                    <div style="color:var(--text-secondary); margin-top:8px;">${esc(err.message)}</div>
                 </div>`;
             }
         };
 
         const refreshBtn = document.getElementById('btn-refresh-warnews');
-        if (refreshBtn) {
-            refreshBtn.addEventListener('click', () => load(true));
-        }
+        if (refreshBtn) refreshBtn.addEventListener('click', load);
 
-        load(false);
+        load();
     },
 
     renderTelegramFeed(container) {

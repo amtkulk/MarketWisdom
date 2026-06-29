@@ -1091,14 +1091,104 @@ def fetch_war_news_gemini():
     return []
 
 
+def _parse_rss_dt(pub_date):
+    from datetime import datetime, timezone
+    for fmt in ("%a, %d %b %Y %H:%M:%S %z", "%a, %d %b %Y %H:%M:%S %Z"):
+        try:
+            dt = datetime.strptime(pub_date[:31].strip(), fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except Exception:
+            pass
+    return None
+
+def _time_ago(dt):
+    if not dt:
+        return ""
+    from datetime import datetime, timezone
+    secs = (datetime.now(timezone.utc) - dt).total_seconds()
+    secs = max(0, secs)
+    if secs < 120:    return "just now"
+    if secs < 3600:   return f"{int(secs//60)}m ago"
+    if secs < 86400:  return f"{int(secs//3600)}h ago"
+    return f"{int(secs//86400)}d ago"
+
+def _fetch_google_news(query, limit=14):
+    """Live headlines from Google News RSS for a query, newest first."""
+    import urllib.request, urllib.parse, xml.etree.ElementTree as ET
+    items = []
+    try:
+        q   = urllib.parse.quote(query)
+        url = f"https://news.google.com/rss/search?q={q}&hl=en-IN&gl=IN&ceid=IN:en"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            root = ET.fromstring(r.read())
+        ch = root.find("channel") or root
+        for item in ch.findall("item"):
+            title = (item.findtext("title") or "").strip()
+            link  = (item.findtext("link")  or "").strip()
+            pub   = (item.findtext("pubDate") or "").strip()
+            src_el = item.find("source")
+            src = (src_el.text if (src_el is not None and src_el.text) else "")
+            # Google News titles read "Headline - Source"; split the source out.
+            headline = title
+            if " - " in title:
+                head, tail = title.rsplit(" - ", 1)
+                if head and tail:
+                    headline = head
+                    if not src:
+                        src = tail.strip()
+            if not src:
+                src = "Google News"
+            dt = _parse_rss_dt(pub)
+            if headline and len(headline) > 12:
+                items.append({
+                    "headline":  headline.strip(),
+                    "source":    src,
+                    "date":      dt.strftime("%d %b %Y").upper() if dt else "",
+                    "time_ago":  _time_ago(dt),
+                    "timestamp": dt.timestamp() if dt else 0,
+                    "link":      link,
+                })
+        items.sort(key=lambda x: x["timestamp"], reverse=True)
+    except Exception:
+        pass
+    return items[:limit]
+
+# Two tracked conflicts. `when:7d` keeps Google News to the last week for freshness.
+WAR_CONFLICTS = [
+    {"key": "iran",    "flag": "🛢️", "title": "US · Iran · Middle East", "query": "Iran Israel US war strike when:7d", "color": "#ef4444"},
+    {"key": "ukraine", "flag": "🇺🇦", "title": "Russia · Ukraine",        "query": "Russia Ukraine war when:7d",          "color": "#3b82f6"},
+]
+
+def fetch_war_news_rss():
+    """Live war news from Google News RSS — both conflicts fetched in parallel."""
+    import concurrent.futures
+    from datetime import datetime, timezone
+    conflicts = [dict(c) for c in WAR_CONFLICTS]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(conflicts)) as pool:
+        futs = {c["key"]: pool.submit(_fetch_google_news, c["query"], 14) for c in conflicts}
+        for c in conflicts:
+            try:
+                c["items"] = futs[c["key"]].result()
+            except Exception:
+                c["items"] = []
+    return {
+        "conflicts": conflicts,
+        "updated":   datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC"),
+    }
+
+
 # ══════════════════════════════════════════════════════════════
 #  API ROUTES
 # ══════════════════════════════════════════════════════════════
 
 @app.route('/api/war_news', methods=['GET'])
 def get_war_news():
-    data = fetch_war_news_gemini()
-    return jsonify(data)
+    # No server-side cache: the user wants the latest headlines on every open.
+    # Two parallel RSS pulls keep it fast (~1-2s).
+    return jsonify(fetch_war_news_rss())
 
 def fetch_telegram_messages(channel_name="marketwisdom_official"):
     """Scrapes the public preview page of a Telegram channel."""
