@@ -217,57 +217,200 @@ def scan_stock(ticker):
 #  ORCHESTRATOR
 # ──────────────────────────────────────────────────────────────
 
+# ──────────────────────────────────────────────────────────────
+#  NIFTY 501-1000 UNIVERSE  (stocks ranked beyond the top 500)
+# ──────────────────────────────────────────────────────────────
+
+# Fallback mid/small-cap names (outside the Nifty 500 megacaps)
+NIFTY_NEXT_FALLBACK = [
+    "CDSL", "BSE", "ANGELONE", "KFINTECH", "CAMS", "IEX", "KALYANKJIL",
+    "RADICO", "CCL", "JYOTHYLAB", "BLUESTARCO", "AMBER", "KAYNES", "TATATECH",
+    "JBCHEPHARM", "ERIS", "MANKIND", "GLAND", "NATCOPHARM", "SUVENPHAR",
+    "APARINDS", "TRIVENI", "CAPLIPOINT", "REDINGTON", "RAILTEL", "RVNL",
+    "IRFC", "IRCON", "NBCC", "ENGINERSIN", "HUDCO", "JWL", "TITAGARH",
+    "CGCL", "SBFC", "FIVESTAR", "HOMEFIRST", "AAVAS", "APTUS", "CREDITACC",
+    "POONAWALLA", "360ONE", "ANANDRATHI", "NUVAMA", "MCX", "CESC",
+    "NLCINDIA", "JSWENERGY", "KEC", "ASTERDM", "RAINBOW", "KIMS", "MEDANTA",
+    "GRANULES", "LAURUSLABS", "AJANTPHARM", "JKCEMENT", "BIRLACORPN",
+]
+
+
+def _fetch_nse_index_csv(filename):
+    """Fetch a symbol list from an NSE index CSV (e.g. Total Market / Microcap)."""
+    import pandas as pd, io, urllib.request
+    url = f"https://archives.nseindia.com/content/indices/{filename}"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120"
+    })
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        csv_data = resp.read().decode("utf-8")
+    df = pd.read_csv(io.StringIO(csv_data))
+    return [s.strip() for s in df["Symbol"].tolist() if isinstance(s, str) and s.strip()]
+
+
+def get_nifty_next500_tickers():
+    """Stocks ranked roughly 501-1000: the Nifty Total Market (~750) plus Microcap 250,
+    minus the Nifty 500. Falls back to a curated mid/small-cap list."""
+    try:
+        nifty500 = set(s.replace(".NS", "") for s in get_nifty500_tickers())
+        broad = []
+        for fn in ("ind_niftytotalmarket_list.csv", "ind_niftymicrocap250_list.csv"):
+            try:
+                broad += _fetch_nse_index_csv(fn)
+            except Exception as e:
+                print(f"[Screener] {fn} fetch failed: {e}")
+        seen, universe = set(), []
+        for s in broad:
+            if s in nifty500 or s in seen:
+                continue
+            seen.add(s)
+            universe.append(s)
+        if len(universe) > 50:
+            print(f"[Screener] Next-500 universe: {len(universe)} tickers")
+            return [s + ".NS" for s in universe]
+    except Exception as e:
+        print(f"[Screener] Next-500 build failed: {e}, using fallback")
+    return [t + ".NS" for t in NIFTY_NEXT_FALLBACK]
+
+
+# ──────────────────────────────────────────────────────────────
+#  BULK PRICE DOWNLOAD  (one batched call for many tickers)
+# ──────────────────────────────────────────────────────────────
+
+def _bulk_download(tickers, period="3mo"):
+    """Download daily OHLCV for many tickers in ONE batched yfinance request.
+    Returns {ticker: {"closes": [...], "volumes": [...]}}. This replaces 1 history
+    call per stock — the single biggest speedup for a bulk scan."""
+    import yfinance as yf
+    out = {}
+    if not tickers:
+        return out
+    try:
+        df = yf.download(tickers, period=period, interval="1d", group_by="ticker",
+                         threads=True, progress=False, auto_adjust=False)
+    except Exception:
+        return out
+
+    def extract(tk_df):
+        try:
+            closes = [float(x) for x in tk_df["Close"].tolist()  if x == x]   # x==x drops NaN
+            vols   = [float(x) for x in tk_df["Volume"].tolist() if x == x]
+            return closes, vols
+        except Exception:
+            return [], []
+
+    if len(tickers) == 1:
+        c, v = extract(df)
+        if c:
+            out[tickers[0]] = {"closes": c, "volumes": v}
+    else:
+        for t in tickers:
+            try:
+                sub = df[t]
+            except Exception:
+                continue
+            c, v = extract(sub)
+            if c:
+                out[t] = {"closes": c, "volumes": v}
+    return out
+
+
+# ──────────────────────────────────────────────────────────────
+#  ORCHESTRATOR  (bulk-first architecture)
+# ──────────────────────────────────────────────────────────────
+
 def run_screener(market="india"):
     """
-    Main entry point. Scans all stocks for the given market,
-    filters and ranks by composite score.
-    Returns dict with results and metadata.
+    Scan a market and rank survivors by composite score.
+    Architecture: bulk-download all prices → compute volume-spike + RSI locally →
+    fetch the SLOW per-stock P/E only for the few that already pass. This avoids
+    ~500 `stock.info` calls (the old bottleneck) and batches the price fetch.
     """
     import time
-
     start = time.time()
 
     if market == "us":
         tickers = get_sp500_tickers()
-        market_label = "S&P 500"
+        label   = "S&P 500"
+    elif market in ("india_next500", "india500_1000"):
+        tickers = get_nifty_next500_tickers()
+        label   = "Nifty 501-1000"
     else:
         tickers = get_nifty500_tickers()
-        market_label = "Nifty 500"
+        label   = "Nifty 500"
 
     total = len(tickers)
-    print(f"[Screener] Starting scan of {total} {market_label} stocks...")
+    print(f"[Screener] Scanning {total} {label} stocks (bulk mode)...")
 
-    results = []
-    scanned = 0
-    errors = 0
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        future_map = {executor.submit(scan_stock, t): t for t in tickers}
-        for future in concurrent.futures.as_completed(future_map):
-            scanned += 1
+    # 1) Bulk-download prices in parallel chunks
+    price_data = {}
+    CHUNK = 100
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+        futs = [ex.submit(_bulk_download, tickers[i:i + CHUNK], "3mo")
+                for i in range(0, total, CHUNK)]
+        for f in concurrent.futures.as_completed(futs):
             try:
-                result = future.result()
-                if result is not None:
-                    results.append(result)
+                price_data.update(f.result() or {})
             except Exception:
-                errors += 1
+                pass
 
-            if scanned % 50 == 0:
-                print(f"[Screener] Progress: {scanned}/{total} scanned, {len(results)} passed filters")
+    # 2) Cheap local filters: volume spike (>2x) + RSI (>50)
+    candidates = []
+    for t, d in price_data.items():
+        pairs = [(c, v) for c, v in zip(d["closes"], d["volumes"]) if v > 0]
+        if len(pairs) < 21:
+            continue
+        closes = [c for c, _ in pairs]
+        vols   = [v for _, v in pairs]
+        cur_vol = vols[-1]
+        avg20   = sum(vols[-21:-1]) / 20
+        if avg20 <= 0:
+            continue
+        vol_ratio = round(cur_vol / avg20, 2)
+        if vol_ratio < 2.0:
+            continue
+        rsi = calculate_rsi(closes)
+        if rsi is None or rsi <= 50:
+            continue
+        candidates.append({
+            "ticker": t, "price": round(closes[-1], 2), "vol_ratio": vol_ratio,
+            "avg_vol_20d": int(avg20), "current_vol": int(cur_vol), "rsi": rsi,
+        })
 
-    # Sort by composite score descending
-    results.sort(key=lambda x: x["score"], reverse=True)
+    # 3) Fetch the slow P/E ONLY for survivors, then apply P/E < 20
+    def add_pe(c):
+        try:
+            import yfinance as yf
+            info = yf.Ticker(c["ticker"]).info
+            pe = info.get("trailingPE") or info.get("forwardPE")
+            if pe is None or pe <= 0 or pe >= 20:
+                return None
+            c["pe"] = round(float(pe), 2)
+            return c
+        except Exception:
+            return None
 
-    # Return top 25
-    top_results = results[:25]
+    passed = []
+    if candidates:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+            for r in ex.map(add_pe, candidates):
+                if r:
+                    passed.append(r)
+
+    for c in passed:
+        c["ticker"] = c["ticker"].replace(".NS", "").replace(".BO", "")
+        c["score"]  = compute_composite_score(c["pe"], c["vol_ratio"], c["rsi"])
+    passed.sort(key=lambda x: x["score"], reverse=True)
+    top = passed[:25]
 
     elapsed = round(time.time() - start, 1)
-    print(f"[Screener] Done in {elapsed}s — {len(results)} stocks passed filters, returning top {len(top_results)}")
+    print(f"[Screener] Done in {elapsed}s — {len(price_data)} priced, "
+          f"{len(candidates)} candidates, {len(passed)} passed, returning {len(top)}")
 
     return {
-        "market": market_label,
+        "market": label,
         "total_scanned": total,
-        "total_passed": len(results),
-        "results": top_results,
+        "total_passed": len(passed),
+        "results": top,
         "scan_time_seconds": elapsed,
     }

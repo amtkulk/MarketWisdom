@@ -387,68 +387,25 @@ const app = {
             </div>
             <div id="screener-status-bar" style="display:none"></div>
             <div id="screener-result"><div style="text-align:center;padding:30px;color:var(--text-secondary)"><div class="spinner"></div></div></div>
+
+            <div id="screener-next-wrap" style="margin-top:36px">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+                    <div>
+                        <h3 style="font-size:18px;font-weight:800;color:var(--text-primary);margin-bottom:2px">🔭 Nifty 501-1000</h3>
+                        <p style="font-size:12px;color:var(--text-secondary)">Same filters, on stocks beyond the top 500 (Total Market + Microcap, minus Nifty 500).</p>
+                    </div>
+                    <button id="btn-scan-next" class="btn" style="background:var(--accent-color);color:white;padding:10px 24px;font-size:14px;font-weight:700;">🔍 Scan Now</button>
+                </div>
+                <div id="screener-next-status-bar" style="display:none"></div>
+                <div id="screener-next-result"><div style="text-align:center;padding:30px;color:var(--text-secondary)"><div class="spinner"></div></div></div>
+            </div>
         `;
+        const self = this;
         let selectedMarket = 'india';
         let pollTimer = null;
+        let pollTimerNext = null;
 
-        document.querySelectorAll('.screener-mkt-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                selectedMarket = btn.dataset.market;
-                document.querySelectorAll('.screener-mkt-btn').forEach(b => {
-                    b.style.background='var(--bg-card)';b.style.color='var(--text-secondary)';
-                    b.style.border='1px solid var(--border-color)';b.classList.remove('active-mkt');
-                });
-                btn.style.background='';btn.style.color='';btn.style.border='';btn.classList.add('active-mkt');
-                loadLastResults(selectedMarket);
-            });
-        });
-
-        const renderTable = (data, market) => {
-            const resDiv = document.getElementById('screener-result');
-            if(!resDiv) return;
-            const cur = market==='us'?'$':'₹';
-            let h = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px">';
-            h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--accent-color)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Market</div><div style="font-size:20px;font-weight:800;margin-top:6px">'+data.market+'</div></div>';
-            h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid #818cf8"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Scanned</div><div style="font-size:20px;font-weight:800;color:#818cf8;margin-top:6px">'+data.total_scanned+'</div></div>';
-            h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--green)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Passed</div><div style="font-size:20px;font-weight:800;color:var(--green);margin-top:6px">'+data.total_passed+'</div></div>';
-            h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--yellow)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Time</div><div style="font-size:20px;font-weight:800;color:var(--yellow);margin-top:6px">'+data.scan_time_seconds+'s</div></div>';
-            h += '</div>';
-            if(data.results && data.results.length>0){
-                h+='<div class="card" style="padding:0;overflow:hidden"><table style="width:100%;border-collapse:collapse">';
-                h+='<thead><tr style="background:rgba(255,255,255,0.05);text-align:left">';
-                h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;width:40px">#</th>';
-                h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase">Ticker</th>';
-                h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">Price</th>';
-                h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">P/E</th>';
-                h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">Vol Ratio</th>';
-                h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">RSI</th>';
-                h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">Score</th>';
-                h+='</tr></thead><tbody>';
-                data.results.forEach((s,i)=>{
-                    const r=i+1;
-                    const bg=r<=3?'background:rgba(16,185,129,0.08);':'';
-                    const re=r===1?'🥇':r===2?'🥈':r===3?'🥉':r;
-                    const vc=s.vol_ratio>=5?'var(--red)':s.vol_ratio>=3?'var(--yellow)':'var(--green)';
-                    const rc=s.rsi>=70?'var(--red)':s.rsi>=60?'var(--yellow)':'var(--green)';
-                    const sc=s.score>=60?'var(--green)':s.score>=40?'var(--yellow)':'var(--text-secondary)';
-                    h+='<tr style="border-bottom:1px solid rgba(255,255,255,0.05);'+bg+'">';
-                    h+='<td style="padding:14px 12px;font-weight:800;font-size:14px">'+re+'</td>';
-                    h+='<td style="padding:14px 12px;font-weight:800;color:var(--text-primary);font-size:14px">'+s.ticker+'</td>';
-                    h+='<td style="padding:14px 12px;text-align:right;font-weight:700;font-size:14px">'+cur+s.price.toLocaleString()+'</td>';
-                    h+='<td style="padding:14px 12px;text-align:right;color:var(--green);font-weight:600">'+s.pe+'</td>';
-                    h+='<td style="padding:14px 12px;text-align:right"><span style="background:'+vc+'20;color:'+vc+';padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700">'+s.vol_ratio+'x</span></td>';
-                    h+='<td style="padding:14px 12px;text-align:right;color:'+rc+';font-weight:700">'+s.rsi+'</td>';
-                    h+='<td style="padding:14px 12px;text-align:right"><div style="display:flex;align-items:center;justify-content:flex-end;gap:8px"><div style="width:60px;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.score,100)+'%;height:100%;background:'+sc+';border-radius:3px"></div></div><span style="font-weight:800;color:'+sc+';font-size:13px">'+s.score+'</span></div></td>';
-                    h+='</tr>';
-                });
-                h+='</tbody></table></div>';
-            } else {
-                h+='<div class="card" style="text-align:center;padding:40px;border-color:var(--yellow)"><div style="font-size:40px;margin-bottom:16px">🔍</div><div style="color:var(--yellow);font-weight:800">No stocks passed all filters</div><div style="color:var(--text-secondary);margin-top:8px">Try during market hours.</div></div>';
-            }
-            h+='<div style="text-align:right;margin-top:16px;font-size:11px;color:var(--text-secondary);font-style:italic">Last scanned: '+data.timestamp+'</div>';
-            resDiv.innerHTML=h;
-        };
-
+        // ───────── Main table (Nifty 500 / S&P 500 toggle) ─────────
         const loadLastResults = async (market) => {
             const resDiv = document.getElementById('screener-result');
             if(!resDiv) return;
@@ -456,7 +413,7 @@ const app = {
                 const data = await api.getScreenerResults(market);
                 if(data.empty){
                     resDiv.innerHTML='<div class="card" style="text-align:center;padding:40px;border-color:rgba(129,140,248,0.2)"><div style="font-size:40px;margin-bottom:16px">📊</div><div style="color:var(--text-accent);font-weight:800;font-size:16px">No previous scan results</div><div style="color:var(--text-secondary);margin-top:8px">Click <b>Scan Now</b> to run your first scan. You can navigate away and results will be saved.</div></div>';
-                } else { renderTable(data, market); }
+                } else { resDiv.innerHTML = self.screenerTableHTML(data, market); }
             } catch(e) { resDiv.innerHTML='<div class="card" style="text-align:center;padding:20px;color:var(--text-secondary)">Could not load previous results.</div>'; }
             try {
                 const st = await api.getScreenerStatus(market);
@@ -487,12 +444,121 @@ const app = {
             }, 5000);
         };
 
+        // ───────── Second table (Nifty 501-1000) ─────────
+        const NEXT = 'india_next500';
+        const loadNext = async () => {
+            const el = document.getElementById('screener-next-result');
+            if(!el) return;
+            try {
+                const data = await api.getScreenerResults(NEXT);
+                if(data.empty){
+                    el.innerHTML='<div class="card" style="text-align:center;padding:40px;border-color:rgba(129,140,248,0.2)"><div style="font-size:40px;margin-bottom:16px">🔭</div><div style="color:var(--text-accent);font-weight:800;font-size:16px">No previous scan results</div><div style="color:var(--text-secondary);margin-top:8px">Click <b>Scan Now</b> above to scan the 501-1000 universe. This set is larger, so the first scan can take a little longer. Results are saved.</div></div>';
+                } else { el.innerHTML = self.screenerTableHTML(data, NEXT); }
+            } catch(e) { el.innerHTML='<div class="card" style="text-align:center;padding:20px;color:var(--text-secondary)">Could not load previous results.</div>'; }
+            try {
+                const st = await api.getScreenerStatus(NEXT);
+                if(st.status==='running') startPollingNext();
+            } catch(e){}
+        };
+
+        const startPollingNext = () => {
+            if(pollTimerNext) clearInterval(pollTimerNext);
+            const btn=document.getElementById('btn-scan-next');
+            const bar=document.getElementById('screener-next-status-bar');
+            if(btn){btn.disabled=true;btn.innerHTML='<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Scanning...';}
+            if(bar){bar.style.display='block';bar.innerHTML='<div class="card" style="padding:12px 16px;background:rgba(16,185,129,0.08);border-color:rgba(16,185,129,0.2);display:flex;align-items:center;gap:12px;margin-bottom:16px"><span class="spinner"></span><span style="color:var(--green);font-weight:600">Scanning Nifty 501-1000... You can navigate away. Results will be saved.</span></div>';}
+            pollTimerNext = setInterval(async()=>{
+                try {
+                    const st = await api.getScreenerStatus(NEXT);
+                    if(st.status==='done'){
+                        clearInterval(pollTimerNext);pollTimerNext=null;
+                        if(btn){btn.disabled=false;btn.innerHTML='🔍 Scan Now';}
+                        if(bar) bar.style.display='none';
+                        loadNext();
+                    } else if(st.status==='error'){
+                        clearInterval(pollTimerNext);pollTimerNext=null;
+                        if(btn){btn.disabled=false;btn.innerHTML='🔍 Scan Now';}
+                        if(bar){bar.style.display='block';bar.innerHTML='<div class="card" style="padding:12px 16px;border-color:var(--red);margin-bottom:16px"><span style="color:var(--red);font-weight:600">Scan failed: '+(st.error||'Unknown error')+'</span></div>';}
+                    }
+                } catch(e){}
+            }, 5000);
+        };
+
+        // ───────── Toggle: 501-1000 table only applies to India ─────────
+        document.querySelectorAll('.screener-mkt-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                selectedMarket = btn.dataset.market;
+                document.querySelectorAll('.screener-mkt-btn').forEach(b => {
+                    b.style.background='var(--bg-card)';b.style.color='var(--text-secondary)';
+                    b.style.border='1px solid var(--border-color)';b.classList.remove('active-mkt');
+                });
+                btn.style.background='';btn.style.color='';btn.style.border='';btn.classList.add('active-mkt');
+                loadLastResults(selectedMarket);
+                const wrap = document.getElementById('screener-next-wrap');
+                if(selectedMarket==='us'){
+                    if(wrap) wrap.style.display='none';
+                } else {
+                    if(wrap) wrap.style.display='block';
+                    loadNext();
+                }
+            });
+        });
+
         document.getElementById('btn-scan').addEventListener('click', async()=>{
             try { await api.startScreenerScan(selectedMarket); startPolling(selectedMarket); }
             catch(err) { alert('Failed to start scan: '+err.message); }
         });
+        document.getElementById('btn-scan-next').addEventListener('click', async()=>{
+            try { await api.startScreenerScan(NEXT); startPollingNext(); }
+            catch(err) { alert('Failed to start scan: '+err.message); }
+        });
 
         loadLastResults(selectedMarket);
+        loadNext();   // India is the default market, so show the 501-1000 table too
+    },
+
+    screenerTableHTML(data, market) {
+        const cur = market === 'us' ? '$' : '₹';
+        let h = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px">';
+        h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--accent-color)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Market</div><div style="font-size:20px;font-weight:800;margin-top:6px">'+data.market+'</div></div>';
+        h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid #818cf8"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Scanned</div><div style="font-size:20px;font-weight:800;color:#818cf8;margin-top:6px">'+data.total_scanned+'</div></div>';
+        h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--green)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Passed</div><div style="font-size:20px;font-weight:800;color:var(--green);margin-top:6px">'+data.total_passed+'</div></div>';
+        h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--yellow)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Time</div><div style="font-size:20px;font-weight:800;color:var(--yellow);margin-top:6px">'+data.scan_time_seconds+'s</div></div>';
+        h += '</div>';
+        if(data.results && data.results.length>0){
+            h+='<div class="card" style="padding:0;overflow:hidden"><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">';
+            h+='<thead><tr style="background:rgba(255,255,255,0.05);text-align:left">';
+            h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;width:40px">#</th>';
+            h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase">Ticker</th>';
+            h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">Price</th>';
+            h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">P/E</th>';
+            h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">Vol Ratio</th>';
+            h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">RSI</th>';
+            h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">Score</th>';
+            h+='</tr></thead><tbody>';
+            data.results.forEach((s,i)=>{
+                const r=i+1;
+                const bg=r<=3?'background:rgba(16,185,129,0.08);':'';
+                const re=r===1?'🥇':r===2?'🥈':r===3?'🥉':r;
+                const vc=s.vol_ratio>=5?'var(--red)':s.vol_ratio>=3?'var(--yellow)':'var(--green)';
+                const rc=s.rsi>=70?'var(--red)':s.rsi>=60?'var(--yellow)':'var(--green)';
+                const sc=s.score>=60?'var(--green)':s.score>=40?'var(--yellow)':'var(--text-secondary)';
+                h+='<tr style="border-bottom:1px solid rgba(255,255,255,0.05);'+bg+'">';
+                h+='<td style="padding:14px 12px;font-weight:800;font-size:14px">'+re+'</td>';
+                h+='<td style="padding:14px 12px;font-weight:800;color:var(--text-primary);font-size:14px">'+s.ticker+'</td>';
+                h+='<td style="padding:14px 12px;text-align:right;font-weight:700;font-size:14px">'+cur+s.price.toLocaleString()+'</td>';
+                h+='<td style="padding:14px 12px;text-align:right;color:var(--green);font-weight:600">'+s.pe+'</td>';
+                h+='<td style="padding:14px 12px;text-align:right"><span style="background:'+vc+'20;color:'+vc+';padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700">'+s.vol_ratio+'x</span></td>';
+                h+='<td style="padding:14px 12px;text-align:right;color:'+rc+';font-weight:700">'+s.rsi+'</td>';
+                h+='<td style="padding:14px 12px;text-align:right"><div style="display:flex;align-items:center;justify-content:flex-end;gap:8px"><div style="width:60px;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.score,100)+'%;height:100%;background:'+sc+';border-radius:3px"></div></div><span style="font-weight:800;color:'+sc+';font-size:13px">'+s.score+'</span></div></td>';
+                h+='</tr>';
+            });
+            h+='</tbody></table></div></div>';
+        } else {
+            h+='<div class="card" style="text-align:center;padding:40px;border-color:var(--yellow)"><div style="font-size:40px;margin-bottom:16px">🔍</div><div style="color:var(--yellow);font-weight:800">No stocks passed all filters</div><div style="color:var(--text-secondary);margin-top:8px">Try during market hours.</div></div>';
+        }
+        h+='<div style="text-align:right;margin-top:16px;font-size:11px;color:var(--text-secondary);font-style:italic">Last scanned: '+data.timestamp+'</div>';
+        return h;
     },
 
     renderHome(container) {
