@@ -709,7 +709,12 @@ def _scrape_chartink_playwright(url, max_pages=3):
                 viewport={"width": 1280, "height": 900}
             )
             page = context.new_page()
-            page.goto(url, timeout=60000)
+            # Wait for DOM parse, not the full 'load' event — Chartink keeps live
+            # connections open so 'load' often never fires (causing the 60s timeout).
+            try:
+                page.goto(url, timeout=45000, wait_until="domcontentloaded")
+            except Exception:
+                page.goto(url, timeout=45000, wait_until="commit")
             try:
                 page.wait_for_selector("table.scan-results-table", timeout=30000)
             except Exception:
