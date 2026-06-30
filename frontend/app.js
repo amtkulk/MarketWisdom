@@ -553,80 +553,65 @@ const app = {
     },
 
     renderHome(container) {
+        const owl = `<svg viewBox="0 0 64 64" fill="none" style="width:84px;height:84px;filter:drop-shadow(0 8px 24px rgba(129,140,248,0.3))">
+            <path d="M32 6C16 6 10 18 10 32c0 16 10 26 22 26s22-10 22-26C54 18 48 6 32 6Z" fill="#0f172a" stroke="#818cf8" stroke-width="2.5"/>
+            <path d="M14 24 L24 17 L40 17 L50 24" fill="none" stroke="#818cf8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            <g stroke-linecap="round">
+                <line x1="24" y1="25" x2="24" y2="45" stroke="#4ade80" stroke-width="2"/><rect x="20.5" y="29" width="7" height="11" rx="1.6" fill="#4ade80"/>
+                <line x1="40" y1="25" x2="40" y2="45" stroke="#f87171" stroke-width="2"/><rect x="36.5" y="29" width="7" height="11" rx="1.6" fill="#f87171"/>
+            </g>
+            <path d="M32 41 L28 47 L36 47 Z" fill="#fbbf24"/>
+        </svg>`;
+
+        const card = (href, color, icon, title, desc, cta, isNew) => `
+            <a href="${href}" class="feature-card" style="--card-color: ${color}">
+                <div class="feature-icon" style="color:${color}">${icon}</div>
+                <div class="feature-title">${title}${isNew ? ' <span style="font-size:10px;font-weight:800;color:#0f172a;background:var(--green);padding:2px 7px;border-radius:20px;vertical-align:middle;margin-left:4px">NEW</span>' : ''}</div>
+                <div class="feature-desc">${desc}</div>
+                <div class="feature-link">${cta} →</div>
+            </a>`;
+
+        const sectionLabel = (t) => `<div style="font-family:'Inter',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-accent);font-weight:700;margin:36px 0 14px">${t}</div>`;
+
         container.innerHTML = `
-            <div style="text-align:center;padding:60px 0 40px">
-                <div style="font-size:11px;letter-spacing:.2em;color:var(--text-secondary);text-transform:uppercase;margin-bottom:12px">
-                    Your Personal Market Intelligence
-                </div>
-                <h1 style="font-size:32px;font-weight:900;background:linear-gradient(135deg,#818cf8,#34d399);
-                           -webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px">
-                    Market Research Hub
+            <div style="text-align:center;padding:52px 0 8px">
+                ${owl}
+                <h1 style="font-size:34px;font-weight:900;margin:18px 0 6px;letter-spacing:-1px">
+                    <span style="color:var(--text-primary)">Market</span> <span style="color:var(--text-accent)">Wisdom</span>
                 </h1>
-                <p style="color:var(--text-secondary);font-size:14px">Powered by Google Gemini · yfinance · Screener.in · Chartink</p>
-                <div style="margin-top: 24px;">
-                    <a href="https://t.me/marketwisdom_official" target="_blank" style="display:inline-flex;align-items:center;gap:8px;background:#2AABEE;color:white;padding:10px 20px;border-radius:24px;text-decoration:none;font-weight:600;font-size:14px;box-shadow: 0 4px 15px rgba(42, 171, 238, 0.3);">
-                        <span style="font-size:18px;">✈️</span> Join our official Telegram channel for live updates.
+                <p style="color:var(--text-secondary);font-size:15px;max-width:560px;margin:0 auto">
+                    Your personal market intelligence desk — live indices, fast stock research, screeners and Nifty analytics, in one place.
+                </p>
+                <div style="margin-top:22px">
+                    <a href="https://t.me/marketwisdom_official" target="_blank" style="display:inline-flex;align-items:center;gap:8px;background:#2AABEE;color:white;padding:10px 20px;border-radius:24px;text-decoration:none;font-weight:600;font-size:14px;box-shadow:0 4px 15px rgba(42,171,238,0.3)">
+                        <span style="font-size:18px">✈️</span> Join our official Telegram channel for live updates
                     </a>
                 </div>
             </div>
+
+            ${sectionLabel('Research & Analysis')}
             <div class="feature-grid">
-                <a href="#telegram" class="feature-card" style="--card-color: #2AABEE">
-                    <div class="feature-icon" style="color:#2AABEE">💬</div>
-                    <div class="feature-title">Telegram Feed</div>
-                    <div class="feature-desc">Live messages and updates directly from our Telegram group.</div>
-                    <div class="feature-link">View Feed →</div>
-                </a>
-
-                <a href="#stock" class="feature-card" style="--card-color: #818cf8">
-                    <div class="feature-icon">🔍</div>
-                    <div class="feature-title">Stock Research</div>
-                    <div class="feature-desc">This page will give user a high level data about fundaments about the company chart information and recent news in last 6months time period.</div>
-                    <div class="feature-link">Explore →</div>
-                </a>
-                
-                <a href="#war-news" class="feature-card" style="--card-color: #ef4444">
-                    <div class="feature-icon">📰</div>
-                    <div class="feature-title">War News</div>
-                    <div class="feature-desc">Global war & geopolitical news from US, Iran, Crude Oil, and Hormuz perspectives.</div>
-                    <div class="feature-link">Read News →</div>
-                </a>
-
-                <a href="#action" class="feature-card" style="--card-color: #f59e0b">
-                    <div class="feature-icon">⚡</div>
-                    <div class="feature-title">Stock Action</div>
-                    <div class="feature-desc">This page will give you news or Conference call details or company announcements in recent time.</div>
-                    <div class="feature-link">View Action →</div>
-                </a>
-
-                <a href="#chartink" class="feature-card" style="--card-color: #c084fc">
-                    <div class="feature-icon">📋</div>
-                    <div class="feature-title">Chartink Comparator</div>
-                    <div class="feature-desc">This will give you common stocks between my favourite screeners.</div>
-                    <div class="feature-link">Compare Now →</div>
-                </a>
-                
-                <a href="#nifty" class="feature-card" style="--card-color: #10b981">
-                    <div class="feature-icon">📈</div>
-                    <div class="feature-title">Nifty Analysis</div>
-                    <div class="feature-desc">This page gives Nifty EMA data and weekly PCR and Nifty support Resistance based on VIX.</div>
-                    <div class="feature-link">Analyze Trend →</div>
-                </a>
-
-                <a href="#fno" class="feature-card" style="--card-color: #f59e0b">
-                    <div class="feature-icon">⛓️</div>
-                    <div class="feature-title">Options Dashboard</div>
-                    <div class="feature-desc">Live NSE Option Chain data, Put-Call Ratio (PCR), Max Pain, and Major Support/Resistance levels.</div>
-                    <div class="feature-link">View Option Chain →</div>
-                </a>
-                
-                <a href="#watchlist" class="feature-card" style="--card-color: #ec4899">
-                    <div class="feature-icon">⭐</div>
-                    <div class="feature-title">WatchList</div>
-                    <div class="feature-desc">This page gives your saved watchlist and stock price when you added in watchlist and what is CMP.</div>
-                    <div class="feature-link">View Saved →</div>
-                </a>
+                ${card('#overview', '#34d399', '🧭', 'Stock Overview', 'A fast, accurate snapshot of any stock — live price, CAGR, RSI, fundamentals, shareholding, quarterly results and a 6-month chart.', 'Open Overview', true)}
+                ${card('#stock', '#818cf8', '🔍', 'Stock Research', 'A deep-dive on a company: fundamentals, technicals, chart and the last six months of news.', 'Explore')}
+                ${card('#nifty', '#10b981', '📈', 'Nifty Analysis', "Nifty's 21-EMA & 200-DMA, RSI, day move, weekly/monthly PCR and a VIX-based expected range.", 'Analyze Trend')}
+                ${card('#screener', '#60a5fa', '📊', 'Stock Screener', 'Scan the Nifty 500 — and the next 501–1000 — for breakouts by P/E, volume spike and RSI.', 'Run a Scan')}
+                ${card('#chartink', '#c084fc', '📋', 'Chartink Comparator', 'Find the stocks that appear in both of your favourite Chartink screeners.', 'Compare')}
             </div>
-            <footer>Market Research Hub · For informational purposes only · Not investment advice</footer>
+
+            ${sectionLabel('Markets & News')}
+            <div class="feature-grid">
+                ${card('#global', '#f59e0b', '🌍', 'Global Market', "World indices, commodities and FX in separate tables, plus today's biggest moves and live market news.", 'View Markets')}
+                ${card('#war-news', '#ef4444', '📰', 'War News', 'Live US–Iran and Russia–Ukraine headlines, newest first, in two columns.', 'Read News')}
+                ${card('#action', '#fbbf24', '⚡', 'Stock Action', 'The latest announcements, results and conference-call notes for a company.', 'View Action')}
+            </div>
+
+            ${sectionLabel('Your Space')}
+            <div class="feature-grid">
+                ${card('#watchlist', '#ec4899', '⭐', 'Watchlist', 'Your saved stocks, showing the price when you added them versus the current price.', 'View Saved')}
+                ${card('#telegram', '#2AABEE', '💬', 'Telegram Feed', 'Live messages and updates straight from the Market Wisdom Telegram channel.', 'View Feed')}
+            </div>
+
+            <footer>Market Wisdom · For informational purposes only · Not investment advice</footer>
         `;
     },
 
