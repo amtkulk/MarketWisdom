@@ -329,6 +329,9 @@ def run_screener(market="india"):
     import time
     start = time.time()
 
+    if market == "india_master":
+        return run_master_screener()
+
     if market == "us":
         tickers = get_sp500_tickers()
         label   = "S&P 500"
@@ -412,5 +415,344 @@ def run_screener(market="india"):
         "total_scanned": total,
         "total_passed": len(passed),
         "results": top,
+        "scan_time_seconds": elapsed,
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+#  MASTER SCREENER  —  Nifty 1000, multi-factor (technical + fundamental)
+#
+#  Architecture (same bulk-first pattern as run_screener):
+#   1. ONE-YEAR daily OHLCV for ~1000 stocks via batched downloads.
+#   2. Technical score computed locally for every stock (daily + weekly):
+#      trend alignment, weekly stage, RSI (D/W), MACD, relative strength
+#      vs Nifty, proximity to 52-week high.
+#   3. Hard gate: price > 200-DMA  AND  weekly close > 30-week MA.
+#   4. Top 40 by technical score → fundamentals fetched from Screener.in
+#      (ROE, ROCE, 5-yr sales & profit CAGR, P/E) for those 40 only.
+#   5. Composite = Technical (60) + Fundamental (40) → ranked Top 10.
+# ══════════════════════════════════════════════════════════════
+
+def get_nifty1000_tickers():
+    """Nifty 500 + the 501-1000 universe, deduplicated (with .NS suffix)."""
+    seen, out = set(), []
+    for t in (get_nifty500_tickers() + get_nifty_next500_tickers()):
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
+def _ema_list(vals, period):
+    if not vals:
+        return []
+    k = 2.0 / (period + 1)
+    out = [vals[0]]
+    for v in vals[1:]:
+        out.append(v * k + out[-1] * (1 - k))
+    return out
+
+
+def _sma(vals, period):
+    if len(vals) < period:
+        return None
+    return sum(vals[-period:]) / period
+
+
+def _macd_bullish(closes):
+    """True when MACD line is above its signal line."""
+    if len(closes) < 40:
+        return False
+    e12, e26 = _ema_list(closes, 12), _ema_list(closes, 26)
+    macd = [a - b for a, b in zip(e12, e26)]
+    sig = _ema_list(macd, 9)
+    return macd[-1] > sig[-1]
+
+
+def _bulk_download_ohlc(tickers, period="1y"):
+    """Batched 1-y daily download returning {ticker: [(date, close, volume, high), ...]}."""
+    import yfinance as yf
+    out = {}
+    if not tickers:
+        return out
+    try:
+        df = yf.download(tickers, period=period, interval="1d", group_by="ticker",
+                         threads=True, progress=False, auto_adjust=False)
+    except Exception:
+        return out
+
+    def extract(sub):
+        try:
+            rows = []
+            closes = sub["Close"]
+            vols = sub["Volume"]
+            highs = sub["High"]
+            for idx in sub.index:
+                c, v, h = closes.get(idx), vols.get(idx), highs.get(idx)
+                if c == c and v == v:          # NaN check
+                    rows.append((idx.to_pydatetime(), float(c), float(v),
+                                 float(h) if h == h else float(c)))
+            return rows
+        except Exception:
+            return []
+
+    if len(tickers) == 1:
+        rows = extract(df)
+        if rows:
+            out[tickers[0]] = rows
+    else:
+        for t in tickers:
+            try:
+                sub = df[t]
+            except Exception:
+                continue
+            rows = extract(sub)
+            if len(rows) >= 60:
+                out[t] = rows
+    return out
+
+
+def _weekly_closes(rows):
+    """Collapse daily rows into calendar-week closing prices (ISO weeks)."""
+    weeks = {}
+    for dt, c, _v, _h in rows:            # chronological → last close of week wins
+        iso = dt.isocalendar()
+        weeks[(iso[0], iso[1])] = c
+    return [weeks[k] for k in sorted(weeks.keys())]
+
+
+def _pct_return(closes, days):
+    if len(closes) <= days or closes[-days - 1] <= 0:
+        return None
+    return (closes[-1] / closes[-days - 1] - 1) * 100
+
+
+def technical_score(rows, nifty_closes):
+    """Score 0-60 from daily+weekly technicals. Returns (score, details) or None."""
+    if not rows or len(rows) < 210:        # need ~1y for the 200-DMA
+        return None
+    closes = [r[1] for r in rows]
+    vols = [r[2] for r in rows]
+    highs = [r[3] for r in rows]
+    price = closes[-1]
+    sma50, sma200 = _sma(closes, 50), _sma(closes, 200)
+    wk = _weekly_closes(rows)
+    wma30 = _sma(wk, 30)
+    if sma200 is None or wma30 is None:
+        return None
+
+    d = {"price": round(price, 2)}
+    score = 0.0
+
+    # 1) Trend alignment (max 16): price>200DMA(6), price>50DMA(5), 50>200(5)
+    d["above_200dma"] = price > sma200
+    d["above_50dma"] = sma50 is not None and price > sma50
+    d["golden_stack"] = sma50 is not None and sma50 > sma200
+    score += (6 if d["above_200dma"] else 0) + (5 if d["above_50dma"] else 0) \
+           + (5 if d["golden_stack"] else 0)
+
+    # 2) Weekly stage (max 8): close above the 30-week MA (classic stage-2 test)
+    d["above_30wma"] = wk[-1] > wma30
+    score += 8 if d["above_30wma"] else 0
+
+    # 3) Daily RSI (max 8): 50-70 is the strong-but-not-stretched zone
+    rsi_d = calculate_rsi(closes)
+    d["rsi_d"] = rsi_d
+    if rsi_d is not None:
+        if 50 <= rsi_d <= 70:
+            score += 8
+        elif 45 <= rsi_d < 50 or 70 < rsi_d <= 75:
+            score += 4
+
+    # 4) Weekly RSI (max 6): momentum confirmed on the higher timeframe
+    rsi_w = calculate_rsi(wk) if len(wk) >= 15 else None
+    d["rsi_w"] = rsi_w
+    if rsi_w is not None and rsi_w > 50:
+        score += 6
+
+    # 5) MACD daily bullish (max 6)
+    d["macd_bull"] = _macd_bullish(closes)
+    score += 6 if d["macd_bull"] else 0
+
+    # 6) Relative strength vs Nifty, 6-month (max 8, scaled)
+    rs = None
+    r_stock = _pct_return(closes, 126)
+    r_nifty = _pct_return(nifty_closes, 126) if nifty_closes else None
+    if r_stock is not None and r_nifty is not None:
+        rs = round(r_stock - r_nifty, 1)
+        if rs > 0:
+            score += min(8.0, 2 + rs / 5.0)   # +5pp outperf ≈ 3pts … caps at 8
+    d["rs_6m"] = rs
+
+    # 7) Proximity to 52-week high (max 8): closer = stronger
+    hi52 = max(highs)
+    dist = (hi52 - price) / hi52 * 100 if hi52 > 0 else 100
+    d["dist_52wh"] = round(dist, 1)
+    if dist <= 3:
+        score += 8
+    elif dist <= 8:
+        score += 6
+    elif dist <= 15:
+        score += 3
+
+    # Liquidity sanity: 20-day avg turnover > Rs.1 cr (skips untradeable names)
+    avg_turnover = (sum(vols[-20:]) / 20) * price
+    d["liquid"] = avg_turnover > 1e7
+    return (round(score, 1), d)
+
+
+def _fetch_fundamentals(symbol):
+    """ROE, ROCE, 5-yr sales & profit CAGR, and P/E from Screener.in (one GET)."""
+    try:
+        import re
+        from curl_cffi import requests as cffi
+        from bs4 import BeautifulSoup
+        url = f"https://www.screener.in/company/{symbol}/consolidated/"
+        r = cffi.get(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }, impersonate="chrome120", timeout=8)
+        if r.status_code != 200:
+            return {}
+        soup = BeautifulSoup(r.content, "html.parser")
+        out = {}
+        for li in soup.select("#top-ratios li") or []:
+            t = " ".join((li.get_text() or "").split())
+            low = t.lower()
+            m = re.search(r'(-?\d[\d,]*(?:\.\d+)?)', t)
+            if not m:
+                continue
+            val = float(m.group(1).replace(",", ""))
+            if "roce" in low and "roce" not in out:
+                out["roce"] = val
+            elif ("roe" in low or "return on equity" in low) and "roe" not in out:
+                out["roe"] = val
+            elif "stock p/e" in low and "pe" not in out:
+                out["pe"] = val
+        for tbl in soup.find_all("table"):
+            txt = tbl.get_text() or ""
+            key = "sales_g" if "Compounded Sales Growth" in txt else \
+                  "profit_g" if "Compounded Profit Growth" in txt else None
+            if not key or key in out:
+                continue
+            for tr in tbl.find_all("tr"):
+                cells = [c.get_text(strip=True) for c in tr.find_all(["td", "th"])]
+                if len(cells) >= 2 and "5 year" in cells[0].lower():
+                    m = re.search(r'(-?\d+(?:\.\d+)?)', cells[1])
+                    if m:
+                        out[key] = float(m.group(1))
+        return out
+    except Exception:
+        return {}
+
+
+def fundamental_score(f):
+    """Score 0-40 from Screener.in fundamentals. Missing data simply scores 0."""
+    s = 0.0
+
+    def tier(val, hi, mid, lo, p_hi, p_mid, p_lo):
+        if val is None:
+            return 0
+        if val >= hi:
+            return p_hi
+        if val >= mid:
+            return p_mid
+        if val >= lo:
+            return p_lo
+        return 0
+
+    s += tier(f.get("roe"),      20, 15, 10, 10, 6, 3)
+    s += tier(f.get("roce"),     20, 15, 10, 10, 6, 3)
+    s += tier(f.get("sales_g"),  15, 10, 5,   8, 5, 2)
+    s += tier(f.get("profit_g"), 15, 10, 5,   8, 5, 2)
+    pe = f.get("pe")
+    if pe is not None and pe > 0:
+        s += 4 if pe <= 25 else (2 if pe <= 40 else 0)
+    return round(s, 1)
+
+
+def run_master_screener():
+    """Nifty-1000 multi-factor scan → Top 10 by composite score."""
+    import time
+    start = time.time()
+    tickers = get_nifty1000_tickers()
+    total = len(tickers)
+    print(f"[Master] Scanning {total} Nifty-1000 stocks (1y daily, bulk mode)...")
+
+    price_data = {}
+    CHUNK = 100
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+        futs = [ex.submit(_bulk_download_ohlc, tickers[i:i + CHUNK], "1y")
+                for i in range(0, total, CHUNK)]
+        futs.append(ex.submit(_bulk_download_ohlc, ["^NSEI"], "1y"))
+        for f in concurrent.futures.as_completed(futs):
+            try:
+                price_data.update(f.result() or {})
+            except Exception:
+                pass
+
+    nifty_rows = price_data.pop("^NSEI", [])
+    nifty_closes = [r[1] for r in nifty_rows]
+
+    scored = []
+    for t, rows in price_data.items():
+        res = technical_score(rows, nifty_closes)
+        if not res:
+            continue
+        tech, d = res
+        # Hard gate: long-term uptrend on BOTH timeframes + tradeable liquidity
+        if not (d["above_200dma"] and d["above_30wma"] and d["liquid"]):
+            continue
+        scored.append({"ticker": t, "tech": tech, "d": d})
+
+    scored.sort(key=lambda x: x["tech"], reverse=True)
+    finalists = scored[:40]
+    print(f"[Master] {len(price_data)} priced, {len(scored)} passed the gate, "
+          f"fetching fundamentals for top {len(finalists)}...")
+
+    def enrich(c):
+        sym = c["ticker"].replace(".NS", "").replace(".BO", "")
+        f = _fetch_fundamentals(sym)
+        c["f"] = f
+        c["fund"] = fundamental_score(f)
+        c["sym"] = sym
+        return c
+
+    if finalists:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+            finalists = list(ex.map(enrich, finalists))
+
+    for c in finalists:
+        c["score"] = round(c["tech"] + c["fund"], 1)
+    finalists.sort(key=lambda x: x["score"], reverse=True)
+
+    results = []
+    for i, c in enumerate(finalists[:10]):
+        d, f = c["d"], c.get("f", {})
+        results.append({
+            "rank": i + 1,
+            "ticker": c["sym"],
+            "price": d["price"],
+            "score": c["score"],
+            "tech_score": c["tech"],
+            "fund_score": c["fund"],
+            "rsi_d": d.get("rsi_d"),
+            "rsi_w": d.get("rsi_w"),
+            "rs_6m": d.get("rs_6m"),
+            "dist_52wh": d.get("dist_52wh"),
+            "macd_bull": d.get("macd_bull"),
+            "golden_stack": d.get("golden_stack"),
+            "roe": f.get("roe"), "roce": f.get("roce"),
+            "sales_g": f.get("sales_g"), "profit_g": f.get("profit_g"),
+            "pe": f.get("pe"),
+        })
+
+    elapsed = round(time.time() - start, 1)
+    print(f"[Master] Done in {elapsed}s — returning top {len(results)}")
+    return {
+        "market": "Nifty 1000 Master",
+        "total_scanned": total,
+        "total_passed": len(scored),
+        "results": results,
         "scan_time_seconds": elapsed,
     }

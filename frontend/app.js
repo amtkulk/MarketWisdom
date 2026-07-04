@@ -56,6 +56,9 @@ const app = {
             case 'screener':
                 this.renderScreener(container);
                 break;
+            case 'master':
+                this.renderMasterScreener(container);
+                break;
             case 'stock':
                 this.renderStock(container);
                 break;
@@ -552,6 +555,142 @@ const app = {
         return h;
     },
 
+    renderMasterScreener(container) {
+        const MKT = 'india_master';
+        container.innerHTML = `
+            <div style="margin-bottom:20px">
+                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🏆 Master Screener — Nifty 1000</h2>
+                <p style="font-size:13px;color:var(--text-secondary)">One composite score from 12 technical + fundamental checks · daily &amp; weekly candles · Top 10 ranked</p>
+            </div>
+            <div class="two-col" style="align-items:start;margin-bottom:16px">
+                <div class="card" style="border-top:3px solid #818cf8">
+                    <div style="font-weight:800;font-size:14px;margin-bottom:10px;color:var(--text-accent)">📐 Technical — 60 pts</div>
+                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:2">
+                        Trend stack: Price &gt; 50-DMA &gt; 200-DMA <b style="color:var(--text-primary)">(16)</b><br>
+                        Weekly close &gt; 30-week MA <b style="color:var(--text-primary)">(8)</b><br>
+                        Daily RSI in the 50–70 power zone <b style="color:var(--text-primary)">(8)</b><br>
+                        Weekly RSI &gt; 50 <b style="color:var(--text-primary)">(6)</b><br>
+                        MACD above its signal line <b style="color:var(--text-primary)">(6)</b><br>
+                        Outperforming Nifty over 6 months <b style="color:var(--text-primary)">(8)</b><br>
+                        Within 15% of the 52-week high <b style="color:var(--text-primary)">(8)</b>
+                    </div>
+                </div>
+                <div class="card" style="border-top:3px solid #fbbf24">
+                    <div style="font-weight:800;font-size:14px;margin-bottom:10px;color:var(--yellow)">🧮 Fundamental — 40 pts <span style="font-weight:500;font-size:11px;color:var(--text-secondary)">(Screener.in, top 40 only)</span></div>
+                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:2">
+                        ROE ≥ 20% <b style="color:var(--text-primary)">(10)</b> · ROCE ≥ 20% <b style="color:var(--text-primary)">(10)</b><br>
+                        5-yr Sales CAGR ≥ 15% <b style="color:var(--text-primary)">(8)</b><br>
+                        5-yr Profit CAGR ≥ 15% <b style="color:var(--text-primary)">(8)</b><br>
+                        P/E ≤ 25 (valuation sanity) <b style="color:var(--text-primary)">(4)</b><br>
+                        <span style="font-size:11.5px">Hard gate before scoring: price &gt; 200-DMA <i>and</i> weekly close &gt; 30-week MA <i>and</i> tradeable liquidity.</span>
+                    </div>
+                </div>
+            </div>
+            <div class="card" style="margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+                <div style="font-size:12px;color:var(--text-secondary)">Scans ~1000 stocks with 1 year of data — the first run takes <b style="color:var(--text-primary)">2–5 minutes</b>. You can navigate away; results are saved.</div>
+                <div style="flex:1"></div>
+                <button id="btn-scan-master" class="btn" style="background:var(--accent-color);color:white;padding:10px 24px;font-size:14px;font-weight:700;">🏆 Run Master Scan</button>
+            </div>
+            <div id="master-status-bar" style="display:none"></div>
+            <div id="master-result"><div style="text-align:center;padding:30px;color:var(--text-secondary)"><div class="spinner"></div></div></div>
+            <div style="text-align:center;margin-top:18px;font-size:11px;color:var(--text-secondary)">A high score means the stock currently passes more of the checks above — it is a screening aid, not investment advice. Do your own research before investing.</div>
+        `;
+        let pollTimer = null;
+
+        const fmt = (v, suf='') => (v === null || v === undefined) ? '—' : v + suf;
+
+        const renderResults = (data) => {
+            const el = document.getElementById('master-result');
+            if (!el) return;
+            let h = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px">';
+            h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--accent-color)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Universe</div><div style="font-size:20px;font-weight:800;margin-top:6px">'+data.market+'</div></div>';
+            h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid #818cf8"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Scanned</div><div style="font-size:20px;font-weight:800;color:#818cf8;margin-top:6px">'+data.total_scanned+'</div></div>';
+            h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--green)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Passed Gate</div><div style="font-size:20px;font-weight:800;color:var(--green);margin-top:6px">'+data.total_passed+'</div></div>';
+            h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--yellow)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Time</div><div style="font-size:20px;font-weight:800;color:var(--yellow);margin-top:6px">'+data.scan_time_seconds+'s</div></div>';
+            h += '</div>';
+            if (data.results && data.results.length) {
+                h += '<div class="card" style="padding:0;overflow:hidden"><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:900px">';
+                h += '<thead><tr style="background:rgba(255,255,255,0.05);text-align:left">';
+                ['#','Ticker','Price','Score','Tech','Fund','RSI D/W','RS 6m','52WH Δ','ROE','ROCE','Sales 5y','Profit 5y','P/E'].forEach((c,i)=>{
+                    h += '<th style="padding:12px 10px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;'+(i>1?'text-align:right':'')+'">'+c+'</th>';
+                });
+                h += '</tr></thead><tbody>';
+                data.results.forEach(s => {
+                    const bg = s.rank <= 3 ? 'background:rgba(16,185,129,0.08);' : '';
+                    const medal = s.rank===1?'🥇':s.rank===2?'🥈':s.rank===3?'🥉':s.rank;
+                    const sc = s.score>=75?'var(--green)':s.score>=55?'var(--yellow)':'var(--text-secondary)';
+                    const rsCol = (s.rs_6m||0) >= 0 ? 'var(--green)' : 'var(--red)';
+                    h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);'+bg+'">';
+                    h += '<td style="padding:12px 10px;font-weight:800">'+medal+'</td>';
+                    h += '<td style="padding:12px 10px;font-weight:800;color:var(--text-primary)">'+s.ticker+(s.macd_bull?' <span title="MACD bullish" style="font-size:10px">📈</span>':'')+'</td>';
+                    h += '<td style="padding:12px 10px;text-align:right;font-weight:700">₹'+Number(s.price).toLocaleString("en-IN")+'</td>';
+                    h += '<td style="padding:12px 10px;text-align:right"><div style="display:flex;align-items:center;justify-content:flex-end;gap:8px"><div style="width:56px;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.score,100)+'%;height:100%;background:'+sc+'"></div></div><b style="color:'+sc+'">'+s.score+'</b></div></td>';
+                    h += '<td style="padding:12px 10px;text-align:right;color:var(--text-accent);font-weight:600">'+s.tech_score+'</td>';
+                    h += '<td style="padding:12px 10px;text-align:right;color:var(--yellow);font-weight:600">'+s.fund_score+'</td>';
+                    h += '<td style="padding:12px 10px;text-align:right">'+fmt(s.rsi_d)+' / '+fmt(s.rsi_w)+'</td>';
+                    h += '<td style="padding:12px 10px;text-align:right;color:'+rsCol+';font-weight:600">'+fmt(s.rs_6m,'%')+'</td>';
+                    h += '<td style="padding:12px 10px;text-align:right">-'+fmt(s.dist_52wh,'%')+'</td>';
+                    h += '<td style="padding:12px 10px;text-align:right">'+fmt(s.roe,'%')+'</td>';
+                    h += '<td style="padding:12px 10px;text-align:right">'+fmt(s.roce,'%')+'</td>';
+                    h += '<td style="padding:12px 10px;text-align:right">'+fmt(s.sales_g,'%')+'</td>';
+                    h += '<td style="padding:12px 10px;text-align:right">'+fmt(s.profit_g,'%')+'</td>';
+                    h += '<td style="padding:12px 10px;text-align:right">'+fmt(s.pe)+'</td>';
+                    h += '</tr>';
+                });
+                h += '</tbody></table></div></div>';
+            } else {
+                h += '<div class="card" style="text-align:center;padding:40px;border-color:var(--yellow)"><div style="font-size:40px;margin-bottom:16px">🏆</div><div style="color:var(--yellow);font-weight:800">No stocks passed the gate</div><div style="color:var(--text-secondary);margin-top:8px">In weak markets few names trade above their 200-DMA and 30-week MA. Try again another day.</div></div>';
+            }
+            h += '<div style="text-align:right;margin-top:14px;font-size:11px;color:var(--text-secondary);font-style:italic">Last scanned: '+(data.timestamp||'')+'</div>';
+            el.innerHTML = h;
+        };
+
+        const startPolling = () => {
+            if (pollTimer) clearInterval(pollTimer);
+            const btn = document.getElementById('btn-scan-master');
+            const bar = document.getElementById('master-status-bar');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Scanning ~1000 stocks...'; }
+            if (bar) { bar.style.display='block'; bar.innerHTML = '<div class="card" style="padding:12px 16px;background:rgba(16,185,129,0.08);border-color:rgba(16,185,129,0.2);display:flex;align-items:center;gap:12px;margin-bottom:16px"><span class="spinner"></span><span style="color:var(--green);font-weight:600">Master scan running (2–5 min)... You can navigate away. Results will be saved.</span></div>'; }
+            pollTimer = setInterval(async () => {
+                try {
+                    const st = await api.getScreenerStatus(MKT);
+                    if (st.status === 'done') {
+                        clearInterval(pollTimer); pollTimer = null;
+                        if (btn) { btn.disabled = false; btn.innerHTML = '🏆 Run Master Scan'; }
+                        if (bar) bar.style.display = 'none';
+                        loadLast();
+                    } else if (st.status === 'error') {
+                        clearInterval(pollTimer); pollTimer = null;
+                        if (btn) { btn.disabled = false; btn.innerHTML = '🏆 Run Master Scan'; }
+                        if (bar) { bar.style.display='block'; bar.innerHTML = '<div class="card" style="padding:12px 16px;border-color:var(--red);margin-bottom:16px"><span style="color:var(--red);font-weight:600">Scan failed: '+(st.error||'Unknown error')+'</span></div>'; }
+                    }
+                } catch (e) {}
+            }, 6000);
+        };
+
+        const loadLast = async () => {
+            const el = document.getElementById('master-result');
+            if (!el) return;
+            try {
+                const data = await api.getScreenerResults(MKT);
+                if (data.empty) {
+                    el.innerHTML = '<div class="card" style="text-align:center;padding:40px;border-color:rgba(129,140,248,0.2)"><div style="font-size:40px;margin-bottom:16px">🏆</div><div style="color:var(--text-accent);font-weight:800;font-size:16px">No scan yet</div><div style="color:var(--text-secondary);margin-top:8px">Click <b>Run Master Scan</b> to rank the Nifty 1000. Run it once or twice a day, or weekly — results update with the market.</div></div>';
+                } else { renderResults(data); }
+            } catch (e) { el.innerHTML = '<div class="card" style="text-align:center;padding:20px;color:var(--text-secondary)">Could not load previous results.</div>'; }
+            try {
+                const st = await api.getScreenerStatus(MKT);
+                if (st.status === 'running') startPolling();
+            } catch (e) {}
+        };
+
+        document.getElementById('btn-scan-master').addEventListener('click', async () => {
+            try { await api.startScreenerScan(MKT); startPolling(); }
+            catch (err) { alert('Failed to start scan: ' + err.message); }
+        });
+
+        loadLast();
+    },
+
     renderHome(container) {
         const owl = `<svg viewBox="0 0 64 64" fill="none" style="width:84px;height:84px;filter:drop-shadow(0 8px 24px rgba(129,140,248,0.3))">
             <path d="M32 6C16 6 10 18 10 32c0 16 10 26 22 26s22-10 22-26C54 18 48 6 32 6Z" fill="#0f172a" stroke="#818cf8" stroke-width="2.5"/>
@@ -594,6 +733,7 @@ const app = {
                 ${card('#overview', '#34d399', '🧭', 'Stock Overview', 'A fast, accurate snapshot of any stock — live price, CAGR, RSI, fundamentals, shareholding, quarterly results and a 6-month chart.', 'Open Overview', true)}
                 ${card('#stock', '#818cf8', '🔍', 'Stock Research', 'A deep-dive on a company: fundamentals, technicals, chart and the last six months of news.', 'Explore')}
                 ${card('#nifty', '#10b981', '📈', 'Nifty Analysis', "Nifty's 21-EMA & 200-DMA, RSI, day move, weekly/monthly PCR and a VIX-based expected range.", 'Analyze Trend')}
+                ${card('#master', '#fbbf24', '🏆', 'Master Screener', 'Ranks the Nifty 1000 on 12 technical + fundamental checks and returns the Top 10 with a full score breakdown.', 'Rank the Market', true)}
                 ${card('#screener', '#60a5fa', '📊', 'Stock Screener', 'Scan the Nifty 500 — and the next 501–1000 — for breakouts by P/E, volume spike and RSI.', 'Run a Scan')}
                 ${card('#chartink', '#c084fc', '📋', 'Chartink Comparator', 'Find the stocks that appear in both of your favourite Chartink screeners.', 'Compare')}
             </div>
