@@ -3,10 +3,13 @@
  */
 
 const app = {
+    VERSION: 'v17',
     // Only these routes are viewable without signing in.
     PUBLIC_ROUTES: new Set(['home']),
 
     init() {
+        console.log('[MarketWisdom] app', this.VERSION, '| signed in?', this._isSignedIn(),
+                    '| session key present?', !!localStorage.getItem('mw_auth'));
         this.bindNav();
         // Default to landing page; only respect a #hash if it's public or the user is signed in.
         const hashRoute = window.location.hash.replace('#', '');

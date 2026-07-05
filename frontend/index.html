@@ -10,7 +10,7 @@
     <link rel="apple-touch-icon" href="icon-192.png">
     
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=15">
+    <link rel="stylesheet" href="style.css?v=17">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -37,21 +37,39 @@
     </div>
 
     <!-- Scripts -->
-    <script src="api.js?v=15"></script>
-    <script src="auth.js?v=15"></script>
-    <script src="components.js?v=15"></script>
-    <script src="app.js?v=15"></script>
+    <script src="api.js?v=17"></script>
+    <script src="auth.js?v=17"></script>
+    <script src="components.js?v=17"></script>
+    <script src="app.js?v=17"></script>
 
-    <!-- PWA Service Worker Registration -->
+    <!-- PWA Service Worker: register + auto-reload when a new version activates -->
     <script>
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then(registration => {
-              console.log('ServiceWorker registration successful with scope: ', registration.scope);
-            }, err => {
-              console.log('ServiceWorker registration failed: ', err);
+        window.addEventListener('load', async () => {
+          try {
+            const reg = await navigator.serviceWorker.register('/sw.js');
+            // If a new SW is waiting, tell it to activate immediately.
+            const promptUpdate = (worker) => {
+              if (!worker) return;
+              if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+                worker.postMessage({ type: 'SKIP_WAITING' });
+              }
+              worker.addEventListener('statechange', () => {
+                if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+                  worker.postMessage({ type: 'SKIP_WAITING' });
+                }
+              });
+            };
+            if (reg.waiting) promptUpdate(reg.waiting);
+            reg.addEventListener('updatefound', () => promptUpdate(reg.installing));
+            // When the new SW takes control, reload the page so fresh JS is used.
+            let reloaded = false;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+              if (!reloaded) { reloaded = true; window.location.reload(); }
             });
+          } catch (err) {
+            console.log('ServiceWorker registration failed:', err);
+          }
         });
       }
     </script>
