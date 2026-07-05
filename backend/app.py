@@ -2046,6 +2046,9 @@ def api_stock_action():
 @app.route("/api/rate", methods=["POST"])
 def api_rate():
     try:
+        user = current_user()
+        if not user:
+            return jsonify({"ok": False, "error": "Please sign in to save ratings."}), 401
         body    = request.get_json()
         ticker  = (body.get("ticker","") or "").strip().upper()
         name    = (body.get("company_name","") or "").strip()
@@ -2056,7 +2059,7 @@ def api_rate():
         if not ticker or rating not in ["good","average","bad"]:
             return jsonify({"ok": False, "error": "Invalid input"})
 
-        add_or_update_stock(ticker, name, sector, price, rating, user_id=_user_scope())
+        add_or_update_stock(ticker, name, sector, price, rating, user_id=user["email"])
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -2065,9 +2068,12 @@ def api_rate():
 @app.route("/api/watchlist/delete", methods=["POST"])
 def api_watchlist_delete():
     try:
+        user = current_user()
+        if not user:
+            return jsonify({"ok": False, "error": "Please sign in first."}), 401
         ticker = (request.get_json().get("ticker","") or "").strip().upper()
         if ticker:
-            delete_stock(ticker, user_id=_user_scope())
+            delete_stock(ticker, user_id=user["email"])
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -2076,7 +2082,10 @@ def api_watchlist_delete():
 @app.route("/api/watchlist/data")
 def api_watchlist_data():
     try:
-        stocks = get_all_stocks(user_id=_user_scope())
+        user = current_user()
+        if not user:
+            return jsonify({"error": "Please sign in to view your watchlist."}), 401
+        stocks = get_all_stocks(user_id=user["email"])
         
         import concurrent.futures
         def enrich(stock):

@@ -27,7 +27,7 @@ const Auth = {
         localStorage.removeItem(this.KEY);
         try { google.accounts.id.disableAutoSelect(); } catch (e) {}
         this.render();
-        this._refreshWatchlistIfOpen();
+        window.dispatchEvent(new CustomEvent('mw-auth-changed'));
     },
 
     async handleCredential(response) {
@@ -41,20 +41,14 @@ const Auth = {
             if (!res.ok || !data.token) throw new Error(data.error || 'Sign-in failed');
             this.save(data.token, data.user);
             this.render();
-            this._refreshWatchlistIfOpen();
+            window.dispatchEvent(new CustomEvent('mw-auth-changed'));
         } catch (err) {
             alert('Google sign-in failed: ' + err.message);
         }
     },
 
     _refreshWatchlistIfOpen() {
-        // Watchlist contents differ per user — re-render it if it's the open page.
-        try {
-            if ((location.hash || '').replace('#', '') === 'watchlist' && window.app) {
-                const c = document.getElementById('app-container') || document.querySelector('main');
-                if (c && app.renderWatchlist) app.renderWatchlist(c);
-            }
-        } catch (e) {}
+        // Kept for backward compatibility; the router handles this now via mw-auth-changed.
     },
 
     render() {

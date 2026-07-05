@@ -61,16 +61,10 @@ def init_db():
                 name TEXT, picture TEXT, google_sub TEXT, last_login TEXT
             )
         ''')
-        # one-time migration of the old global watchlist into the public scope
-        try:
-            cursor.execute('''
-                INSERT OR IGNORE INTO watchlist_v2
-                    (user_id, ticker, company_name, sector, price, rating, rated_at)
-                SELECT 'public', ticker, company_name, sector, price, rating, rated_at
-                FROM watchlist
-            ''')
-        except Exception:
-            pass
+        # NOTE: the old shared 'watchlist' table is intentionally NOT migrated into
+        # any user's list. Ratings are now per-user only — new users start empty.
+        # Legacy rows stay in the old table for safekeeping; if you later decide
+        # to import a specific user's picks, do it manually.
         conn.commit()
         conn.close()
 

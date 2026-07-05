@@ -3,16 +3,37 @@
  */
 
 const app = {
+    // Only these routes are viewable without signing in.
+    PUBLIC_ROUTES: new Set(['home']),
+
     init() {
         this.bindNav();
-        // Load initial route based on hash or default to global market dashboard
-        const initialRoute = window.location.hash.replace('#', '') || 'global';
-        this.navigate(initialRoute);
-        
+        // Default to landing page; only respect a #hash if it's public or the user is signed in.
+        const hashRoute = window.location.hash.replace('#', '');
+        const initial = this._resolveRoute(hashRoute || 'home');
+        this.navigate(initial);
+
         // Handle browser back/forward buttons
         window.addEventListener('hashchange', () => {
-            this.navigate(window.location.hash.replace('#', '') || 'global');
+            this.navigate(this._resolveRoute(window.location.hash.replace('#', '') || 'home'));
         });
+
+        // Re-render the current page after a sign-in / sign-out so gates update live.
+        window.addEventListener('mw-auth-changed', () => {
+            const route = window.location.hash.replace('#', '') || 'home';
+            this.navigate(this._resolveRoute(route));
+        });
+    },
+
+    _isSignedIn() {
+        return !!(window.Auth && Auth.user && Auth.user());
+    },
+
+    _resolveRoute(route) {
+        // Public routes always resolve as themselves; everything else needs sign-in.
+        if (this.PUBLIC_ROUTES.has(route)) return route;
+        if (this._isSignedIn()) return route;
+        return '__gate:' + route;
     },
 
     bindNav() {
@@ -26,8 +47,9 @@ const app = {
     },
 
     updateNavState(route) {
+        const shown = route.startsWith('__gate:') ? route.slice(7) : route;
         document.querySelectorAll('.nav-btn').forEach(btn => {
-            if (btn.getAttribute('data-target') === route) {
+            if (btn.getAttribute('data-target') === shown) {
                 btn.classList.add('active');
             } else {
                 btn.classList.remove('active');
@@ -35,10 +57,53 @@ const app = {
         });
     },
 
+    renderSignInGate(container, attemptedRoute) {
+        const label = ({
+            global: 'Global Market', 'war-news': 'War News', telegram: 'Telegram Feed',
+            screener: 'Stock Screener', master: 'Master Screener', stock: 'Stock Research',
+            overview: 'Stock Overview', action: 'Stock Action', chartink: 'Chartink Comparator',
+            nifty: 'Nifty Analysis', watchlist: 'Watchlist',
+        })[attemptedRoute] || 'this page';
+        container.innerHTML = `
+            <div class="card" style="max-width:520px;margin:60px auto;text-align:center;padding:44px 28px;border-color:rgba(129,140,248,0.35)">
+                <div style="font-size:52px;margin-bottom:14px">🔒</div>
+                <h2 style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:800;margin:0 0 8px">Please sign in first</h2>
+                <p style="color:var(--text-secondary);font-size:14px;line-height:1.6;margin:0 0 22px">
+                    Please sign in with Google to see <b style="color:var(--text-primary)">${label}</b> and the rest of Market Wisdom.
+                    Your watchlist and preferences will be saved to your account.
+                </p>
+                <div id="gate-signin" style="display:flex;justify-content:center;margin-bottom:10px"></div>
+                <div style="font-size:12px;color:var(--text-secondary)">
+                    Or <a href="#home" style="color:var(--text-accent);text-decoration:none;font-weight:600">go back to the landing page</a>
+                </div>
+            </div>
+        `;
+        // Render a full-size Google button in the gate (in addition to the one in the nav).
+        const boot = () => {
+            if (window.google && google.accounts && google.accounts.id) {
+                try {
+                    google.accounts.id.renderButton(
+                        document.getElementById('gate-signin'),
+                        { theme: 'filled_blue', size: 'large', shape: 'pill', text: 'signin_with', width: 260 }
+                    );
+                } catch (e) { /* GSI not ready yet */ }
+            } else {
+                setTimeout(boot, 250);
+            }
+        };
+        boot();
+    },
+
     navigate(route) {
         this.updateNavState(route);
         const container = document.getElementById('app-container');
         container.innerHTML = ''; // Clear current view
+
+        // Gated: user tried to open a page but isn't signed in.
+        if (route.startsWith('__gate:')) {
+            this.renderSignInGate(container, route.slice(7));
+            return;
+        }
 
         switch(route) {
             case 'home':
@@ -81,7 +146,7 @@ const app = {
                 this.renderWatchlist(container);
                 break;
             default:
-                this.renderGlobalMarket(container);
+                this.renderHome(container);
         }
     },
 

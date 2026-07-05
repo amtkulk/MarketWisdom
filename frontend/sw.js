@@ -1,4 +1,4 @@
-const CACHE_NAME = 'market-wisdom-v10';
+const CACHE_NAME = 'market-wisdom-v11';
 const urlsToCache = [
   '/',
   '/index.html',
