@@ -3,12 +3,17 @@
  */
 
 const app = {
-    VERSION: 'v17',
-    // Only these routes are viewable without signing in.
+    VERSION: 'v19',
+    // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
+    // top-level `const Auth`), so it always returned false. Same bug had broken
+    // the auth header on watchlist calls. Both fixed → gate can safely be ON.
+    GATE_ENABLED: true,
     PUBLIC_ROUTES: new Set(['home']),
 
     init() {
-        console.log('[MarketWisdom] app', this.VERSION, '| signed in?', this._isSignedIn(),
+        console.log('[MarketWisdom] app', this.VERSION,
+                    '| gate:', this.GATE_ENABLED ? 'ON' : 'OFF',
+                    '| signed in?', this._isSignedIn(),
                     '| session key present?', !!localStorage.getItem('mw_auth'));
         this.bindNav();
         // Default to landing page; only respect a #hash if it's public or the user is signed in.
@@ -29,10 +34,14 @@ const app = {
     },
 
     _isSignedIn() {
-        return !!(window.Auth && Auth.user && Auth.user());
+        // NOTE: `const Auth = {...}` in a classic script does NOT set window.Auth,
+        // so we check the identifier directly via typeof (safe even if undefined).
+        return typeof Auth !== 'undefined' && !!(Auth.user && Auth.user());
     },
 
     _resolveRoute(route) {
+        // Gate disabled → all routes are always themselves; no gate ever appears.
+        if (!this.GATE_ENABLED) return route;
         // Public routes always resolve as themselves; everything else needs sign-in.
         if (this.PUBLIC_ROUTES.has(route)) return route;
         if (this._isSignedIn()) return route;
@@ -89,7 +98,7 @@ const app = {
             </div>
         `;
         const boot = () => {
-            if (window.google && google.accounts && google.accounts.id && window.Auth) {
+            if (window.google && google.accounts && google.accounts.id && typeof Auth !== "undefined") {
                 try {
                     // Re-initialize so the callback is wired for THIS button too.
                     // Without this, clicking "Sign in as ..." talks to Google but never

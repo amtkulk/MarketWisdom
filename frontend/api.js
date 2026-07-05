@@ -136,7 +136,7 @@ const api = {
     },
 
     async fetchWatchlist() {
-        const res = await fetch(`${API_BASE_URL}/watchlist/data`, { headers: (window.Auth ? Auth.headers() : {}) });
+        const res = await fetch(`${API_BASE_URL}/watchlist/data`, { headers: (typeof Auth !== "undefined" ? Auth.headers() : {}) });
         if (!res.ok) throw new Error('Failed to load watchlist');
         return res.json();
     },
@@ -144,7 +144,7 @@ const api = {
     async rateStock(ticker, company_name, sector, price, rating) {
         const res = await fetch(`${API_BASE_URL}/rate`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...(window.Auth ? Auth.headers() : {}) },
+            headers: { 'Content-Type': 'application/json', ...(typeof Auth !== "undefined" ? Auth.headers() : {}) },
             body: JSON.stringify({ ticker, company_name, sector, price, rating })
         });
         return res.json();
@@ -153,7 +153,7 @@ const api = {
     async removeFromWatchlist(ticker) {
         const res = await fetch(`${API_BASE_URL}/watchlist/delete`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...(window.Auth ? Auth.headers() : {}) },
+            headers: { 'Content-Type': 'application/json', ...(typeof Auth !== "undefined" ? Auth.headers() : {}) },
             body: JSON.stringify({ ticker })
         });
         return res.json();
