@@ -11,3 +11,4 @@ curl_cffi
 pandas
 lxml
 beautifulsoup4
+google-auth

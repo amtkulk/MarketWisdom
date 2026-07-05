@@ -46,21 +46,47 @@ def init_db():
                 updated_at TEXT
             )
         ''')
+        # user-scoped watchlist (v2); anonymous/legacy rows live under user_id='public'
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS watchlist_v2 (
+                user_id TEXT NOT NULL DEFAULT 'public',
+                ticker TEXT NOT NULL,
+                company_name TEXT, sector TEXT, price TEXT, rating TEXT, rated_at TEXT,
+                PRIMARY KEY (user_id, ticker)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                email TEXT PRIMARY KEY,
+                name TEXT, picture TEXT, google_sub TEXT, last_login TEXT
+            )
+        ''')
+        # one-time migration of the old global watchlist into the public scope
+        try:
+            cursor.execute('''
+                INSERT OR IGNORE INTO watchlist_v2
+                    (user_id, ticker, company_name, sector, price, rating, rated_at)
+                SELECT 'public', ticker, company_name, sector, price, rating, rated_at
+                FROM watchlist
+            ''')
+        except Exception:
+            pass
         conn.commit()
         conn.close()
 
-def add_or_update_stock(ticker, company_name, sector, price, rating):
+def add_or_update_stock(ticker, company_name, sector, price, rating, user_id="public"):
     rated_at = datetime.now().strftime("%d %b %Y  %H:%M")
-    
+
     if USE_MONGO:
         watchlist_col.update_one(
-            {"ticker": ticker},
+            {"ticker": ticker, "user_id": user_id},
             {"$set": {
                 "company_name": company_name,
                 "sector": sector,
                 "price": price,
                 "rating": rating,
-                "rated_at": rated_at
+                "rated_at": rated_at,
+                "user_id": user_id
             }},
             upsert=True
         )
@@ -68,39 +94,68 @@ def add_or_update_stock(ticker, company_name, sector, price, rating):
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO watchlist (ticker, company_name, sector, price, rating, rated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(ticker) DO UPDATE SET
+            INSERT INTO watchlist_v2 (user_id, ticker, company_name, sector, price, rating, rated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, ticker) DO UPDATE SET
                 company_name=excluded.company_name,
                 sector=excluded.sector,
                 price=excluded.price,
                 rating=excluded.rating,
                 rated_at=excluded.rated_at
-        ''', (ticker, company_name, sector, price, rating, rated_at))
+        ''', (user_id, ticker, company_name, sector, price, rating, rated_at))
         conn.commit()
         conn.close()
 
-def delete_stock(ticker):
+def delete_stock(ticker, user_id="public"):
     if USE_MONGO:
-        watchlist_col.delete_one({"ticker": ticker})
+        if user_id == "public":
+            watchlist_col.delete_many({"ticker": ticker,
+                                       "$or": [{"user_id": "public"}, {"user_id": {"$exists": False}}]})
+        else:
+            watchlist_col.delete_one({"ticker": ticker, "user_id": user_id})
     else:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute('DELETE FROM watchlist WHERE ticker = ?', (ticker,))
+        cursor.execute('DELETE FROM watchlist_v2 WHERE ticker = ? AND user_id = ?', (ticker, user_id))
         conn.commit()
         conn.close()
 
-def get_all_stocks():
+def get_all_stocks(user_id="public"):
     if USE_MONGO:
-        # Exclude _id to prevent JSON serialization errors
-        return list(watchlist_col.find({}, {"_id": 0}))
+        if user_id == "public":
+            q = {"$or": [{"user_id": "public"}, {"user_id": {"$exists": False}}]}
+        else:
+            q = {"user_id": user_id}
+        return list(watchlist_col.find(q, {"_id": 0}))
     else:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM watchlist')
+        cursor.execute('SELECT * FROM watchlist_v2 WHERE user_id = ?', (user_id,))
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]
+
+
+def upsert_user(email, name="", picture="", google_sub=""):
+    """Store/refresh a Google-signed-in user."""
+    last_login = datetime.now().strftime("%d %b %Y  %H:%M")
+    if USE_MONGO:
+        db.get_collection("users").update_one(
+            {"email": email},
+            {"$set": {"name": name, "picture": picture,
+                      "google_sub": google_sub, "last_login": last_login}},
+            upsert=True)
+    else:
+        conn = get_db_connection()
+        conn.execute('''
+            INSERT INTO users (email, name, picture, google_sub, last_login)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(email) DO UPDATE SET
+                name=excluded.name, picture=excluded.picture,
+                google_sub=excluded.google_sub, last_login=excluded.last_login
+        ''', (email, name, picture, google_sub, last_login))
+        conn.commit()
+        conn.close()
 
 
 def save_screener_results(market, data):

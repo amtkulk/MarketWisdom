@@ -4,7 +4,7 @@ import time
 from datetime import datetime, date
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from database import init_db, add_or_update_stock, delete_stock, get_all_stocks
+from database import init_db, add_or_update_stock, delete_stock, get_all_stocks, upsert_user
 from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
 
@@ -16,6 +16,76 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "") # Fetch from environment (
 
 # Initialize SQLite database
 init_db()
+
+# ══════════════════════════════════════════════════════════════
+#  GOOGLE SIGN-IN  (Sign in with Google → our own session token)
+#  Frontend sends the Google ID token; we verify it against
+#  GOOGLE_CLIENT_ID, upsert the user, and issue a signed session
+#  token (30 days). Watchlist is scoped per signed-in user; anyone
+#  not signed in keeps using the shared 'public' watchlist.
+# ══════════════════════════════════════════════════════════════
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+APP_SECRET = os.environ.get("SECRET_KEY", "").strip()
+if not APP_SECRET:
+    # Fall back so dev still works, but sessions won't survive a redeploy
+    # and are NOT secure for production — set SECRET_KEY on the host.
+    APP_SECRET = (GEMINI_API_KEY or "mw-dev-secret-change-me")
+    print("[Auth] WARNING: SECRET_KEY env not set — set it in production.")
+
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+_auth_serializer = URLSafeTimedSerializer(APP_SECRET, salt="mw-auth-v1")
+SESSION_MAX_AGE = 60 * 60 * 24 * 30      # 30 days
+
+
+def _verify_google_token(credential):
+    """Verify a Google ID token; returns the payload dict or raises."""
+    from google.oauth2 import id_token as g_id_token
+    from google.auth.transport import requests as g_requests
+    return g_id_token.verify_oauth2_token(credential, g_requests.Request(), GOOGLE_CLIENT_ID)
+
+
+@app.route("/api/auth/google", methods=["POST"])
+def api_auth_google():
+    try:
+        if not GOOGLE_CLIENT_ID:
+            return jsonify({"error": "Google sign-in is not configured on the server (GOOGLE_CLIENT_ID missing)."}), 501
+        credential = ((request.get_json() or {}).get("credential") or "").strip()
+        if not credential:
+            return jsonify({"error": "Missing credential"}), 400
+        payload = _verify_google_token(credential)
+        if not payload.get("email") or not payload.get("email_verified"):
+            return jsonify({"error": "Google account email not verified"}), 401
+        user = {
+            "email":   payload["email"],
+            "name":    payload.get("name", ""),
+            "picture": payload.get("picture", ""),
+        }
+        try:
+            upsert_user(user["email"], user["name"], user["picture"], payload.get("sub", ""))
+        except Exception as e:
+            print(f"[Auth] upsert_user failed: {e}")
+        token = _auth_serializer.dumps(user)
+        return jsonify({"token": token, "user": user})
+    except Exception as e:
+        print(f"[Auth] verification failed: {e}")
+        return jsonify({"error": "Google sign-in verification failed"}), 401
+
+
+def current_user():
+    """Return the signed-in user dict from the Authorization header, or None."""
+    try:
+        h = request.headers.get("Authorization", "")
+        if not h.startswith("Bearer "):
+            return None
+        return _auth_serializer.loads(h[7:], max_age=SESSION_MAX_AGE)
+    except (BadSignature, SignatureExpired, Exception):
+        return None
+
+
+def _user_scope():
+    u = current_user()
+    return u["email"] if u and u.get("email") else "public"
+
 
 # ══════════════════════════════════════════════════════════════
 #  SIMPLE IN-PROCESS TTL CACHE
@@ -1986,7 +2056,7 @@ def api_rate():
         if not ticker or rating not in ["good","average","bad"]:
             return jsonify({"ok": False, "error": "Invalid input"})
 
-        add_or_update_stock(ticker, name, sector, price, rating)
+        add_or_update_stock(ticker, name, sector, price, rating, user_id=_user_scope())
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -1997,7 +2067,7 @@ def api_watchlist_delete():
     try:
         ticker = (request.get_json().get("ticker","") or "").strip().upper()
         if ticker:
-            delete_stock(ticker)
+            delete_stock(ticker, user_id=_user_scope())
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -2006,7 +2076,7 @@ def api_watchlist_delete():
 @app.route("/api/watchlist/data")
 def api_watchlist_data():
     try:
-        stocks = get_all_stocks()
+        stocks = get_all_stocks(user_id=_user_scope())
         
         import concurrent.futures
         def enrich(stock):
