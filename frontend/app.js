@@ -58,6 +58,13 @@ const app = {
     },
 
     renderSignInGate(container, attemptedRoute) {
+        // Self-heal: if the user IS already signed in but somehow landed on the gate,
+        // just navigate them into the page they wanted. This is what fixed the "chip
+        // says signed-in but gate still shows" bug.
+        if (this._isSignedIn()) {
+            this.navigate(attemptedRoute);
+            return;
+        }
         const label = ({
             global: 'Global Market', 'war-news': 'War News', telegram: 'Telegram Feed',
             screener: 'Stock Screener', master: 'Master Screener', stock: 'Stock Research',
@@ -78,15 +85,21 @@ const app = {
                 </div>
             </div>
         `;
-        // Render a full-size Google button in the gate (in addition to the one in the nav).
         const boot = () => {
-            if (window.google && google.accounts && google.accounts.id) {
+            if (window.google && google.accounts && google.accounts.id && window.Auth) {
                 try {
+                    // Re-initialize so the callback is wired for THIS button too.
+                    // Without this, clicking "Sign in as ..." talks to Google but never
+                    // calls our /api/auth/google endpoint — so the session never lands.
+                    google.accounts.id.initialize({
+                        client_id: GOOGLE_CLIENT_ID,
+                        callback: (r) => Auth.handleCredential(r),
+                    });
                     google.accounts.id.renderButton(
                         document.getElementById('gate-signin'),
                         { theme: 'filled_blue', size: 'large', shape: 'pill', text: 'signin_with', width: 260 }
                     );
-                } catch (e) { /* GSI not ready yet */ }
+                } catch (e) { console.warn('Gate GSI init failed', e); }
             } else {
                 setTimeout(boot, 250);
             }
