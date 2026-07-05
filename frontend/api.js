@@ -135,6 +135,31 @@ const api = {
         return data;
     },
 
+    async fetchLegacyWatchlist() {
+        const res = await fetch(`${API_BASE_URL}/admin/legacy_watchlist`, {
+            headers: (typeof Auth !== "undefined" ? Auth.headers() : {})
+        });
+        if (!res.ok) {
+            let err;
+            try { err = await res.json(); } catch(e) { throw new Error(`Status ${res.status}`); }
+            throw new Error(err.error || 'Failed to load legacy watchlist');
+        }
+        return res.json();
+    },
+
+    async importLegacyWatchlist() {
+        const res = await fetch(`${API_BASE_URL}/admin/import_legacy_watchlist`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(typeof Auth !== "undefined" ? Auth.headers() : {}) },
+        });
+        if (!res.ok) {
+            let err;
+            try { err = await res.json(); } catch(e) { throw new Error(`Status ${res.status}`); }
+            throw new Error(err.error || 'Import failed');
+        }
+        return res.json();
+    },
+
     async fetchWatchlist() {
         const res = await fetch(`${API_BASE_URL}/watchlist/data`, { headers: (typeof Auth !== "undefined" ? Auth.headers() : {}) });
         if (!res.ok) throw new Error('Failed to load watchlist');

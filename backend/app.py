@@ -36,6 +36,20 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 _auth_serializer = URLSafeTimedSerializer(APP_SECRET, salt="mw-auth-v1")
 SESSION_MAX_AGE = 60 * 60 * 24 * 30      # 30 days
 
+# Comma-separated list of admin emails (case-insensitive).
+# Set on Azure as an env var: ADMIN_EMAILS=login4amit@gmail.com,other@gmail.com
+ADMIN_EMAILS = {
+    e.strip().lower()
+    for e in (os.environ.get("ADMIN_EMAILS", "") or "").split(",")
+    if e.strip()
+}
+if ADMIN_EMAILS:
+    print(f"[Auth] Admin emails configured: {sorted(ADMIN_EMAILS)}")
+
+
+def _is_admin_email(email):
+    return bool(email) and email.strip().lower() in ADMIN_EMAILS
+
 
 def _verify_google_token(credential):
     """Verify a Google ID token; returns the payload dict or raises."""
@@ -59,6 +73,7 @@ def api_auth_google():
             "email":   payload["email"],
             "name":    payload.get("name", ""),
             "picture": payload.get("picture", ""),
+            "is_admin": _is_admin_email(payload["email"]),
         }
         try:
             upsert_user(user["email"], user["name"], user["picture"], payload.get("sub", ""))
@@ -77,7 +92,12 @@ def current_user():
         h = request.headers.get("Authorization", "")
         if not h.startswith("Bearer "):
             return None
-        return _auth_serializer.loads(h[7:], max_age=SESSION_MAX_AGE)
+        u = _auth_serializer.loads(h[7:], max_age=SESSION_MAX_AGE)
+        # Re-evaluate admin status from the current env, in case ADMIN_EMAILS
+        # was updated after the token was issued.
+        if u and u.get("email"):
+            u["is_admin"] = _is_admin_email(u["email"])
+        return u
     except (BadSignature, SignatureExpired, Exception):
         return None
 
@@ -85,6 +105,83 @@ def current_user():
 def _user_scope():
     u = current_user()
     return u["email"] if u and u.get("email") else "public"
+
+
+def _require_admin():
+    u = current_user()
+    if not u:
+        return None, (jsonify({"error": "Please sign in first."}), 401)
+    if not u.get("is_admin"):
+        return None, (jsonify({"error": "Admin access required."}), 403)
+    return u, None
+
+
+@app.route("/api/admin/legacy_watchlist", methods=["GET"])
+def api_admin_legacy_watchlist():
+    """Admin-only: peek at the pre-auth shared watchlist so you can decide
+    what to import. Returns [] if it's empty or the old table doesn't exist."""
+    _, err = _require_admin()
+    if err: return err
+    try:
+        from database import USE_MONGO
+        if USE_MONGO:
+            from database import db
+            rows = list(db.get_collection("watchlist").find({}, {"_id": 0}))
+        else:
+            import sqlite3
+            from database import get_db_connection
+            conn = get_db_connection()
+            try:
+                cur = conn.execute("SELECT * FROM watchlist")
+                rows = [dict(r) for r in cur.fetchall()]
+            except sqlite3.OperationalError:
+                rows = []       # old table never existed on this deploy
+            conn.close()
+        return jsonify({"count": len(rows), "rows": rows})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/admin/import_legacy_watchlist", methods=["POST"])
+def api_admin_import_legacy():
+    """Admin-only: copy the pre-auth shared watchlist into the caller's account.
+    Idempotent — running it twice will not duplicate rows (ON CONFLICT DO UPDATE)."""
+    user, err = _require_admin()
+    if err: return err
+    try:
+        from database import USE_MONGO
+        if USE_MONGO:
+            from database import db
+            legacy = list(db.get_collection("watchlist").find({}, {"_id": 0}))
+        else:
+            import sqlite3
+            from database import get_db_connection
+            conn = get_db_connection()
+            try:
+                cur = conn.execute("SELECT * FROM watchlist")
+                legacy = [dict(r) for r in cur.fetchall()]
+            except sqlite3.OperationalError:
+                legacy = []
+            conn.close()
+
+        imported = 0
+        for r in legacy:
+            ticker = (r.get("ticker") or "").strip().upper()
+            if not ticker:
+                continue
+            add_or_update_stock(
+                ticker,
+                r.get("company_name") or "",
+                r.get("sector") or "",
+                r.get("price") or "",
+                (r.get("rating") or "good").strip().lower(),
+                user_id=user["email"],
+            )
+            imported += 1
+        return jsonify({"ok": True, "imported": imported,
+                        "message": f"Imported {imported} stock(s) into {user['email']}'s watchlist."})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ══════════════════════════════════════════════════════════════

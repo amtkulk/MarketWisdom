@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v19',
+    VERSION: 'v20',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -1430,17 +1430,78 @@ const app = {
     },
 
     renderWatchlist(container) {
+        const u = (typeof Auth !== 'undefined' && Auth.user) ? Auth.user() : null;
+        const isAdmin = !!(u && u.is_admin);
+        const adminBanner = isAdmin ? `
+            <div id="admin-legacy-banner" class="card" style="margin-bottom:16px;padding:16px;border:1px solid rgba(251,191,36,0.3);background:rgba(251,191,36,0.06)">
+                <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+                    <span style="font-size:22px">👑</span>
+                    <div style="flex:1;min-width:220px">
+                        <div style="font-weight:800;color:var(--yellow);font-size:14px">Admin: Legacy Watchlist</div>
+                        <div id="admin-legacy-status" style="font-size:12px;color:var(--text-secondary);margin-top:2px">
+                            The pre-auth shared watchlist (from before sign-in was added) is preserved on the server. You can peek at it, then import it into your account if you want it as your starting list.
+                        </div>
+                    </div>
+                    <button id="btn-peek-legacy" class="btn" style="padding:8px 14px;font-size:12px;background:var(--bg-card);border:1px solid var(--border-color);color:var(--text-primary)">👀 Peek</button>
+                    <button id="btn-import-legacy" class="btn" style="padding:8px 14px;font-size:12px;background:var(--yellow);color:#1a1a1a;font-weight:700">⬇ Import to my list</button>
+                </div>
+                <div id="admin-legacy-preview" style="margin-top:12px;display:none"></div>
+            </div>` : '';
         container.innerHTML = `
             <div style="margin-bottom:24px;display:flex;justify-content:space-between;align-items:center;">
                 <div>
                     <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">⭐ My Watchlist</h2>
-                    <p style="font-size:13px;color:var(--text-secondary)">Stocks you have researched and rated.</p>
+                    <p style="font-size:13px;color:var(--text-secondary)">Stocks you have researched and rated${u ? ' — signed in as <b>' + (u.email || '') + '</b>' : ''}.</p>
                 </div>
             </div>
+            ${adminBanner}
             <div id="watchlist-content">
                 <div style="text-align:center;padding:40px"><div class="spinner"></div></div>
             </div>
         `;
+
+        if (isAdmin) {
+            const setStatus = (html, color) => {
+                const el = document.getElementById('admin-legacy-status');
+                if (el) { el.innerHTML = html; if (color) el.style.color = color; }
+            };
+            document.getElementById('btn-peek-legacy').addEventListener('click', async () => {
+                const box = document.getElementById('admin-legacy-preview');
+                box.style.display = 'block';
+                box.innerHTML = '<div style="color:var(--text-secondary);font-size:12px">Loading…</div>';
+                try {
+                    const data = await api.fetchLegacyWatchlist();
+                    if (!data.count) {
+                        box.innerHTML = '<div style="font-size:12px;color:var(--text-secondary);padding:6px 0">The legacy shared watchlist is empty (or never existed on this database).</div>';
+                        return;
+                    }
+                    let h = '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px">Found <b style="color:var(--text-primary)">' + data.count + '</b> stock(s):</div>';
+                    h += '<div style="max-height:220px;overflow:auto;border:1px solid var(--border-color);border-radius:8px"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+                    h += '<thead><tr style="background:rgba(255,255,255,0.03)"><th style="text-align:left;padding:8px 12px;color:var(--text-secondary)">Ticker</th><th style="text-align:left;padding:8px 12px;color:var(--text-secondary)">Company</th><th style="text-align:right;padding:8px 12px;color:var(--text-secondary)">Rating</th></tr></thead><tbody>';
+                    data.rows.forEach(r => {
+                        h += '<tr style="border-top:1px solid rgba(255,255,255,0.05)"><td style="padding:6px 12px;font-weight:700">' + (r.ticker || '') + '</td><td style="padding:6px 12px;color:var(--text-secondary)">' + (r.company_name || '') + '</td><td style="padding:6px 12px;text-align:right">' + (r.rating || '') + '</td></tr>';
+                    });
+                    h += '</tbody></table></div>';
+                    box.innerHTML = h;
+                } catch (err) {
+                    box.innerHTML = '<div style="color:var(--red);font-size:12px">Failed: ' + err.message + '</div>';
+                }
+            });
+            document.getElementById('btn-import-legacy').addEventListener('click', async (ev) => {
+                if (!confirm('Import the legacy shared watchlist into your account? Safe to run multiple times — duplicates are ignored.')) return;
+                ev.currentTarget.disabled = true;
+                setStatus('Importing…', 'var(--text-accent)');
+                try {
+                    const r = await api.importLegacyWatchlist();
+                    setStatus('✅ ' + r.message, 'var(--green)');
+                    this.loadWatchlistData();
+                } catch (err) {
+                    setStatus('❌ ' + err.message, 'var(--red)');
+                } finally {
+                    ev.currentTarget.disabled = false;
+                }
+            });
+        }
 
         this.loadWatchlistData();
     },
