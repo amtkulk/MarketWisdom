@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v20',
+    VERSION: 'v21',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -79,7 +79,7 @@ const app = {
         }
         const label = ({
             global: 'Global Market', 'war-news': 'War News', telegram: 'Telegram Feed',
-            screener: 'Stock Screener', master: 'Master Screener', stock: 'Stock Research',
+            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', stock: 'Stock Research',
             overview: 'Stock Overview', action: 'Stock Action', chartink: 'Chartink Comparator',
             nifty: 'Nifty Analysis', watchlist: 'Watchlist',
         })[attemptedRoute] || 'this page';
@@ -148,6 +148,9 @@ const app = {
                 break;
             case 'master':
                 this.renderMasterScreener(container);
+                break;
+            case 'smallmid':
+                this.renderSmallMidMasterScreener(container);
                 break;
             case 'stock':
                 this.renderStock(container);
@@ -645,12 +648,22 @@ const app = {
         return h;
     },
 
-    renderMasterScreener(container) {
-        const MKT = 'india_master';
+    renderMasterScreener(container, opts) {
+        opts = opts || {};
+        const MKT      = opts.market      || 'india_master';
+        const TITLE    = opts.title       || 'Master Screener — Nifty 1000';
+        const SUBTITLE = opts.subtitle    || 'One composite score from 12 technical + fundamental checks · daily &amp; weekly candles · Top 10 ranked';
+        const HELP     = opts.help        || 'Scans ~1000 stocks with 1 year of data — the first run takes <b style="color:var(--text-primary)">2–5 minutes</b>. You can navigate away; results are saved.';
+        const BTN      = opts.btnLabel    || '🏆 Run Master Scan';
+        const SCAN_MSG = opts.scanMsg     || 'Scanning ~1000 stocks';
+        const EMPTY    = opts.emptyBody   || 'Click <b>Run Master Scan</b> to rank the Nifty 1000. Run it once or twice a day, or weekly — results update with the market.';
+        const idResult = 'master-result-' + MKT;
+        const idStatus = 'master-status-' + MKT;
+        const idBtn    = 'btn-scan-' + MKT;
         container.innerHTML = `
             <div style="margin-bottom:20px">
-                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🏆 Master Screener — Nifty 1000</h2>
-                <p style="font-size:13px;color:var(--text-secondary)">One composite score from 12 technical + fundamental checks · daily &amp; weekly candles · Top 10 ranked</p>
+                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">${TITLE}</h2>
+                <p style="font-size:13px;color:var(--text-secondary)">${SUBTITLE}</p>
             </div>
             <div class="two-col" style="align-items:start;margin-bottom:16px">
                 <div class="card" style="border-top:3px solid #818cf8">
@@ -677,12 +690,12 @@ const app = {
                 </div>
             </div>
             <div class="card" style="margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
-                <div style="font-size:12px;color:var(--text-secondary)">Scans ~1000 stocks with 1 year of data — the first run takes <b style="color:var(--text-primary)">2–5 minutes</b>. You can navigate away; results are saved.</div>
+                <div style="font-size:12px;color:var(--text-secondary)">${HELP}</div>
                 <div style="flex:1"></div>
-                <button id="btn-scan-master" class="btn" style="background:var(--accent-color);color:white;padding:10px 24px;font-size:14px;font-weight:700;">🏆 Run Master Scan</button>
+                <button id="${idBtn}" class="btn" style="background:var(--accent-color);color:white;padding:10px 24px;font-size:14px;font-weight:700;">${BTN}</button>
             </div>
-            <div id="master-status-bar" style="display:none"></div>
-            <div id="master-result"><div style="text-align:center;padding:30px;color:var(--text-secondary)"><div class="spinner"></div></div></div>
+            <div id="${idStatus}" style="display:none"></div>
+            <div id="${idResult}"><div style="text-align:center;padding:30px;color:var(--text-secondary)"><div class="spinner"></div></div></div>
             <div style="text-align:center;margin-top:18px;font-size:11px;color:var(--text-secondary)">A high score means the stock currently passes more of the checks above — it is a screening aid, not investment advice. Do your own research before investing.</div>
         `;
         let pollTimer = null;
@@ -690,7 +703,7 @@ const app = {
         const fmt = (v, suf='') => (v === null || v === undefined) ? '—' : v + suf;
 
         const renderResults = (data) => {
-            const el = document.getElementById('master-result');
+            const el = document.getElementById(idResult);
             if (!el) return;
             let h = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px">';
             h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--accent-color)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Universe</div><div style="font-size:20px;font-weight:800;margin-top:6px">'+data.market+'</div></div>';
@@ -737,21 +750,21 @@ const app = {
 
         const startPolling = () => {
             if (pollTimer) clearInterval(pollTimer);
-            const btn = document.getElementById('btn-scan-master');
-            const bar = document.getElementById('master-status-bar');
-            if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Scanning ~1000 stocks...'; }
-            if (bar) { bar.style.display='block'; bar.innerHTML = '<div class="card" style="padding:12px 16px;background:rgba(16,185,129,0.08);border-color:rgba(16,185,129,0.2);display:flex;align-items:center;gap:12px;margin-bottom:16px"><span class="spinner"></span><span style="color:var(--green);font-weight:600">Master scan running (2–5 min)... You can navigate away. Results will be saved.</span></div>'; }
+            const btn = document.getElementById(idBtn);
+            const bar = document.getElementById(idStatus);
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> ' + SCAN_MSG + '...'; }
+            if (bar) { bar.style.display='block'; bar.innerHTML = '<div class="card" style="padding:12px 16px;background:rgba(16,185,129,0.08);border-color:rgba(16,185,129,0.2);display:flex;align-items:center;gap:12px;margin-bottom:16px"><span class="spinner"></span><span style="color:var(--green);font-weight:600">' + SCAN_MSG + ' (2–5 min)... You can navigate away. Results will be saved.</span></div>'; }
             pollTimer = setInterval(async () => {
                 try {
                     const st = await api.getScreenerStatus(MKT);
                     if (st.status === 'done') {
                         clearInterval(pollTimer); pollTimer = null;
-                        if (btn) { btn.disabled = false; btn.innerHTML = '🏆 Run Master Scan'; }
+                        if (btn) { btn.disabled = false; btn.innerHTML = BTN; }
                         if (bar) bar.style.display = 'none';
                         loadLast();
                     } else if (st.status === 'error') {
                         clearInterval(pollTimer); pollTimer = null;
-                        if (btn) { btn.disabled = false; btn.innerHTML = '🏆 Run Master Scan'; }
+                        if (btn) { btn.disabled = false; btn.innerHTML = BTN; }
                         if (bar) { bar.style.display='block'; bar.innerHTML = '<div class="card" style="padding:12px 16px;border-color:var(--red);margin-bottom:16px"><span style="color:var(--red);font-weight:600">Scan failed: '+(st.error||'Unknown error')+'</span></div>'; }
                     }
                 } catch (e) {}
@@ -759,12 +772,12 @@ const app = {
         };
 
         const loadLast = async () => {
-            const el = document.getElementById('master-result');
+            const el = document.getElementById(idResult);
             if (!el) return;
             try {
                 const data = await api.getScreenerResults(MKT);
                 if (data.empty) {
-                    el.innerHTML = '<div class="card" style="text-align:center;padding:40px;border-color:rgba(129,140,248,0.2)"><div style="font-size:40px;margin-bottom:16px">🏆</div><div style="color:var(--text-accent);font-weight:800;font-size:16px">No scan yet</div><div style="color:var(--text-secondary);margin-top:8px">Click <b>Run Master Scan</b> to rank the Nifty 1000. Run it once or twice a day, or weekly — results update with the market.</div></div>';
+                    el.innerHTML = '<div class="card" style="text-align:center;padding:40px;border-color:rgba(129,140,248,0.2)"><div style="font-size:40px;margin-bottom:16px">🏆</div><div style="color:var(--text-accent);font-weight:800;font-size:16px">No scan yet</div><div style="color:var(--text-secondary);margin-top:8px">' + EMPTY + '</div></div>';
                 } else { renderResults(data); }
             } catch (e) { el.innerHTML = '<div class="card" style="text-align:center;padding:20px;color:var(--text-secondary)">Could not load previous results.</div>'; }
             try {
@@ -773,12 +786,24 @@ const app = {
             } catch (e) {}
         };
 
-        document.getElementById('btn-scan-master').addEventListener('click', async () => {
+        document.getElementById(idBtn).addEventListener('click', async () => {
             try { await api.startScreenerScan(MKT); startPolling(); }
             catch (err) { alert('Failed to start scan: ' + err.message); }
         });
 
         loadLast();
+    },
+
+    renderSmallMidMasterScreener(container) {
+        return this.renderMasterScreener(container, {
+            market:    'india_smallmid_master',
+            title:     '💎 Small &amp; Mid Cap Master — Beyond Nifty 1000',
+            subtitle:  'Same 12-factor score on the small/mid-cap universe (NSE Total Market ∪ Microcap 250, minus Nifty 1000)',
+            help:      'Scans the small/mid-cap universe with 1 year of data — the first run takes <b style="color:var(--text-primary)">2–4 minutes</b>. You can navigate away; results are saved.',
+            btnLabel:  '💎 Run Small/Mid Scan',
+            scanMsg:   'Scanning small &amp; mid caps',
+            emptyBody: 'Click <b>Run Small/Mid Scan</b> to rank the small/mid-cap universe. Higher-risk category than the Master Screener; do extra due diligence before acting.',
+        });
     },
 
     renderHome(container) {
@@ -824,6 +849,7 @@ const app = {
                 ${card('#stock', '#818cf8', '🔍', 'Stock Research', 'A deep-dive on a company: fundamentals, technicals, chart and the last six months of news.', 'Explore')}
                 ${card('#nifty', '#10b981', '📈', 'Nifty Analysis', "Nifty's 21-EMA & 200-DMA, RSI, day move, weekly/monthly PCR and a VIX-based expected range.", 'Analyze Trend')}
                 ${card('#master', '#fbbf24', '🏆', 'Master Screener', 'Ranks the Nifty 1000 on 12 technical + fundamental checks and returns the Top 10 with a full score breakdown.', 'Rank the Market', true)}
+                ${card('#smallmid', '#a78bfa', '💎', 'Small/Mid Master', 'Same 12-factor score, applied to the small &amp; mid-cap universe beyond the Nifty 1000. Higher risk, higher potential.', 'Rank Small/Mid', true)}
                 ${card('#screener', '#60a5fa', '📊', 'Stock Screener', 'Scan the Nifty 500 — and the next 501–1000 — for breakouts by P/E, volume spike and RSI.', 'Run a Scan')}
                 ${card('#chartink', '#c084fc', '📋', 'Chartink Comparator', 'Find the stocks that appear in both of your favourite Chartink screeners.', 'Compare')}
             </div>

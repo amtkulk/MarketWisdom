@@ -332,6 +332,9 @@ def run_screener(market="india"):
     if market == "india_master":
         return run_master_screener()
 
+    if market == "india_smallmid_master":
+        return run_smallmid_master_screener()
+
     if market == "us":
         tickers = get_sp500_tickers()
         label   = "S&P 500"
@@ -751,6 +754,148 @@ def run_master_screener():
     print(f"[Master] Done in {elapsed}s — returning top {len(results)}")
     return {
         "market": "Nifty 1000 Master",
+        "total_scanned": total,
+        "total_passed": len(scored),
+        "results": results,
+        "scan_time_seconds": elapsed,
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+#  SMALL / MID CAP MASTER SCREENER
+#  Same 12-factor engine as run_master_screener, but on the universe
+#  EXCLUDING the Nifty 1000 — i.e. genuine small & mid-caps NSE recognizes.
+#
+#  Universe: NSE Total Market (~750) + Microcap 250, minus Nifty 500 and
+#  the 501-1000 set. Falls back to a curated small/mid list if the NSE
+#  CSVs can't be fetched.
+# ══════════════════════════════════════════════════════════════
+
+SMALL_MID_FALLBACK = [
+    # A conservative fallback of well-known small/mid caps outside the Nifty 1000
+    "MASTEK", "TANLA", "ROUTE", "SONATSOFTW", "CYIENT", "ZENSARTECH",
+    "HAPPYFORGE", "SANSERA", "RATNAMANI", "SHAILY", "HAPPSTMNDS",
+    "ANANDRATHI", "KFINTECH", "PRUDENT", "MOTILALOFS", "CDSL", "BSE",
+    "VGUARD", "SYMPHONY", "CROMPTON", "FINEORG", "GRSE", "MIDHANI",
+    "APOLLOPIPE", "PRINCEPIPE", "ASTRAL", "SUPREMEIND", "FINPIPE",
+    "LTFOODS", "KRBL", "MARKSANS", "GRANULES", "LAURUSLABS",
+    "AJANTPHARM", "CAPLIPOINT", "SUVENPHAR", "NATCOPHARM",
+    "SYRMA", "KAYNES", "AMBER", "DIXON", "ORIENTELEC", "BUTTERFLY",
+    "CENTURYPLY", "GREENPLY", "GREENLAM", "ARCHIES", "REPCOHOME",
+    "AAVAS", "APTUS", "HOMEFIRST", "FIVESTAR", "CGCL", "SBFC",
+    "POONAWALLA", "MASFIN", "CREDITACC", "MANAPPURAM", "MUTHOOTCAP",
+    "JMFINANCIL", "CENTRALBK", "IOB", "UCOBANK", "MAHABANK",
+    "PSB", "J&KBANK", "KTKBANK", "DCBBANK", "CSBBANK",
+    "SOUTHBANK", "KARURVYSYA", "TMB", "UJJIVAN", "EQUITASBNK",
+    "JYOTHYLAB", "RADICO", "CCL", "TASTYBITE", "MRSFOODS",
+    "ELECTCAST", "TECHNOE", "GRAPHITE", "HEG", "VAIBHAVGBL",
+    "REDINGTON", "RAILTEL", "IRCON", "NBCC", "ENGINERSIN",
+    "HUDCO", "JWL", "TITAGARH", "TEXRAIL", "CENTRALTX",
+    "BIRLACORPN", "JKCEMENT", "HEIDELBERG", "RAMCOCEM",
+    "STARCEMENT", "SAGCEM", "PRISMJOHNSN", "ORIENTCEM",
+]
+
+
+def get_small_mid_cap_tickers():
+    """Small/mid-caps = NSE Total Market ∪ Microcap 250, minus Nifty 1000.
+    Falls back to a curated list if NSE CSV fetches fail."""
+    try:
+        excluded = set(t.replace(".NS", "") for t in get_nifty1000_tickers())
+        broad = []
+        for fn in ("ind_niftytotalmarket_list.csv", "ind_niftymicrocap250_list.csv"):
+            try:
+                broad += _fetch_nse_index_csv(fn)
+            except Exception as e:
+                print(f"[SmallMid] {fn} fetch failed: {e}")
+        seen, universe = set(), []
+        for s in broad:
+            if s in excluded or s in seen:
+                continue
+            seen.add(s)
+            universe.append(s)
+        if len(universe) > 40:
+            print(f"[SmallMid] Universe: {len(universe)} tickers (excluding Nifty 1000)")
+            return [s + ".NS" for s in universe]
+    except Exception as e:
+        print(f"[SmallMid] Build failed: {e}, using fallback")
+    excluded_fb = set(t.replace(".NS", "") for t in get_nifty1000_tickers())
+    return [t + ".NS" for t in SMALL_MID_FALLBACK if t not in excluded_fb]
+
+
+def run_smallmid_master_screener():
+    """Same multi-factor scoring as run_master_screener, applied to the
+    genuine small/mid-cap universe outside the Nifty 1000."""
+    import time
+    start = time.time()
+    tickers = get_small_mid_cap_tickers()
+    total = len(tickers)
+    print(f"[SmallMid Master] Scanning {total} small/mid-cap stocks (1y daily, bulk)...")
+
+    price_data = {}
+    CHUNK = 100
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+        futs = [ex.submit(_bulk_download_ohlc, tickers[i:i + CHUNK], "1y")
+                for i in range(0, total, CHUNK)]
+        futs.append(ex.submit(_bulk_download_ohlc, ["^NSEI"], "1y"))
+        for f in concurrent.futures.as_completed(futs):
+            try:
+                price_data.update(f.result() or {})
+            except Exception:
+                pass
+
+    nifty_rows = price_data.pop("^NSEI", [])
+    nifty_closes = [r[1] for r in nifty_rows]
+
+    scored = []
+    for t, rows in price_data.items():
+        res = technical_score(rows, nifty_closes)
+        if not res:
+            continue
+        tech, d = res
+        # Same hard gate: long-term uptrend on both timeframes + tradeable
+        if not (d["above_200dma"] and d["above_30wma"] and d["liquid"]):
+            continue
+        scored.append({"ticker": t, "tech": tech, "d": d})
+
+    scored.sort(key=lambda x: x["tech"], reverse=True)
+    finalists = scored[:40]
+    print(f"[SmallMid Master] {len(price_data)} priced, {len(scored)} passed gate, "
+          f"fetching fundamentals for top {len(finalists)}...")
+
+    def enrich(c):
+        sym = c["ticker"].replace(".NS", "").replace(".BO", "")
+        f = _fetch_fundamentals(sym)
+        c["f"] = f
+        c["fund"] = fundamental_score(f)
+        c["sym"] = sym
+        return c
+
+    if finalists:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+            finalists = list(ex.map(enrich, finalists))
+
+    for c in finalists:
+        c["score"] = round(c["tech"] + c["fund"], 1)
+    finalists.sort(key=lambda x: x["score"], reverse=True)
+
+    results = []
+    for i, c in enumerate(finalists[:10]):
+        d, f = c["d"], c.get("f", {})
+        results.append({
+            "rank": i + 1, "ticker": c["sym"], "price": d["price"],
+            "score": c["score"], "tech_score": c["tech"], "fund_score": c["fund"],
+            "rsi_d": d.get("rsi_d"), "rsi_w": d.get("rsi_w"),
+            "rs_6m": d.get("rs_6m"), "dist_52wh": d.get("dist_52wh"),
+            "macd_bull": d.get("macd_bull"), "golden_stack": d.get("golden_stack"),
+            "roe": f.get("roe"), "roce": f.get("roce"),
+            "sales_g": f.get("sales_g"), "profit_g": f.get("profit_g"),
+            "pe": f.get("pe"),
+        })
+
+    elapsed = round(time.time() - start, 1)
+    print(f"[SmallMid Master] Done in {elapsed}s — returning top {len(results)}")
+    return {
+        "market": "Small & Mid Cap Master",
         "total_scanned": total,
         "total_passed": len(scored),
         "results": results,
