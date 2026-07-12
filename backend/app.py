@@ -2411,7 +2411,7 @@ def _run_screener_background(market):
 def api_screener_start():
     """Start a background scan. Returns immediately."""
     market = request.args.get("market", "india").lower()
-    if market not in ("india", "us", "india_next500", "india_master", "india_smallmid_master"):
+    if market not in ("india", "us", "india_next500", "india_master", "india_smallmid_master", "india_microcap"):
         return jsonify({"error": "Invalid market."}), 400
 
     with _screener_lock:
@@ -2440,7 +2440,7 @@ def api_screener_status():
 def api_screener_results():
     """Get last saved results from the database."""
     market = request.args.get("market", "india").lower()
-    if market not in ("india", "us", "india_next500", "india_master", "india_smallmid_master"):
+    if market not in ("india", "us", "india_next500", "india_master", "india_smallmid_master", "india_microcap"):
         return jsonify({"error": "Invalid market."}), 400
 
     data, updated_at = get_screener_results(market)

@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v21',
+    VERSION: 'v22',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -79,7 +79,7 @@ const app = {
         }
         const label = ({
             global: 'Global Market', 'war-news': 'War News', telegram: 'Telegram Feed',
-            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', stock: 'Stock Research',
+            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', stock: 'Stock Research',
             overview: 'Stock Overview', action: 'Stock Action', chartink: 'Chartink Comparator',
             nifty: 'Nifty Analysis', watchlist: 'Watchlist',
         })[attemptedRoute] || 'this page';
@@ -151,6 +151,9 @@ const app = {
                 break;
             case 'smallmid':
                 this.renderSmallMidMasterScreener(container);
+                break;
+            case 'microcap':
+                this.renderMicroCapScreener(container);
                 break;
             case 'stock':
                 this.renderStock(container);
@@ -657,6 +660,8 @@ const app = {
         const BTN      = opts.btnLabel    || '🏆 Run Master Scan';
         const SCAN_MSG = opts.scanMsg     || 'Scanning ~1000 stocks';
         const EMPTY    = opts.emptyBody   || 'Click <b>Run Master Scan</b> to rank the Nifty 1000. Run it once or twice a day, or weekly — results update with the market.';
+        const GATE     = opts.gateNote    || 'Hard gate before scoring: price &gt; 200-DMA <i>and</i> weekly close &gt; 30-week MA <i>and</i> tradeable liquidity.';
+        const SHOWMCAP = !!opts.showMcap;
         const idResult = 'master-result-' + MKT;
         const idStatus = 'master-status-' + MKT;
         const idBtn    = 'btn-scan-' + MKT;
@@ -685,7 +690,7 @@ const app = {
                         5-yr Sales CAGR ≥ 15% <b style="color:var(--text-primary)">(8)</b><br>
                         5-yr Profit CAGR ≥ 15% <b style="color:var(--text-primary)">(8)</b><br>
                         P/E ≤ 25 (valuation sanity) <b style="color:var(--text-primary)">(4)</b><br>
-                        <span style="font-size:11.5px">Hard gate before scoring: price &gt; 200-DMA <i>and</i> weekly close &gt; 30-week MA <i>and</i> tradeable liquidity.</span>
+                        <span style="font-size:11.5px">${GATE}</span>
                     </div>
                 </div>
             </div>
@@ -714,7 +719,8 @@ const app = {
             if (data.results && data.results.length) {
                 h += '<div class="card" style="padding:0;overflow:hidden"><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:900px">';
                 h += '<thead><tr style="background:rgba(255,255,255,0.05);text-align:left">';
-                ['#','Ticker','Price','Score','Tech','Fund','RSI D/W','RS 6m','52WH Δ','ROE','ROCE','Sales 5y','Profit 5y','P/E'].forEach((c,i)=>{
+                const cols = ['#','Ticker','Price'].concat(SHOWMCAP ? ['MCap ₹Cr'] : []).concat(['Score','Tech','Fund','RSI D/W','RS 6m','52WH Δ','ROE','ROCE','Sales 5y','Profit 5y','P/E']);
+                cols.forEach((c,i)=>{
                     h += '<th style="padding:12px 10px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;'+(i>1?'text-align:right':'')+'">'+c+'</th>';
                 });
                 h += '</tr></thead><tbody>';
@@ -727,6 +733,7 @@ const app = {
                     h += '<td style="padding:12px 10px;font-weight:800">'+medal+'</td>';
                     h += '<td style="padding:12px 10px;font-weight:800;color:var(--text-primary)">'+s.ticker+(s.macd_bull?' <span title="MACD bullish" style="font-size:10px">📈</span>':'')+'</td>';
                     h += '<td style="padding:12px 10px;text-align:right;font-weight:700">₹'+Number(s.price).toLocaleString("en-IN")+'</td>';
+                    if (SHOWMCAP) h += '<td style="padding:12px 10px;text-align:right;color:var(--text-secondary);font-weight:600">'+fmt(s.mcap)+'</td>';
                     h += '<td style="padding:12px 10px;text-align:right"><div style="display:flex;align-items:center;justify-content:flex-end;gap:8px"><div style="width:56px;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.score,100)+'%;height:100%;background:'+sc+'"></div></div><b style="color:'+sc+'">'+s.score+'</b></div></td>';
                     h += '<td style="padding:12px 10px;text-align:right;color:var(--text-accent);font-weight:600">'+s.tech_score+'</td>';
                     h += '<td style="padding:12px 10px;text-align:right;color:var(--yellow);font-weight:600">'+s.fund_score+'</td>';
@@ -806,6 +813,20 @@ const app = {
         });
     },
 
+    renderMicroCapScreener(container) {
+        return this.renderMasterScreener(container, {
+            market:    'india_microcap',
+            title:     '🔬 Micro Cap Scanner — &lt; ₹2,000 Cr, coiled at highs',
+            subtitle:  'The 12-factor engine on beyond-Nifty-1000 stocks, with two extra hard gates: market cap under ₹2,000 Cr (verified) and price within 7% of the 52-week high',
+            help:      'Scans the beyond-Nifty-1000 universe with 1 year of data, then verifies market cap for every finalist — the first run takes <b style="color:var(--text-primary)">2–4 minutes</b>. You can navigate away; results are saved.',
+            btnLabel:  '🔬 Run Micro Cap Scan',
+            scanMsg:   'Scanning micro caps',
+            emptyBody: 'Click <b>Run Micro Cap Scan</b> to rank micro caps trading within 7% of their 52-week high. Micro caps are the highest-risk category — thin liquidity, sharp swings. Position sizing matters more here than anywhere else.',
+            gateNote:  'Hard gates before scoring: price &gt; 200-DMA <i>and</i> weekly close &gt; 30-week MA <i>and</i> tradeable liquidity <i>and</i> <b style="color:var(--text-primary)">within 7% of the 52-week high</b> <i>and</i> <b style="color:var(--text-primary)">market cap &lt; ₹2,000 Cr (verified via Screener.in)</b>.',
+            showMcap:  true,
+        });
+    },
+
     renderHome(container) {
         const owl = `<svg viewBox="0 0 64 64" fill="none" style="width:84px;height:84px;filter:drop-shadow(0 8px 24px rgba(129,140,248,0.3))">
             <path d="M32 6C16 6 10 18 10 32c0 16 10 26 22 26s22-10 22-26C54 18 48 6 32 6Z" fill="#0f172a" stroke="#818cf8" stroke-width="2.5"/>
@@ -846,10 +867,10 @@ const app = {
             ${sectionLabel('Research & Analysis')}
             <div class="feature-grid">
                 ${card('#overview', '#34d399', '🧭', 'Stock Overview', 'A fast, accurate snapshot of any stock — live price, CAGR, RSI, fundamentals, shareholding, quarterly results and a 6-month chart.', 'Open Overview', true)}
-                ${card('#stock', '#818cf8', '🔍', 'Stock Research', 'A deep-dive on a company: fundamentals, technicals, chart and the last six months of news.', 'Explore')}
                 ${card('#nifty', '#10b981', '📈', 'Nifty Analysis', "Nifty's 21-EMA & 200-DMA, RSI, day move, weekly/monthly PCR and a VIX-based expected range.", 'Analyze Trend')}
                 ${card('#master', '#fbbf24', '🏆', 'Master Screener', 'Ranks the Nifty 1000 on 12 technical + fundamental checks and returns the Top 10 with a full score breakdown.', 'Rank the Market', true)}
                 ${card('#smallmid', '#a78bfa', '💎', 'Small/Mid Master', 'Same 12-factor score, applied to the small &amp; mid-cap universe beyond the Nifty 1000. Higher risk, higher potential.', 'Rank Small/Mid', true)}
+                ${card('#microcap', '#f472b6', '🔬', 'Micro Cap Scanner', 'Micro caps under ₹2,000 Cr trading within 7% of their 52-week high — the tightest momentum coil, ranked by the same 12-factor score.', 'Scan Micro Caps', true)}
                 ${card('#screener', '#60a5fa', '📊', 'Stock Screener', 'Scan the Nifty 500 — and the next 501–1000 — for breakouts by P/E, volume spike and RSI.', 'Run a Scan')}
                 ${card('#chartink', '#c084fc', '📋', 'Chartink Comparator', 'Find the stocks that appear in both of your favourite Chartink screeners.', 'Compare')}
             </div>

@@ -335,6 +335,9 @@ def run_screener(market="india"):
     if market == "india_smallmid_master":
         return run_smallmid_master_screener()
 
+    if market == "india_microcap":
+        return run_microcap_screener()
+
     if market == "us":
         tickers = get_sp500_tickers()
         label   = "S&P 500"
@@ -632,6 +635,8 @@ def _fetch_fundamentals(symbol):
                 out["roe"] = val
             elif "stock p/e" in low and "pe" not in out:
                 out["pe"] = val
+            elif "market cap" in low and "mcap" not in out:
+                out["mcap"] = val          # Screener shows Market Cap in Rs Cr
         for tbl in soup.find_all("table"):
             txt = tbl.get_text() or ""
             key = "sales_g" if "Compounded Sales Growth" in txt else \
@@ -896,6 +901,122 @@ def run_smallmid_master_screener():
     print(f"[SmallMid Master] Done in {elapsed}s — returning top {len(results)}")
     return {
         "market": "Small & Mid Cap Master",
+        "total_scanned": total,
+        "total_passed": len(scored),
+        "results": results,
+        "scan_time_seconds": elapsed,
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+#  MICRO CAP SCANNER
+#  Same 12-factor engine, on the beyond-Nifty-1000 universe, with two
+#  EXTRA hard gates on top of the standard one:
+#    • Distance from 52-week high ≤ 7%  (price coiling right at highs —
+#      the strongest momentum posture; laggards are cut before scoring)
+#    • Market cap < Rs 2,000 Cr, VERIFIED from Screener.in. Anything at or
+#      above the cap — or whose market cap cannot be confirmed — is dropped.
+#  Pipeline: technical gates first (cheap, incl. the 7% rule) → wider
+#  finalist pool (60) → fundamentals fetched → mcap filter → composite → Top 10.
+# ══════════════════════════════════════════════════════════════
+
+MICROCAP_MAX_MCAP_CR   = 2000.0   # Rs Cr
+MICROCAP_MAX_DIST_52WH = 7.0      # percent below 52-week high
+
+
+def run_microcap_screener():
+    import time
+    start = time.time()
+    tickers = get_small_mid_cap_tickers()      # beyond-Nifty-1000 universe
+    total = len(tickers)
+    print(f"[MicroCap] Scanning {total} beyond-Nifty-1000 stocks (1y daily, bulk)...")
+
+    price_data = {}
+    CHUNK = 100
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+        futs = [ex.submit(_bulk_download_ohlc, tickers[i:i + CHUNK], "1y")
+                for i in range(0, total, CHUNK)]
+        futs.append(ex.submit(_bulk_download_ohlc, ["^NSEI"], "1y"))
+        for f in concurrent.futures.as_completed(futs):
+            try:
+                price_data.update(f.result() or {})
+            except Exception:
+                pass
+
+    nifty_rows = price_data.pop("^NSEI", [])
+    nifty_closes = [r[1] for r in nifty_rows]
+
+    scored = []
+    for t, rows in price_data.items():
+        res = technical_score(rows, nifty_closes)
+        if not res:
+            continue
+        tech, d = res
+        # Standard gate + the micro-cap 7%-from-high momentum gate
+        if not (d["above_200dma"] and d["above_30wma"] and d["liquid"]):
+            continue
+        if d.get("dist_52wh") is None or d["dist_52wh"] > MICROCAP_MAX_DIST_52WH:
+            continue
+        scored.append({"ticker": t, "tech": tech, "d": d})
+
+    scored.sort(key=lambda x: x["tech"], reverse=True)
+    # Wider finalist pool than the master (60 vs 40): the mcap filter will
+    # cut an unknown share of them, so we need headroom to still fill a Top 10.
+    finalists = scored[:60]
+    print(f"[MicroCap] {len(price_data)} priced, {len(scored)} passed gates "
+          f"(incl. <= {MICROCAP_MAX_DIST_52WH}% from 52WH), "
+          f"checking fundamentals + mcap for top {len(finalists)}...")
+
+    def enrich(c):
+        sym = c["ticker"].replace(".NS", "").replace(".BO", "")
+        f = _fetch_fundamentals(sym)
+        c["f"] = f
+        c["fund"] = fundamental_score(f)
+        c["sym"] = sym
+        return c
+
+    if finalists:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+            finalists = list(ex.map(enrich, finalists))
+
+    # HARD micro-cap filter: must have a confirmed market cap below the limit.
+    dropped_big, dropped_unknown = 0, 0
+    kept = []
+    for c in finalists:
+        mcap = (c.get("f") or {}).get("mcap")
+        if mcap is None:
+            dropped_unknown += 1
+            continue
+        if mcap >= MICROCAP_MAX_MCAP_CR:
+            dropped_big += 1
+            continue
+        kept.append(c)
+    print(f"[MicroCap] mcap filter: kept {len(kept)}, dropped {dropped_big} too-big, "
+          f"{dropped_unknown} unverifiable")
+
+    for c in kept:
+        c["score"] = round(c["tech"] + c["fund"], 1)
+    kept.sort(key=lambda x: x["score"], reverse=True)
+
+    results = []
+    for i, c in enumerate(kept[:10]):
+        d, f = c["d"], c.get("f", {})
+        results.append({
+            "rank": i + 1, "ticker": c["sym"], "price": d["price"],
+            "mcap": f.get("mcap"),
+            "score": c["score"], "tech_score": c["tech"], "fund_score": c["fund"],
+            "rsi_d": d.get("rsi_d"), "rsi_w": d.get("rsi_w"),
+            "rs_6m": d.get("rs_6m"), "dist_52wh": d.get("dist_52wh"),
+            "macd_bull": d.get("macd_bull"), "golden_stack": d.get("golden_stack"),
+            "roe": f.get("roe"), "roce": f.get("roce"),
+            "sales_g": f.get("sales_g"), "profit_g": f.get("profit_g"),
+            "pe": f.get("pe"),
+        })
+
+    elapsed = round(time.time() - start, 1)
+    print(f"[MicroCap] Done in {elapsed}s — returning top {len(results)}")
+    return {
+        "market": "Micro Cap (< Rs 2000 Cr)",
         "total_scanned": total,
         "total_passed": len(scored),
         "results": results,
