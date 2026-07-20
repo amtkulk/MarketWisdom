@@ -78,7 +78,10 @@ nav a:hover, nav a.active {
     position: fixed;
     inset: 0;
     background: rgba(15,23,42,0.45);
-    z-index: 150;
+    /* MUST be below nav's z-index (100): nav is a stacking context, so the
+       drawer's z-index:200 lives INSIDE layer 100. An overlay above 100 would
+       sit on top of the drawer and swallow every tap on the links. */
+    z-index: 90;
 }
 #nav-overlay.show { display: block; }
 

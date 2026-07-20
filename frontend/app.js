@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v23',
+    VERSION: 'v24',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -67,7 +67,13 @@ const app = {
             btn.addEventListener('click', (e) => {
                 e.preventDefault();
                 const target = e.currentTarget.getAttribute('data-target');
-                window.location.hash = target;
+                const current = window.location.hash.replace('#', '');
+                if (current === target) {
+                    // Same page tapped: no hashchange event fires, so navigate directly
+                    this.navigate(this._resolveRoute(target));
+                } else {
+                    window.location.hash = target;
+                }
             });
         });
     },
