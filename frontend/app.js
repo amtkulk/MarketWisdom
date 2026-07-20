@@ -3,14 +3,28 @@
  */
 
 const app = {
-    VERSION: 'v22',
+    VERSION: 'v23',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
     GATE_ENABLED: true,
     PUBLIC_ROUTES: new Set(['home']),
 
+    setupMobileMenu() {
+        const toggle  = document.getElementById('menu-toggle');
+        const links   = document.getElementById('nav-links');
+        const overlay = document.getElementById('nav-overlay');
+        if (!toggle || !links || !overlay) return;
+        const close = () => { links.classList.remove('open'); overlay.classList.remove('show'); };
+        const open  = () => { links.classList.add('open');    overlay.classList.add('show'); };
+        toggle.addEventListener('click', () => links.classList.contains('open') ? close() : open());
+        overlay.addEventListener('click', close);
+        // Selecting any page closes the drawer
+        links.querySelectorAll('.nav-btn').forEach(a => a.addEventListener('click', close));
+    },
+
     init() {
+        this.setupMobileMenu();
         console.log('[MarketWisdom] app', this.VERSION,
                     '| gate:', this.GATE_ENABLED ? 'ON' : 'OFF',
                     '| signed in?', this._isSignedIn(),
@@ -212,7 +226,7 @@ const app = {
             let h = '<div class="card" style="padding:0;overflow:hidden;border-top:3px solid '+accent+'">'
                 + '<div style="padding:14px 16px;font-weight:800;color:var(--text-primary);font-size:15px">'+emoji+' '+esc(title)+'</div>'
                 + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">'
-                + '<thead><tr style="background:rgba(255,255,255,0.04);text-align:left">'
+                + '<thead><tr style="background:rgba(15,23,42,0.04);text-align:left">'
                 + '<th style="padding:10px 16px;color:var(--text-secondary);font-size:11px;text-transform:uppercase">Name</th>'
                 + '<th style="padding:10px 16px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">Price</th>'
                 + '<th style="padding:10px 16px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">Change</th>'
@@ -222,7 +236,7 @@ const app = {
                 const c = col(d.change);
                 const unit = d.unit ? ' <span style="font-size:10px;color:var(--text-secondary)">'+esc(d.unit)+'</span>' : '';
                 const na = d.price==='N/A';
-                h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05)">'
+                h += '<tr style="border-bottom:1px solid rgba(15,23,42,0.06)">'
                     + '<td style="padding:12px 16px;font-weight:600;color:var(--text-primary)">'+esc(d.name)+'</td>'
                     + '<td style="padding:12px 16px;text-align:right;font-weight:700">'+fmtPrice(d.price)+unit+'</td>'
                     + '<td style="padding:12px 16px;text-align:right;color:'+c+';font-weight:600">'+(na?'—':sign(d.change)+d.change)+'</td>'
@@ -263,7 +277,7 @@ const app = {
                         const hi = String(ev.importance||'').toLowerCase()==='high';
                         html += '<div style="display:flex;gap:12px;align-items:center;font-size:13px;flex-wrap:wrap">'
                             + '<span style="min-width:56px;font-weight:700;color:var(--text-primary)">'+esc(ev.date||'')+'</span>'
-                            + '<span style="background:rgba(255,255,255,0.08);border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700;color:var(--text-accent)">'+esc(ev.region||'')+'</span>'
+                            + '<span style="background:rgba(15,23,42,0.08);border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700;color:var(--text-accent)">'+esc(ev.region||'')+'</span>'
                             + '<span style="color:var(--text-primary)">'+(hi?'🔴 ':'')+esc(ev.title||'')+'</span></div>';
                     });
                     html += '</div></div>';
@@ -291,7 +305,7 @@ const app = {
                         const ta = n.time_ago || '';
                         const fresh = ta==='just now'||ta.endsWith('m ago')||ta==='1h ago';
                         const headline = n.link ? '<a href="'+esc(n.link)+'" target="_blank" rel="noopener" style="color:var(--text-primary);text-decoration:none">'+esc(n.headline)+'</a>' : esc(n.headline);
-                        html += '<div style="padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.05)">'
+                        html += '<div style="padding-bottom:12px;border-bottom:1px solid rgba(15,23,42,0.06)">'
                             + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:4px">'
                             + '<span style="font-size:11px;font-weight:700;color:'+(fresh?'var(--green)':'var(--text-secondary)')+'">'+(fresh?'🟢 ':'')+esc(ta)+'</span>'
                             + '<span style="font-size:10px;color:var(--text-secondary)">'+esc(n.date||'')+'</span></div>'
@@ -367,7 +381,7 @@ const app = {
                             ? `<a href="${esc(n.link)}" target="_blank" rel="noopener" style="color:var(--text-primary);text-decoration:none">${esc(n.headline)}</a>`
                             : esc(n.headline);
                         html += `
-                            <div style="padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.05)">
+                            <div style="padding-bottom:12px;border-bottom:1px solid rgba(15,23,42,0.06)">
                                 <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:5px">
                                     ${ago}
                                     <span style="font-size:10px;color:var(--text-secondary)">${esc(n.date)}</span>
@@ -611,13 +625,13 @@ const app = {
         const cur = market === 'us' ? '$' : '₹';
         let h = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px">';
         h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--accent-color)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Market</div><div style="font-size:20px;font-weight:800;margin-top:6px">'+data.market+'</div></div>';
-        h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid #818cf8"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Scanned</div><div style="font-size:20px;font-weight:800;color:#818cf8;margin-top:6px">'+data.total_scanned+'</div></div>';
+        h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid #818cf8"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Scanned</div><div style="font-size:20px;font-weight:800;color:var(--text-accent);margin-top:6px">'+data.total_scanned+'</div></div>';
         h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--green)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Passed</div><div style="font-size:20px;font-weight:800;color:var(--green);margin-top:6px">'+data.total_passed+'</div></div>';
         h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--yellow)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Time</div><div style="font-size:20px;font-weight:800;color:var(--yellow);margin-top:6px">'+data.scan_time_seconds+'s</div></div>';
         h += '</div>';
         if(data.results && data.results.length>0){
             h+='<div class="card" style="padding:0;overflow:hidden"><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">';
-            h+='<thead><tr style="background:rgba(255,255,255,0.05);text-align:left">';
+            h+='<thead><tr style="background:rgba(15,23,42,0.06);text-align:left">';
             h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;width:40px">#</th>';
             h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase">Ticker</th>';
             h+='<th style="padding:14px 12px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;text-align:right">Price</th>';
@@ -633,14 +647,14 @@ const app = {
                 const vc=s.vol_ratio>=5?'var(--red)':s.vol_ratio>=3?'var(--yellow)':'var(--green)';
                 const rc=s.rsi>=70?'var(--red)':s.rsi>=60?'var(--yellow)':'var(--green)';
                 const sc=s.score>=60?'var(--green)':s.score>=40?'var(--yellow)':'var(--text-secondary)';
-                h+='<tr style="border-bottom:1px solid rgba(255,255,255,0.05);'+bg+'">';
+                h+='<tr style="border-bottom:1px solid rgba(15,23,42,0.06);'+bg+'">';
                 h+='<td style="padding:14px 12px;font-weight:800;font-size:14px">'+re+'</td>';
                 h+='<td style="padding:14px 12px;font-weight:800;color:var(--text-primary);font-size:14px">'+s.ticker+'</td>';
                 h+='<td style="padding:14px 12px;text-align:right;font-weight:700;font-size:14px">'+cur+s.price.toLocaleString()+'</td>';
                 h+='<td style="padding:14px 12px;text-align:right;color:var(--green);font-weight:600">'+s.pe+'</td>';
                 h+='<td style="padding:14px 12px;text-align:right"><span style="background:'+vc+'20;color:'+vc+';padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700">'+s.vol_ratio+'x</span></td>';
                 h+='<td style="padding:14px 12px;text-align:right;color:'+rc+';font-weight:700">'+s.rsi+'</td>';
-                h+='<td style="padding:14px 12px;text-align:right"><div style="display:flex;align-items:center;justify-content:flex-end;gap:8px"><div style="width:60px;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.score,100)+'%;height:100%;background:'+sc+';border-radius:3px"></div></div><span style="font-weight:800;color:'+sc+';font-size:13px">'+s.score+'</span></div></td>';
+                h+='<td style="padding:14px 12px;text-align:right"><div style="display:flex;align-items:center;justify-content:flex-end;gap:8px"><div style="width:60px;height:6px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.score,100)+'%;height:100%;background:'+sc+';border-radius:3px"></div></div><span style="font-weight:800;color:'+sc+';font-size:13px">'+s.score+'</span></div></td>';
                 h+='</tr>';
             });
             h+='</tbody></table></div></div>';
@@ -712,13 +726,13 @@ const app = {
             if (!el) return;
             let h = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px">';
             h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--accent-color)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Universe</div><div style="font-size:20px;font-weight:800;margin-top:6px">'+data.market+'</div></div>';
-            h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid #818cf8"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Scanned</div><div style="font-size:20px;font-weight:800;color:#818cf8;margin-top:6px">'+data.total_scanned+'</div></div>';
+            h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid #818cf8"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Scanned</div><div style="font-size:20px;font-weight:800;color:var(--text-accent);margin-top:6px">'+data.total_scanned+'</div></div>';
             h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--green)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Passed Gate</div><div style="font-size:20px;font-weight:800;color:var(--green);margin-top:6px">'+data.total_passed+'</div></div>';
             h += '<div class="card" style="flex:1;min-width:130px;text-align:center;padding:16px;border-left:4px solid var(--yellow)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Time</div><div style="font-size:20px;font-weight:800;color:var(--yellow);margin-top:6px">'+data.scan_time_seconds+'s</div></div>';
             h += '</div>';
             if (data.results && data.results.length) {
                 h += '<div class="card" style="padding:0;overflow:hidden"><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:900px">';
-                h += '<thead><tr style="background:rgba(255,255,255,0.05);text-align:left">';
+                h += '<thead><tr style="background:rgba(15,23,42,0.06);text-align:left">';
                 const cols = ['#','Ticker','Price'].concat(SHOWMCAP ? ['MCap ₹Cr'] : []).concat(['Score','Tech','Fund','RSI D/W','RS 6m','52WH Δ','ROE','ROCE','Sales 5y','Profit 5y','P/E']);
                 cols.forEach((c,i)=>{
                     h += '<th style="padding:12px 10px;color:var(--text-secondary);font-size:11px;text-transform:uppercase;'+(i>1?'text-align:right':'')+'">'+c+'</th>';
@@ -729,12 +743,12 @@ const app = {
                     const medal = s.rank===1?'🥇':s.rank===2?'🥈':s.rank===3?'🥉':s.rank;
                     const sc = s.score>=75?'var(--green)':s.score>=55?'var(--yellow)':'var(--text-secondary)';
                     const rsCol = (s.rs_6m||0) >= 0 ? 'var(--green)' : 'var(--red)';
-                    h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);'+bg+'">';
+                    h += '<tr style="border-bottom:1px solid rgba(15,23,42,0.06);'+bg+'">';
                     h += '<td style="padding:12px 10px;font-weight:800">'+medal+'</td>';
                     h += '<td style="padding:12px 10px;font-weight:800;color:var(--text-primary)">'+s.ticker+(s.macd_bull?' <span title="MACD bullish" style="font-size:10px">📈</span>':'')+'</td>';
                     h += '<td style="padding:12px 10px;text-align:right;font-weight:700">₹'+Number(s.price).toLocaleString("en-IN")+'</td>';
                     if (SHOWMCAP) h += '<td style="padding:12px 10px;text-align:right;color:var(--text-secondary);font-weight:600">'+fmt(s.mcap)+'</td>';
-                    h += '<td style="padding:12px 10px;text-align:right"><div style="display:flex;align-items:center;justify-content:flex-end;gap:8px"><div style="width:56px;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.score,100)+'%;height:100%;background:'+sc+'"></div></div><b style="color:'+sc+'">'+s.score+'</b></div></td>';
+                    h += '<td style="padding:12px 10px;text-align:right"><div style="display:flex;align-items:center;justify-content:flex-end;gap:8px"><div style="width:56px;height:6px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.score,100)+'%;height:100%;background:'+sc+'"></div></div><b style="color:'+sc+'">'+s.score+'</b></div></td>';
                     h += '<td style="padding:12px 10px;text-align:right;color:var(--text-accent);font-weight:600">'+s.tech_score+'</td>';
                     h += '<td style="padding:12px 10px;text-align:right;color:var(--yellow);font-weight:600">'+s.fund_score+'</td>';
                     h += '<td style="padding:12px 10px;text-align:right">'+fmt(s.rsi_d)+' / '+fmt(s.rsi_w)+'</td>';
@@ -955,7 +969,7 @@ const app = {
                             <span class="badge badge-blue">${d.ticker || ''}</span>
                             <span style="font-size:11px;color:var(--text-secondary)">${d.sector || ''}</span>
                         </div>
-                        <p style="font-size:13px;color:#94a3b8;line-height:1.7;max-width:520px;margin-bottom:12px">${d.description || ''}</p>
+                        <p style="font-size:13px;color:var(--text-secondary);line-height:1.7;max-width:520px;margin-bottom:12px">${d.description || ''}</p>
                         ${Components.RatingButtons(d.ticker, d.company_name, d.sector, d.current_price)}
                     </div>
                     <div style="text-align:right">
@@ -1014,11 +1028,11 @@ const app = {
             html += `</tr></thead><tbody>`;
             const addQrRow = (label, dataArr, yoyArr) => {
                 if (!dataArr) return;
-                html += `<tr><td style="text-align:left;font-weight:600;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">${label}</td>`;
+                html += `<tr><td style="text-align:left;font-weight:600;padding:8px 0;border-bottom:1px solid rgba(15,23,42,0.06)">${label}</td>`;
                 dataArr.forEach((v, i) => {
                     const yoy = yoyArr ? yoyArr[i] : null;
                     const yoyHtml = yoy && yoy !== 'N/A' ? `<br><span style="font-size:10px;color:${yoy.startsWith('+') ? 'var(--green)' : 'var(--red)'}">${yoy} YoY</span>` : '';
-                    html += `<td style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">${v}${yoyHtml}</td>`;
+                    html += `<td style="padding:8px 0;border-bottom:1px solid rgba(15,23,42,0.06)">${v}${yoyHtml}</td>`;
                 });
                 html += `</tr>`;
             };
@@ -1036,8 +1050,8 @@ const app = {
             html += `</tr></thead><tbody>`;
             const addShRow = (label, dataArr) => {
                 if (!dataArr || dataArr[0] === 'N/A') return;
-                html += `<tr><td style="text-align:left;font-weight:600;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">${label}</td>`;
-                dataArr.forEach(v => html += `<td style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">${v}${v !== 'N/A' ? '%' : ''}</td>`);
+                html += `<tr><td style="text-align:left;font-weight:600;padding:8px 0;border-bottom:1px solid rgba(15,23,42,0.06)">${label}</td>`;
+                dataArr.forEach(v => html += `<td style="padding:8px 0;border-bottom:1px solid rgba(15,23,42,0.06)">${v}${v !== 'N/A' ? '%' : ''}</td>`);
                 html += `</tr>`;
             };
             addShRow('Promoters', sh.promoter);
@@ -1051,12 +1065,12 @@ const app = {
             html += `
             <div class="card">
                 <div class="section-title">6-Month Price Action (Daily)</div>
-                <canvas id="overviewCanvas-${d.ticker}" style="width:100%;height:320px;background:#0d1424;border-radius:6px"></canvas>
+                <canvas id="overviewCanvas-${d.ticker}" style="width:100%;height:320px;background:#f8fafc;border-radius:6px"></canvas>
                 <div style="display:flex;gap:16px;margin-top:10px;font-size:11px;color:var(--text-secondary);flex-wrap:wrap">
                     <span><span style="display:inline-block;width:10px;height:10px;background:var(--green);border-radius:2px;margin-right:4px"></span>Bullish</span>
                     <span><span style="display:inline-block;width:10px;height:10px;background:var(--red);border-radius:2px;margin-right:4px"></span>Bearish</span>
                     <span><span style="display:inline-block;width:20px;height:2px;background:#f59e0b;vertical-align:middle;margin-right:4px"></span>21 EMA</span>
-                    <span><span style="display:inline-block;width:20px;height:2px;background:#818cf8;vertical-align:middle;margin-right:4px"></span>200 DMA</span>
+                    <span><span style="display:inline-block;width:20px;height:2px;background:#6366f1;vertical-align:middle;margin-right:4px"></span>200 DMA</span>
                 </div>
             </div>`;
             setTimeout(() => app.drawChart(`overviewCanvas-${d.ticker}`, d.ohlcv), 100);
@@ -1067,7 +1081,7 @@ const app = {
             html += `<div class="card"><div class="section-title">Recent News</div><div style="display:flex;flex-direction:column;gap:12px">`;
             d.news.slice(0, 5).forEach(n => {
                 html += `
-                <div style="padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.05)">
+                <div style="padding-bottom:12px;border-bottom:1px solid rgba(15,23,42,0.06)">
                     <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${n.headline}</div>
                     <div style="font-size:11px;color:var(--text-secondary)">
                         <span style="color:var(--text-accent)">${n.source}</span> • ${n.date}
@@ -1208,7 +1222,7 @@ const app = {
             html += `<div class="card"><div class="section-title">Latest News</div><div style="display:flex;flex-direction:column;gap:12px">`;
             d.news.slice(0, 10).forEach(n => {
                 html += `
-                <div style="padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.05)">
+                <div style="padding-bottom:12px;border-bottom:1px solid rgba(15,23,42,0.06)">
                     <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${n.headline}</div>
                     <div style="font-size:11px;color:var(--text-secondary)">
                         <span style="color:var(--text-accent)">${n.source}</span> • ${n.date}
@@ -1237,7 +1251,7 @@ const app = {
                             <span class="badge badge-blue">${d.ticker || ''}</span>
                             <span style="font-size:11px;color:var(--text-secondary)">${d.sector || ''}</span>
                         </div>
-                        <p style="font-size:13px;color:#94a3b8;line-height:1.7;max-width:500px;margin-bottom:12px">${d.description || ''}</p>
+                        <p style="font-size:13px;color:var(--text-secondary);line-height:1.7;max-width:500px;margin-bottom:12px">${d.description || ''}</p>
                         ${Components.RatingButtons(d.ticker, d.company_name, d.sector, d.current_price)}
                     </div>
                     <div style="text-align:right">
@@ -1297,11 +1311,11 @@ const app = {
             html += `</tr></thead><tbody>`;
 
             const addQrRow = (label, dataArr, yoyArr) => {
-                html += `<tr><td style="text-align:left;font-weight:600;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">${label}</td>`;
+                html += `<tr><td style="text-align:left;font-weight:600;padding:8px 0;border-bottom:1px solid rgba(15,23,42,0.06)">${label}</td>`;
                 dataArr.forEach((v, i) => {
                     const yoy = yoyArr ? yoyArr[i] : null;
                     const yoyHtml = yoy && yoy !== 'N/A' ? `<br><span style="font-size:10px;color:${yoy.startsWith('+') ? 'var(--green)' : 'var(--red)'}">${yoy} YoY</span>` : '';
-                    html += `<td style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">${v}${yoyHtml}</td>`;
+                    html += `<td style="padding:8px 0;border-bottom:1px solid rgba(15,23,42,0.06)">${v}${yoyHtml}</td>`;
                 });
                 html += `</tr>`;
             };
@@ -1321,8 +1335,8 @@ const app = {
             
             const addShRow = (label, dataArr) => {
                 if (!dataArr || dataArr[0] === 'N/A') return;
-                html += `<tr><td style="text-align:left;font-weight:600;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">${label}</td>`;
-                dataArr.forEach(v => html += `<td style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">${v}${v !== 'N/A' ? '%' : ''}</td>`);
+                html += `<tr><td style="text-align:left;font-weight:600;padding:8px 0;border-bottom:1px solid rgba(15,23,42,0.06)">${label}</td>`;
+                dataArr.forEach(v => html += `<td style="padding:8px 0;border-bottom:1px solid rgba(15,23,42,0.06)">${v}${v !== 'N/A' ? '%' : ''}</td>`);
                 html += `</tr>`;
             };
 
@@ -1337,7 +1351,7 @@ const app = {
             html += `
             <div class="card">
                 <div class="section-title">6-Month Price Action (Daily)</div>
-                <canvas id="stockCanvas-${d.ticker}" style="width:100%;height:320px;background:#0d1424;border-radius:6px"></canvas>
+                <canvas id="stockCanvas-${d.ticker}" style="width:100%;height:320px;background:#f8fafc;border-radius:6px"></canvas>
                 <div style="display:flex;gap:16px;margin-top:10px;font-size:11px;color:var(--text-secondary)">
                     <span><span style="display:inline-block;width:10px;height:10px;background:var(--green);border-radius:2px;margin-right:4px"></span>Bullish</span>
                     <span><span style="display:inline-block;width:10px;height:10px;background:var(--red);border-radius:2px;margin-right:4px"></span>Bearish</span>
@@ -1352,7 +1366,7 @@ const app = {
             html += `<div class="card"><div class="section-title">Recent News</div><div style="display:flex;flex-direction:column;gap:12px">`;
             d.news.slice(0, 5).forEach(n => {
                 html += `
-                <div style="padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.05)">
+                <div style="padding-bottom:12px;border-bottom:1px solid rgba(15,23,42,0.06)">
                     <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${n.headline}</div>
                     <div style="font-size:11px;color:var(--text-secondary)">
                         <span style="color:var(--text-accent)">${n.source}</span> • ${n.date}
@@ -1441,10 +1455,10 @@ const app = {
                 <div style="overflow-x:auto;">
                     <table style="width:100%; border-collapse:collapse; background:var(--bg-card); border-radius:8px; overflow:hidden;">
                         <thead>
-                            <tr style="background:rgba(255,255,255,0.05);">
+                            <tr style="background:rgba(15,23,42,0.06);">
                                 <th style="padding:10px;text-align:right;color:var(--text-secondary);">Call OI</th>
                                 <th style="padding:10px;text-align:right;color:var(--text-secondary);">LTP</th>
-                                <th style="padding:10px;text-align:center;color:white;background:rgba(255,255,255,0.1);">STRIKE</th>
+                                <th style="padding:10px;text-align:center;color:white;background:rgba(15,23,42,0.10);">STRIKE</th>
                                 <th style="padding:10px;text-align:left;color:var(--text-secondary);">LTP</th>
                                 <th style="padding:10px;text-align:left;color:var(--text-secondary);">Put OI</th>
                             </tr>
@@ -1454,12 +1468,12 @@ const app = {
                 
                 data.chain.forEach(row => {
                     const isAtm = Math.abs(row.strike - data.underlying) < 50;
-                    const bgRow = isAtm ? 'background:rgba(16, 185, 129, 0.15); font-weight:bold;' : 'border-bottom:1px solid rgba(255,255,255,0.05);';
+                    const bgRow = isAtm ? 'background:rgba(16, 185, 129, 0.15); font-weight:bold;' : 'border-bottom:1px solid rgba(15,23,42,0.06);';
                     html += `
                         <tr style="${bgRow}">
                             <td style="padding:10px;text-align:right;color:var(--red);">${row.ce_oi.toLocaleString()}</td>
                             <td style="padding:10px;text-align:right;">₹${row.ce_price.toFixed(1)}</td>
-                            <td style="padding:10px;text-align:center;background:rgba(255,255,255,0.05);">${row.strike}</td>
+                            <td style="padding:10px;text-align:center;background:rgba(15,23,42,0.06);">${row.strike}</td>
                             <td style="padding:10px;text-align:left;">₹${row.pe_price.toFixed(1)}</td>
                             <td style="padding:10px;text-align:left;color:var(--green);">${row.pe_oi.toLocaleString()}</td>
                         </tr>
@@ -1524,9 +1538,9 @@ const app = {
                     }
                     let h = '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px">Found <b style="color:var(--text-primary)">' + data.count + '</b> stock(s):</div>';
                     h += '<div style="max-height:220px;overflow:auto;border:1px solid var(--border-color);border-radius:8px"><table style="width:100%;font-size:12px;border-collapse:collapse">';
-                    h += '<thead><tr style="background:rgba(255,255,255,0.03)"><th style="text-align:left;padding:8px 12px;color:var(--text-secondary)">Ticker</th><th style="text-align:left;padding:8px 12px;color:var(--text-secondary)">Company</th><th style="text-align:right;padding:8px 12px;color:var(--text-secondary)">Rating</th></tr></thead><tbody>';
+                    h += '<thead><tr style="background:rgba(15,23,42,0.03)"><th style="text-align:left;padding:8px 12px;color:var(--text-secondary)">Ticker</th><th style="text-align:left;padding:8px 12px;color:var(--text-secondary)">Company</th><th style="text-align:right;padding:8px 12px;color:var(--text-secondary)">Rating</th></tr></thead><tbody>';
                     data.rows.forEach(r => {
-                        h += '<tr style="border-top:1px solid rgba(255,255,255,0.05)"><td style="padding:6px 12px;font-weight:700">' + (r.ticker || '') + '</td><td style="padding:6px 12px;color:var(--text-secondary)">' + (r.company_name || '') + '</td><td style="padding:6px 12px;text-align:right">' + (r.rating || '') + '</td></tr>';
+                        h += '<tr style="border-top:1px solid rgba(15,23,42,0.06)"><td style="padding:6px 12px;font-weight:700">' + (r.ticker || '') + '</td><td style="padding:6px 12px;color:var(--text-secondary)">' + (r.company_name || '') + '</td><td style="padding:6px 12px;text-align:right">' + (r.rating || '') + '</td></tr>';
                     });
                     h += '</tbody></table></div>';
                     box.innerHTML = h;
@@ -1730,8 +1744,8 @@ const app = {
                 const valHtml = (v && typeof v === 'object')
                     ? render(v)
                     : '<span style="font-weight:700;color:var(--text-primary)">'+fmtVal(v)+'</span>';
-                h += '<tr><td style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.05);color:var(--text-secondary);vertical-align:top;white-space:nowrap">'+esc(prettyKey(k))+'</td>'
-                   + '<td style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.05);text-align:right;vertical-align:top">'+valHtml+'</td></tr>';
+                h += '<tr><td style="padding:8px 12px;border-bottom:1px solid rgba(15,23,42,0.06);color:var(--text-secondary);vertical-align:top;white-space:nowrap">'+esc(prettyKey(k))+'</td>'
+                   + '<td style="padding:8px 12px;border-bottom:1px solid rgba(15,23,42,0.06);text-align:right;vertical-align:top">'+valHtml+'</td></tr>';
             });
             return h + '</table>';
         };
@@ -1739,7 +1753,7 @@ const app = {
             if (Array.isArray(val)) {
                 if (!val.length) return '<span style="color:var(--text-secondary)">—</span>';
                 return val.map(item => (item && typeof item === 'object')
-                    ? '<div style="margin-bottom:10px;padding:8px;background:#0d1424;border-radius:8px">'+kvTable(item)+'</div>'
+                    ? '<div style="margin-bottom:10px;padding:8px;background:#f8fafc;border-radius:8px">'+kvTable(item)+'</div>'
                     : '<div>'+fmtVal(item)+'</div>').join('');
             }
             if (val && typeof val === 'object') return kvTable(val);
@@ -1809,12 +1823,12 @@ const app = {
                     html += `
                     <div class="card">
                         <div class="section-title">Nifty 50 - Daily (Last 1 Year)</div>
-                        <canvas id="niftyCanvas" style="width:100%;height:320px;background:#0d1424;border-radius:6px"></canvas>
+                        <canvas id="niftyCanvas" style="width:100%;height:320px;background:#f8fafc;border-radius:6px"></canvas>
                         <div style="display:flex;gap:16px;margin-top:10px;font-size:11px;color:var(--text-secondary)">
                             <span><span style="display:inline-block;width:10px;height:10px;background:var(--green);border-radius:2px;margin-right:4px"></span>Bullish</span>
                             <span><span style="display:inline-block;width:10px;height:10px;background:var(--red);border-radius:2px;margin-right:4px"></span>Bearish</span>
                             <span><span style="display:inline-block;width:24px;height:2px;background:#f59e0b;vertical-align:middle;margin-right:4px"></span>21 EMA</span>
-                            <span><span style="display:inline-block;width:24px;height:2px;background:#818cf8;vertical-align:middle;margin-right:4px;border-top:2px dashed #818cf8"></span>200 DMA</span>
+                            <span><span style="display:inline-block;width:24px;height:2px;background:#6366f1;vertical-align:middle;margin-right:4px;border-top:2px dashed #818cf8"></span>200 DMA</span>
                         </div>
                     </div>`;
                 }
@@ -1828,7 +1842,7 @@ const app = {
                         <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">Expiry: ${d.expiry}</div>
                         <div style="font-size:32px;font-weight:800;color:${col}">${d.pcr}</div>
                         <div style="margin:8px 0">${Components.CheckRow('Signal', d.pcr > 1.2, d.signal, '')}</div>
-                        <div style="display:flex;justify-content:space-between;font-size:12px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.05)">
+                        <div style="display:flex;justify-content:space-between;font-size:12px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(15,23,42,0.06)">
                             <span style="color:var(--green)">PE OI: ${d.pe_oi.toLocaleString('en-IN')}</span>
                             <span style="color:var(--red)">CE OI: ${d.ce_oi.toLocaleString('en-IN')}</span>
                         </div>
@@ -1856,9 +1870,9 @@ const app = {
                     html += '</tr></thead><tbody>';
                     
                     const addVixRow = (label, curVal, clsVal, col) => {
-                        html += `<tr><td style="text-align:left;font-weight:600;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);color:${col}">${label}</td>`;
-                        html += `<td style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)">${curVal}</td>`;
-                        html += `<td style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);color:var(--text-secondary)">${clsVal}</td></tr>`;
+                        html += `<tr><td style="text-align:left;font-weight:600;padding:8px 0;border-bottom:1px solid rgba(15,23,42,0.06);color:${col}">${label}</td>`;
+                        html += `<td style="padding:8px 0;border-bottom:1px solid rgba(15,23,42,0.06)">${curVal}</td>`;
+                        html += `<td style="padding:8px 0;border-bottom:1px solid rgba(15,23,42,0.06);color:var(--text-secondary)">${clsVal}</td></tr>`;
                     };
                     addVixRow('Resistance 2', vl.current.r2, vl.close.r2, 'var(--red)');
                     addVixRow('Resistance 1', vl.current.r1, vl.close.r1, 'var(--red)');
@@ -1924,12 +1938,12 @@ const app = {
         const xOf = i => PAD.l + (i+0.5)*slot;
         const yOf = p => PAD.t + cH - ((p - minP)/rng)*cH;
 
-        ctx.font = '10px monospace'; ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.textAlign='left';
+        ctx.font = '10px monospace'; ctx.fillStyle = 'rgba(15,23,42,0.55)'; ctx.textAlign='left';
         
         // Horizontal grid lines
         for(let gi=0; gi<=5; gi++){
             let p = minP + (rng/5)*gi, y = yOf(p);
-            ctx.strokeStyle='rgba(255,255,255,0.05)'; ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(W-PAD.r, y); ctx.stroke();
+            ctx.strokeStyle='rgba(15,23,42,0.08)'; ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(W-PAD.r, y); ctx.stroke();
             ctx.fillText(Math.round(p), W-PAD.r+5, y+3);
         }
         
@@ -1954,7 +1968,7 @@ const app = {
         ohlcv.forEach((d,i) => i===0 ? ctx.moveTo(xOf(i), yOf(d.ema21)) : ctx.lineTo(xOf(i), yOf(d.ema21))); ctx.stroke();
         
         // DMA 200
-        ctx.strokeStyle = '#818cf8'; ctx.lineWidth = 1.2; ctx.setLineDash([5,4]); ctx.beginPath();
+        ctx.strokeStyle = '#6366f1'; ctx.lineWidth = 1.2; ctx.setLineDash([5,4]); ctx.beginPath();
         let s = false;
         ohlcv.forEach((d,i) => {
             if(!d.dma200) return;

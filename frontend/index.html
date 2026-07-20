@@ -6,17 +6,19 @@
     <title>Market Research Hub</title>
     <!-- PWA Meta Tags -->
     <link rel="manifest" href="manifest.json">
-    <meta name="theme-color" content="#0f172a">
+    <meta name="theme-color" content="#ffffff">
     <link rel="apple-touch-icon" href="icon-192.png">
     
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=22">
+    <link rel="stylesheet" href="style.css?v=23">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 
     <nav>
+        <button id="menu-toggle" aria-label="Open menu">☰</button>
         <span class="logo"><img src="logo.jpg" alt="Market Wisdom Logo" style="height: 32px; vertical-align: middle; margin-right: 8px;"> Market Wisdom</span>
+        <div class="nav-links" id="nav-links">
         <a href="#home" class="nav-btn active" data-target="home">🏠 Home</a>
         <a href="#global" class="nav-btn" data-target="global">🌍 Global Market</a>
         <a href="#war-news" class="nav-btn" data-target="war-news">📰 War News</a>
@@ -32,18 +34,20 @@
         <a href="#chartink" class="nav-btn" data-target="chartink">📋 Chartink Comparator</a>
         <a href="#nifty" class="nav-btn" data-target="nifty">📈 Nifty Analysis</a>
         <a href="#watchlist" class="nav-btn" data-target="watchlist">⭐ Watchlist</a>
+        </div>
         <span id="auth-slot" style="margin-left:auto;display:inline-flex;align-items:center"></span>
     </nav>
+    <div id="nav-overlay"></div>
 
     <div class="page" id="app-container">
         <!-- Views injected here by app.js -->
     </div>
 
     <!-- Scripts -->
-    <script src="api.js?v=22"></script>
-    <script src="auth.js?v=22"></script>
-    <script src="components.js?v=22"></script>
-    <script src="app.js?v=22"></script>
+    <script src="api.js?v=23"></script>
+    <script src="auth.js?v=23"></script>
+    <script src="components.js?v=23"></script>
+    <script src="app.js?v=23"></script>
 
     <!-- PWA Service Worker: register + auto-reload when a new version activates -->
     <script>

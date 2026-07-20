@@ -26,7 +26,7 @@ const Components = {
                     <span style="font-size:14px;font-weight:700;color:${col}">${val} - ${lbl}</span>
                     <span style="font-size:11px;color:var(--text-secondary)">Overbought 100</span>
                 </div>
-                <div style="height:10px;border-radius:5px;background:rgba(255,255,255,0.06);position:relative">
+                <div style="height:10px;border-radius:5px;background:rgba(15,23,42,0.06);position:relative">
                     <div style="position:absolute;left:0;width:30%;height:100%;background:rgba(34,197,94,0.13);border-radius:5px 0 0 5px"></div>
                     <div style="position:absolute;right:0;width:30%;height:100%;background:rgba(239,68,68,0.13);border-radius:0 5px 5px 0"></div>
                     <div style="position:absolute;top:-3px;left:calc(${v}% - 6px);width:12px;height:16px;background:${col};border-radius:3px"></div>
@@ -41,7 +41,7 @@ const Components = {
 
     CheckRow: (label, val, metric, note) => {
         const isY = val === true, isN = val === false;
-        const bg = isY ? 'rgba(34,197,94,0.07)' : isN ? 'rgba(239,68,68,0.07)' : 'rgba(255,255,255,0.02)';
+        const bg = isY ? 'rgba(34,197,94,0.07)' : isN ? 'rgba(239,68,68,0.07)' : 'rgba(15,23,42,0.03)';
         const bdr = isY ? '1px solid rgba(34,197,94,0.2)' : isN ? '1px solid rgba(239,68,68,0.2)' : '1px solid rgba(99,102,241,0.1)';
         const badge = isY 
             ? '<span class="badge badge-green">YES</span>' 
