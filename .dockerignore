@@ -1,0 +1,20 @@
+# Keep the production image small and free of scratch/experimental code.
+.git
+.github
+**/__pycache__/
+**/*.pyc
+*.db
+backend/*.db
+watchlist.db
+
+# Ad-hoc experiment scripts (not part of the app)
+test_*.py
+backend/test_*.py
+backend/check_models.py
+backend/models_list.txt
+
+# Local/dev tooling
+.venv
+venv
+.env
+*.log

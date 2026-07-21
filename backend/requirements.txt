@@ -1,9 +1,14 @@
 flask
 flask-cors
+flask-compress
+flask-limiter
 google-genai
 yfinance
 mplfinance
-playwright
+# Pin Playwright to the version baked into the Docker base image
+# (mcr.microsoft.com/playwright/python:v1.40.0-jammy) so the pip package and the
+# pre-installed browser binaries never drift apart.
+playwright==1.40.0
 waitress
 pymongo
 certifi
@@ -12,3 +17,4 @@ pandas
 lxml
 beautifulsoup4
 google-auth
+itsdangerous

@@ -1,7 +1,7 @@
 // Service worker — NETWORK-FIRST for HTML/JS/CSS so users never get stuck
 // on stale code after a deploy. Old cache-first strategy caused sign-in and
 // gating logic to run mixed versions across files.
-const CACHE_NAME = 'market-wisdom-v21';
+const CACHE_NAME = 'market-wisdom-v22';
 const urlsToCache = [
   '/', '/index.html', '/style.css', '/app.js',
   '/components.js', '/api.js', '/auth.js', '/manifest.json'
@@ -29,17 +29,44 @@ self.addEventListener('message', event => {
   if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
-// Fetch strategy — NETWORK-FIRST for HTML/JS/CSS; fall back to cache offline.
+// Fetch strategy:
+//  - Images/icons/fonts → CACHE-FIRST (they're versioned/static; serve instantly,
+//    no network round trip on repeat loads).
+//  - HTML/JS/CSS → NETWORK-FIRST but WITHOUT `cache: 'no-store'`, so the browser's
+//    HTTP cache + ETag/If-None-Match revalidation works (a 304 is far cheaper than
+//    re-downloading app.js/style.css on every load). Falls back to cache offline.
+const _isStaticAsset = (path) => /\.(png|jpg|jpeg|gif|svg|webp|ico|woff2?|ttf)$/i.test(path);
+
 self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  // Don't cache API or third-party (Google GSI, fonts, etc.) — pass through.
+  // Don't cache API or third-party (Google GSI, fonts CDN, etc.) — pass through.
   if (url.pathname.startsWith('/api/') || url.origin !== self.location.origin) return;
 
+  // Cache-first for static binary assets.
+  if (_isStaticAsset(url.pathname)) {
+    event.respondWith((async () => {
+      const cached = await caches.match(req);
+      if (cached) return cached;
+      try {
+        const fresh = await fetch(req);
+        if (fresh && fresh.status === 200 && fresh.type === 'basic') {
+          const clone = fresh.clone();
+          caches.open(CACHE_NAME).then(c => c.put(req, clone)).catch(() => {});
+        }
+        return fresh;
+      } catch (e) {
+        throw e;
+      }
+    })());
+    return;
+  }
+
+  // Network-first (with normal HTTP revalidation) for HTML/JS/CSS.
   event.respondWith((async () => {
     try {
-      const fresh = await fetch(req, { cache: 'no-store' });
+      const fresh = await fetch(req);
       if (fresh && fresh.status === 200 && fresh.type === 'basic') {
         const clone = fresh.clone();
         caches.open(CACHE_NAME).then(c => c.put(req, clone)).catch(() => {});

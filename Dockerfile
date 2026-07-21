@@ -11,7 +11,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install chromium
 
 # Copy the entire workspace into container to preserve the frontend/backend sibling structure
+# (.dockerignore keeps scratch test scripts, caches and local db files out of the image)
 COPY . /app
+
+# Run as a non-root user. The app launches Chromium on partially user-influenced input,
+# so we don't want any browser/scraper bug executing with root privileges.
+RUN useradd --create-home --uid 10001 appuser \
+    && chown -R appuser:appuser /app
+USER appuser
 
 # Switch to backend dir to run app.py
 WORKDIR /app/backend

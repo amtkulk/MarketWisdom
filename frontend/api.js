@@ -233,12 +233,19 @@ const api = {
     },
 
     async fetchTelegramFeed() {
+        // Telegram preview changes slowly; a 60s client cache makes tab switches instant.
+        const cacheKey = 'telegram_feed';
+        const cached = Cache.get(cacheKey);
+        if (cached) return cached;
+
         const res = await fetch(`${API_BASE_URL}/telegram_feed`);
         if (!res.ok) {
             let err;
             try { err = await res.json(); } catch(e) { throw new Error(`Server returned HTML or invalid JSON (Status: ${res.status}).`); }
             throw new Error(err.error || 'Failed to fetch Telegram Feed');
         }
-        return res.json();
+        const data = await res.json();
+        Cache.set(cacheKey, data, 1);
+        return data;
     }
 };

@@ -1,3 +1,13 @@
+// Global HTML-escaper. Any server-derived string (scraped Telegram text, Gemini
+// output, news headlines, company names) interpolated into innerHTML MUST go
+// through this to prevent stored/reflected XSS. Exposed on window so app.js can use it.
+function esc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+window.esc = esc;
+
 const Components = {
     RatingButtons: (ticker, company, sector, price, currentRating = null) => {
         const btnGoodClass = currentRating === 'good' ? 'active' : '';
@@ -49,13 +59,13 @@ const Components = {
             ? '<span class="badge" style="background:rgba(239,68,68,0.12);color:var(--red);border:1px solid rgba(239,68,68,0.3)">NO</span>' 
             : '<span class="badge" style="background:rgba(100,116,139,0.12);color:#94a3b8;border:1px solid rgba(100,116,139,0.3)">N/A</span>';
             
-        const mh = (metric && metric !== 'N/A') ? `<span style="color:#60a5fa;font-weight:600;margin-right:8px">${metric}</span>` : '';
-        const nh = (note && note !== 'N/A') ? `<div class="check-note">${note}</div>` : '';
-        
+        const mh = (metric && metric !== 'N/A') ? `<span style="color:#60a5fa;font-weight:600;margin-right:8px">${esc(metric)}</span>` : '';
+        const nh = (note && note !== 'N/A') ? `<div class="check-note">${esc(note)}</div>` : '';
+
         return `
             <div class="check-row" style="background:${bg};border:${bdr}">
                 <div>
-                    <div class="check-label">${label}</div>
+                    <div class="check-label">${esc(label)}</div>
                     ${nh}
                 </div>
                 <div style="display:flex;align-items:center;gap:8px">

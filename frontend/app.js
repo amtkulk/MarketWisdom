@@ -450,10 +450,10 @@ const app = {
                         <div class="card" style="border-left: 4px solid #2AABEE; padding:16px;">
                             <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
                                 <div style="font-weight:700; color:#2AABEE;">Market Wisdom</div>
-                                <div style="font-size:11px; color:var(--text-secondary);">${msg.timestamp.replace('+00:00', '')}</div>
+                                <div style="font-size:11px; color:var(--text-secondary);">${esc(String(msg.timestamp||'').replace('+00:00', ''))}</div>
                             </div>
-                            <div style="font-size:14px; line-height:1.6; color:var(--text-primary); white-space:pre-wrap;">${msg.text}</div>
-                            ${msg.link ? `<div style="margin-top:12px;text-align:right;"><a href="${msg.link}" target="_blank" style="font-size:12px; color:#2AABEE; text-decoration:none;">View on Telegram →</a></div>` : ''}
+                            <div style="font-size:14px; line-height:1.6; color:var(--text-primary); white-space:pre-wrap;">${esc(msg.text)}</div>
+                            ${msg.link && /^https?:\/\//.test(msg.link) ? `<div style="margin-top:12px;text-align:right;"><a href="${esc(msg.link)}" target="_blank" rel="noopener noreferrer" style="font-size:12px; color:#2AABEE; text-decoration:none;">View on Telegram →</a></div>` : ''}
                         </div>
                     `;
                 });
@@ -971,11 +971,11 @@ const app = {
                 <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px">
                     <div style="flex:1;min-width:240px">
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-                            <span style="font-size:20px;font-weight:800">${d.company_name || ''}</span>
-                            <span class="badge badge-blue">${d.ticker || ''}</span>
-                            <span style="font-size:11px;color:var(--text-secondary)">${d.sector || ''}</span>
+                            <span style="font-size:20px;font-weight:800">${esc(d.company_name)}</span>
+                            <span class="badge badge-blue">${esc(d.ticker)}</span>
+                            <span style="font-size:11px;color:var(--text-secondary)">${esc(d.sector)}</span>
                         </div>
-                        <p style="font-size:13px;color:var(--text-secondary);line-height:1.7;max-width:520px;margin-bottom:12px">${d.description || ''}</p>
+                        <p style="font-size:13px;color:var(--text-secondary);line-height:1.7;max-width:520px;margin-bottom:12px">${esc(d.description)}</p>
                         ${Components.RatingButtons(d.ticker, d.company_name, d.sector, d.current_price)}
                     </div>
                     <div style="text-align:right">
@@ -1088,9 +1088,9 @@ const app = {
             d.news.slice(0, 5).forEach(n => {
                 html += `
                 <div style="padding-bottom:12px;border-bottom:1px solid rgba(15,23,42,0.06)">
-                    <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${n.headline}</div>
+                    <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${esc(n.headline)}</div>
                     <div style="font-size:11px;color:var(--text-secondary)">
-                        <span style="color:var(--text-accent)">${n.source}</span> • ${n.date}
+                        <span style="color:var(--text-accent)">${esc(n.source)}</span> • ${esc(n.date)}
                     </div>
                 </div>`;
             });
@@ -1133,7 +1133,7 @@ const app = {
             resDiv.innerHTML = `
                 <div class="card" style="text-align:center;padding:40px">
                     <div class="big-spinner"></div>
-                    <div style="color:var(--text-accent);font-weight:600">Researching ${company}...</div>
+                    <div style="color:var(--text-accent);font-weight:600">Researching ${esc(company)}...</div>
                     <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">This takes 30-90 seconds. Gemini AI is thinking.</div>
                 </div>
             `;
@@ -1178,7 +1178,7 @@ const app = {
             resDiv.innerHTML = `
                 <div class="card" style="text-align:center;padding:40px">
                     <div class="big-spinner"></div>
-                    <div style="color:var(--text-accent);font-weight:600">Fetching Stock Action for ${company}...</div>
+                    <div style="color:var(--text-accent);font-weight:600">Fetching Stock Action for ${esc(company)}...</div>
                     <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">Using Gemini to summarize block deals and news.</div>
                 </div>
             `;
@@ -1203,8 +1203,8 @@ const app = {
             <div class="card" style="background:linear-gradient(135deg,rgba(245,158,11,0.1),rgba(16,185,129,0.05)); border-color:var(--border-color)">
                 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
                     <div>
-                        <div style="font-size:20px;font-weight:800">${company}</div>
-                        <div style="font-size:13px;color:var(--text-secondary);margin-top:4px">${ticker}</div>
+                        <div style="font-size:20px;font-weight:800">${esc(company)}</div>
+                        <div style="font-size:13px;color:var(--text-secondary);margin-top:4px">${esc(ticker)}</div>
                     </div>
                     <div style="text-align:right">
                         <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">P/E Ratio</div>
@@ -1219,7 +1219,7 @@ const app = {
             html += `
             <div class="card" style="border-color:rgba(16,185,129,0.2)">
                 <div class="section-title">⚡ Change of Hands & Deals</div>
-                <p style="font-size:14px;color:var(--text-primary);line-height:1.6">${d.action_summary}</p>
+                <p style="font-size:14px;color:var(--text-primary);line-height:1.6">${esc(d.action_summary)}</p>
             </div>`;
         }
 
@@ -1229,9 +1229,9 @@ const app = {
             d.news.slice(0, 10).forEach(n => {
                 html += `
                 <div style="padding-bottom:12px;border-bottom:1px solid rgba(15,23,42,0.06)">
-                    <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${n.headline}</div>
+                    <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${esc(n.headline)}</div>
                     <div style="font-size:11px;color:var(--text-secondary)">
-                        <span style="color:var(--text-accent)">${n.source}</span> • ${n.date}
+                        <span style="color:var(--text-accent)">${esc(n.source)}</span> • ${esc(n.date)}
                     </div>
                 </div>`;
             });
@@ -1253,11 +1253,11 @@ const app = {
                 <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px">
                     <div style="flex:1">
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-                            <span style="font-size:20px;font-weight:800">${d.company_name || ''}</span>
-                            <span class="badge badge-blue">${d.ticker || ''}</span>
-                            <span style="font-size:11px;color:var(--text-secondary)">${d.sector || ''}</span>
+                            <span style="font-size:20px;font-weight:800">${esc(d.company_name)}</span>
+                            <span class="badge badge-blue">${esc(d.ticker)}</span>
+                            <span style="font-size:11px;color:var(--text-secondary)">${esc(d.sector)}</span>
                         </div>
-                        <p style="font-size:13px;color:var(--text-secondary);line-height:1.7;max-width:500px;margin-bottom:12px">${d.description || ''}</p>
+                        <p style="font-size:13px;color:var(--text-secondary);line-height:1.7;max-width:500px;margin-bottom:12px">${esc(d.description)}</p>
                         ${Components.RatingButtons(d.ticker, d.company_name, d.sector, d.current_price)}
                     </div>
                     <div style="text-align:right">
@@ -1373,9 +1373,9 @@ const app = {
             d.news.slice(0, 5).forEach(n => {
                 html += `
                 <div style="padding-bottom:12px;border-bottom:1px solid rgba(15,23,42,0.06)">
-                    <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${n.headline}</div>
+                    <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${esc(n.headline)}</div>
                     <div style="font-size:11px;color:var(--text-secondary)">
-                        <span style="color:var(--text-accent)">${n.source}</span> • ${n.date}
+                        <span style="color:var(--text-accent)">${esc(n.source)}</span> • ${esc(n.date)}
                     </div>
                 </div>`;
             });
@@ -1611,15 +1611,15 @@ const app = {
                 return `
                     <tr>
                         <td>${i+1}</td>
-                        <td><b>${s.company_name}</b><br><span style="font-size:11px;color:var(--text-secondary)">${s.ticker}</span></td>
-                        <td>${s.sector}</td>
+                        <td><b>${esc(s.company_name)}</b><br><span style="font-size:11px;color:var(--text-secondary)">${esc(s.ticker)}</span></td>
+                        <td>${esc(s.sector)}</td>
                         <td>
-                            <div style="font-size:11px;color:var(--text-secondary)">Saved: Rs.${s.price}</div>
-                            <div style="font-weight:600;margin-top:2px">Live: Rs.${s.live_price}</div>
+                            <div style="font-size:11px;color:var(--text-secondary)">Saved: Rs.${esc(s.price)}</div>
+                            <div style="font-weight:600;margin-top:2px">Live: Rs.${esc(s.live_price)}</div>
                             ${livePriceHtml}
                         </td>
                         <td>${getRatingBadge(s.rating)}</td>
-                        <td><button onclick="app.removeWatchlist('${s.ticker}')" style="background:rgba(248,113,113,0.2);color:var(--red);border:none;padding:5px 10px;border-radius:5px;cursor:pointer;">Remove</button></td>
+                        <td><button onclick="app.removeWatchlist('${esc(String(s.ticker)).replace(/'/g, "\\'")}')" style="background:rgba(248,113,113,0.2);color:var(--red);border:none;padding:5px 10px;border-radius:5px;cursor:pointer;">Remove</button></td>
                     </tr>
                 `;
             });

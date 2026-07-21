@@ -1,6 +1,8 @@
 import os
 import json
 import time
+import logging
+import secrets as _secrets
 from datetime import datetime, date
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -8,11 +10,79 @@ from database import init_db, add_or_update_stock, delete_stock, get_all_stocks,
 from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logger = logging.getLogger("marketwisdom")
+
 app = Flask(__name__)
-# Enable CORS for all routes so the React frontend can talk to this API
-CORS(app)
+
+# ── CORS ────────────────────────────────────────────────────────────────────
+# Restrict to known frontend origins instead of the previous wide-open CORS(app).
+# Set ALLOWED_ORIGINS (comma-separated) on the host; falls back to localhost for dev.
+_allowed_origins = [
+    o.strip() for o in os.environ.get(
+        "ALLOWED_ORIGINS",
+        "http://localhost:5000,http://127.0.0.1:5000,http://localhost:3000",
+    ).split(",") if o.strip()
+]
+CORS(app, resources={r"/api/*": {"origins": _allowed_origins}}, supports_credentials=False)
+
+# ── Gzip compression ─────────────────────────────────────────────────────────
+# JSON payloads (1yr of OHLCV, screener tables) and static JS/CSS compress ~5-10x.
+try:
+    from flask_compress import Compress
+    Compress(app)
+except Exception as _e:  # pragma: no cover - optional dependency
+    logger.warning("flask-compress not available, responses will be uncompressed: %s", _e)
+
+# ── Rate limiting ────────────────────────────────────────────────────────────
+# The expensive/unauthenticated endpoints (Gemini LLM calls, Playwright launches,
+# full-market screener scans) could be hammered to run up API spend or exhaust the
+# thread pool. Per-IP limits blunt that without breaking normal use.
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    limiter = Limiter(
+        get_remote_address, app=app,
+        default_limits=["600 per hour", "120 per minute"],
+        storage_uri=os.environ.get("RATELIMIT_STORAGE_URI", "memory://"),
+        headers_enabled=True,
+    )
+except Exception as _e:  # pragma: no cover - optional dependency
+    limiter = None
+    logger.warning("flask-limiter not available, rate limiting disabled: %s", _e)
+
+
+def rate_limit(spec):
+    """Apply a Flask-Limiter limit if the library is installed, else no-op."""
+    def deco(fn):
+        return limiter.limit(spec)(fn) if limiter else fn
+    return deco
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "") # Fetch from environment (GitHub Secrets/App Runner Env)
+
+
+# ── Security headers ─────────────────────────────────────────────────────────
+@app.after_request
+def _set_security_headers(resp):
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    # CSP: allow self + Google Sign-In + the Inter web font. 'unsafe-inline' is
+    # required because the SPA uses inline styles/handlers; tighten once those move out.
+    resp.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://accounts.google.com https://apis.google.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self' https://accounts.google.com; "
+        "frame-src https://accounts.google.com; "
+        "frame-ancestors 'none'; base-uri 'self'",
+    )
+    return resp
+
 
 # Initialize SQLite database
 init_db()
@@ -27,10 +97,17 @@ init_db()
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
 APP_SECRET = os.environ.get("SECRET_KEY", "").strip()
 if not APP_SECRET:
-    # Fall back so dev still works, but sessions won't survive a redeploy
-    # and are NOT secure for production — set SECRET_KEY on the host.
-    APP_SECRET = (GEMINI_API_KEY or "mw-dev-secret-change-me")
-    print("[Auth] WARNING: SECRET_KEY env not set — set it in production.")
+    # No predictable fallback: deriving the signing key from GEMINI_API_KEY (shared
+    # with Google on every call) or a hardcoded literal made session/admin tokens
+    # forgeable. In production we fail fast; in dev we mint a random per-process key
+    # (sessions won't survive a restart, but they can never be forged).
+    if os.environ.get("FLASK_ENV") == "production" or os.environ.get("REQUIRE_SECRET_KEY") == "1":
+        raise RuntimeError(
+            "SECRET_KEY is required in production. Set it on the host before starting."
+        )
+    APP_SECRET = _secrets.token_hex(32)
+    logger.warning("[Auth] SECRET_KEY not set — using an ephemeral random key (dev only). "
+                   "Set SECRET_KEY on the host so sessions survive restarts.")
 
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 _auth_serializer = URLSafeTimedSerializer(APP_SECRET, salt="mw-auth-v1")
@@ -139,7 +216,8 @@ def api_admin_legacy_watchlist():
             conn.close()
         return jsonify({"count": len(rows), "rows": rows})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("legacy_watchlist failed: %s", e)
+        return jsonify({"error": "Could not load legacy watchlist."}), 500
 
 
 @app.route("/api/admin/import_legacy_watchlist", methods=["POST"])
@@ -181,7 +259,8 @@ def api_admin_import_legacy():
         return jsonify({"ok": True, "imported": imported,
                         "message": f"Imported {imported} stock(s) into {user['email']}'s watchlist."})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.exception("import_legacy_watchlist failed: %s", e)
+        return jsonify({"error": "Import failed."}), 500
 
 
 # ══════════════════════════════════════════════════════════════
@@ -201,6 +280,18 @@ import threading as _threading
 
 _cache_store = {}
 _cache_lock  = _threading.Lock()
+# Per-key locks so a cold/expired hot key is fetched by ONE thread while the
+# others wait for that result, instead of every Waitress thread hammering the
+# slow upstream (Gemini/NSE/yfinance) at once (cache-stampede / thundering herd).
+_cache_keylocks = {}
+
+def _keylock(key):
+    with _cache_lock:
+        lk = _cache_keylocks.get(key)
+        if lk is None:
+            lk = _threading.Lock()
+            _cache_keylocks[key] = lk
+        return lk
 
 def _is_empty_result(val):
     """Treat None, empty containers, {'error': ...}, and failed tuples as 'don't cache'."""
@@ -228,12 +319,22 @@ def cached(ttl_seconds, cache_empty=False):
                     value, ts = entry
                     if now - ts < ttl_seconds:
                         return value
-            # Compute outside the lock so slow fetches don't block other keys.
-            result = fn(*args, **kwargs)
-            if cache_empty or not _is_empty_result(result):
+            # Single-flight: only one thread computes a given key at a time.
+            with _keylock(key):
+                # Re-check: another thread may have populated it while we waited.
+                now = time.time()
                 with _cache_lock:
-                    _cache_store[key] = (result, now)
-            return result
+                    entry = _cache_store.get(key)
+                    if entry is not None:
+                        value, ts = entry
+                        if now - ts < ttl_seconds:
+                            return value
+                # Compute (this key's lock is held, but other keys run freely).
+                result = fn(*args, **kwargs)
+                if cache_empty or not _is_empty_result(result):
+                    with _cache_lock:
+                        _cache_store[key] = (result, now)
+                return result
         wrapper.__name__ = fn.__name__
         wrapper.__doc__  = fn.__doc__
         return wrapper
@@ -862,6 +963,9 @@ def resolve_ticker_gemini(company):
 
 
 def _scrape_chartink_playwright(url, max_pages=3):
+    ok, reason = _validate_chartink_url(url)
+    if not ok:
+        return [], reason
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -952,16 +1056,37 @@ def _scrape_chartink_playwright(url, max_pages=3):
     return list(dict.fromkeys(all_names)), None
 
 
+_CHARTINK_HOSTS = {"chartink.com", "www.chartink.com"}
+
+def _validate_chartink_url(url):
+    """Only allow https URLs pointing at chartink.com. Returns (ok, reason).
+    Prevents SSRF: without this, the endpoint would fetch ANY server-side URL
+    (cloud metadata at 169.254.169.254, localhost, internal services)."""
+    from urllib.parse import urlparse
+    try:
+        p = urlparse((url or "").strip())
+    except Exception:
+        return False, "invalid URL"
+    if p.scheme != "https":
+        return False, "URL must be https"
+    if (p.hostname or "").lower() not in _CHARTINK_HOSTS:
+        return False, "URL must be on chartink.com"
+    return True, None
+
+
 def scrape_chartink_http(url):
     """FAST path: run a saved Chartink screener via its JSON 'process' endpoint — no browser.
     Returns (names, None) on success, or ([], reason) so the caller can fall back."""
+    ok, reason = _validate_chartink_url(url)
+    if not ok:
+        return [], reason
     try:
         import re
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                           "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        r = cffi_requests.get(url, headers=headers, impersonate="chrome120", timeout=10)
+        r = cffi_requests.get(url, headers=headers, impersonate="chrome120", timeout=10, allow_redirects=False)
         if r.status_code != 200:
             return [], f"page status {r.status_code}"
         html = r.text
@@ -1523,6 +1648,7 @@ WAR_CONFLICTS = [
     {"key": "ukraine", "flag": "🇺🇦", "title": "Russia · Ukraine",        "query": "Russia Ukraine war when:7d",          "color": "#3b82f6"},
 ]
 
+@cached(90)             # headlines don't change per-second; 90s makes repeat opens instant
 def fetch_war_news_rss():
     """Live war news from Google News RSS — both conflicts fetched in parallel."""
     import concurrent.futures
@@ -1547,17 +1673,18 @@ def fetch_war_news_rss():
 
 @app.route('/api/war_news', methods=['GET'])
 def get_war_news():
-    # No server-side cache: the user wants the latest headlines on every open.
-    # Two parallel RSS pulls keep it fast (~1-2s).
+    # fetch_war_news_rss() is @cached(90): the first open pays the ~1-2s RSS pull,
+    # everyone within the next 90s gets it instantly. Headlines don't change per-second.
     return jsonify(fetch_war_news_rss())
 
+@cached(120)            # Telegram preview page barely changes minute-to-minute; 2 min
 def fetch_telegram_messages(channel_name="marketwisdom_official"):
     """Scrapes the public preview page of a Telegram channel."""
     url = f"https://t.me/s/{channel_name}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    
+
     try:
         res = cffi_requests.get(url, headers=headers, impersonate="chrome110", timeout=10)
         if res.status_code != 200:
@@ -1639,6 +1766,7 @@ def api_global_market():
 
 
 @app.route("/api/stock", methods=["POST"])
+@rate_limit("20 per minute")
 def api_stock():
     try:
         body    = request.get_json()
@@ -2090,6 +2218,7 @@ def _build_overview(ticker, company):
     return data
 
 @app.route("/api/stock_overview", methods=["POST"])
+@rate_limit("20 per minute")
 def api_stock_overview():
     try:
         body    = request.get_json() or {}
@@ -2111,6 +2240,7 @@ def api_stock_overview():
 
 
 @app.route("/api/stock_action", methods=["POST"])
+@rate_limit("20 per minute")
 def api_stock_action():
     try:
         body = request.get_json()
@@ -2331,6 +2461,7 @@ def api_nifty():
 
 
 @app.route("/api/chartink", methods=["POST"])
+@rate_limit("10 per minute")
 def api_chartink():
     body   = request.get_json()
     url1   = body.get("url1","").strip()
@@ -2408,6 +2539,7 @@ def _run_screener_background(market):
 
 
 @app.route("/api/screener/start", methods=["POST"])
+@rate_limit("6 per minute")
 def api_screener_start():
     """Start a background scan. Returns immediately."""
     market = request.args.get("market", "india").lower()
@@ -2453,82 +2585,36 @@ def api_screener_results():
 
 
 from flask import send_from_directory
+from werkzeug.utils import safe_join
 
-def fetch_telegram_messages(channel_name="marketwisdom_official"):
-    """Scrapes the public preview page of a Telegram channel."""
-    url = f"https://t.me/s/{channel_name}"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    
-    try:
-        res = cffi_requests.get(url, headers=headers, impersonate="chrome110", timeout=10, verify=False)
-        if res.status_code != 200:
-            return {"error": f"Failed to fetch Telegram channel (Status {res.status_code})"}
-            
-        soup = BeautifulSoup(res.content, "html.parser")
-        messages = []
-        
-        # Telegram preview page uses 'tgme_widget_message' class for each post
-        post_elements = soup.find_all("div", class_="tgme_widget_message")
-        
-        for post in post_elements:
-            # Extract text
-            text_el = post.find("div", class_="tgme_widget_message_text")
-            # Convert <br> to newlines for better JSON formatting
-            if text_el:
-                for br in text_el.find_all("br"):
-                    br.replace_with("\\n")
-                text = text_el.get_text().replace("\\n", "\n").strip()
-            else:
-                text = ""
-                
-            # Extract timestamp
-            time_el = post.find("time")
-            timestamp = time_el.get("datetime") if time_el else ""
-            
-            # Extract post link
-            link_el = post.find("a", class_="tgme_widget_message_date")
-            link = link_el.get("href") if link_el else ""
-            
-            # Skip empty messages without text
-            if not text:
-                continue
-                
-            messages.append({
-                "text": text,
-                "timestamp": timestamp,
-                "link": link
-            })
-            
-        # Return the last 20 messages in reverse chronological order (newest first)
-        messages.reverse()
-        return {
-            "channel": channel_name,
-            "messages": messages[:20],
-            "fetch_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-    except Exception as e:
-        return {"error": str(e)}
+# NOTE: the duplicate fetch_telegram_messages()/route that used to live here has
+# been removed. It shadowed the earlier definition (app.py ~line 1554) and — unlike
+# it — disabled TLS verification (verify=False), so the insecure version was the one
+# actually served. The single verifying, @cached copy above is now authoritative.
 
-@app.route("/api/telegram_feed")
-def api_telegram_feed():
-    # Use the public channel provided by the user
-    channel = "marketwisdom_official"
-    data = fetch_telegram_messages(channel)
-    return jsonify(data)
+@app.errorhandler(500)
+def _handle_500(e):
+    # Never leak stack traces / internal paths to clients; log them server-side.
+    logger.exception("Unhandled server error: %s", e)
+    return jsonify({"error": "Internal server error."}), 500
+
+
+_FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
 
 @app.route("/")
 def index():
-    return send_from_directory("../frontend", "index.html")
+    return send_from_directory(_FRONTEND_DIR, "index.html")
 
 @app.route("/<path:path>")
 def serve_frontend(path):
-    # Serve static file if it exists, otherwise fallback to index.html
-    static_path = os.path.join(os.path.dirname(__file__), "..", "frontend", path)
-    if os.path.exists(static_path) and os.path.isfile(static_path):
-        return send_from_directory(os.path.join("..", "frontend"), path)
-    return send_from_directory(os.path.join("..", "frontend"), "index.html")
+    # Serve static file if it exists, otherwise fall back to index.html (SPA routing).
+    # safe_join returns None for traversal attempts (../), so a raw os.path.exists
+    # probe can't be used as a filesystem existence oracle.
+    candidate = safe_join(_FRONTEND_DIR, path)
+    if candidate and os.path.isfile(candidate):
+        return send_from_directory(_FRONTEND_DIR, path)
+    return send_from_directory(_FRONTEND_DIR, "index.html")
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    # Never enable the Werkzeug debugger unless explicitly asked (RCE foot-gun).
+    app.run(debug=os.environ.get("FLASK_DEBUG") == "1", port=int(os.environ.get("PORT", 5000)))
