@@ -115,6 +115,46 @@ const api = {
         return data;
     },
 
+    _authH() { return (typeof Auth !== "undefined" ? Auth.headers() : {}); },
+
+    async chartinkRun(payload) {
+        const res = await fetch(`${API_BASE_URL}/chartink/run`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...this._authH() },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to start scan');
+        return data;
+    },
+
+    async chartinkStatus(mode) {
+        const res = await fetch(`${API_BASE_URL}/chartink/status?mode=${mode}`, { headers: this._authH(), cache: 'no-store' });
+        if (!res.ok) throw new Error('status failed');
+        return res.json();
+    },
+
+    async chartinkResults(mode) {
+        const res = await fetch(`${API_BASE_URL}/chartink/results?mode=${mode}`, { headers: this._authH(), cache: 'no-store' });
+        if (!res.ok) throw new Error('results failed');
+        return res.json();
+    },
+
+    async chartinkSaved() {
+        const res = await fetch(`${API_BASE_URL}/chartink/saved`, { headers: this._authH(), cache: 'no-store' });
+        if (!res.ok) throw new Error('saved failed');
+        return res.json();
+    },
+
+    async chartinkDeleteSaved(url) {
+        const res = await fetch(`${API_BASE_URL}/chartink/saved/delete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...this._authH() },
+            body: JSON.stringify({ url })
+        });
+        return res.json();
+    },
+
     async compareChartink(url1, label1, url2, label2) {
         const cacheKey = `chartink_${btoa(url1 + url2)}`;
         const cached = Cache.get(cacheKey);
@@ -233,19 +273,12 @@ const api = {
     },
 
     async fetchTelegramFeed() {
-        // Telegram preview changes slowly; a 60s client cache makes tab switches instant.
-        const cacheKey = 'telegram_feed';
-        const cached = Cache.get(cacheKey);
-        if (cached) return cached;
-
         const res = await fetch(`${API_BASE_URL}/telegram_feed`);
         if (!res.ok) {
             let err;
             try { err = await res.json(); } catch(e) { throw new Error(`Server returned HTML or invalid JSON (Status: ${res.status}).`); }
             throw new Error(err.error || 'Failed to fetch Telegram Feed');
         }
-        const data = await res.json();
-        Cache.set(cacheKey, data, 1);
-        return data;
+        return res.json();
     }
 };

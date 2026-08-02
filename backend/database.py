@@ -56,6 +56,15 @@ def init_db():
             )
         ''')
         cursor.execute('''
+            CREATE TABLE IF NOT EXISTS chartink_scanners (
+                user_id TEXT NOT NULL,
+                url TEXT NOT NULL,
+                name TEXT,
+                added_at TEXT,
+                PRIMARY KEY (user_id, url)
+            )
+        ''')
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 email TEXT PRIMARY KEY,
                 name TEXT, picture TEXT, google_sub TEXT, last_login TEXT
@@ -198,3 +207,46 @@ def get_screener_results(market):
         if row:
             return json.loads(row["results_json"]), row["updated_at"]
         return None, None
+
+
+def save_chartink_scanner(user_id, url, name=""):
+    """Upsert a saved Chartink scanner URL for a user."""
+    added_at = datetime.now().strftime("%d %b %Y  %H:%M")
+    if USE_MONGO:
+        db.get_collection("chartink_scanners").update_one(
+            {"user_id": user_id, "url": url},
+            {"$set": {"name": name, "added_at": added_at}},
+            upsert=True)
+    else:
+        conn = get_db_connection()
+        conn.execute("""
+            INSERT INTO chartink_scanners (user_id, url, name, added_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, url) DO UPDATE SET name=excluded.name
+        """, (user_id, url, name, added_at))
+        conn.commit()
+        conn.close()
+
+
+def get_chartink_scanners(user_id):
+    if USE_MONGO:
+        return list(db.get_collection("chartink_scanners")
+                    .find({"user_id": user_id}, {"_id": 0, "user_id": 0})
+                    .sort("added_at", -1))
+    conn = get_db_connection()
+    cur = conn.execute(
+        "SELECT url, name, added_at FROM chartink_scanners WHERE user_id = ? ORDER BY added_at DESC",
+        (user_id,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def delete_chartink_scanner(user_id, url):
+    if USE_MONGO:
+        db.get_collection("chartink_scanners").delete_one({"user_id": user_id, "url": url})
+    else:
+        conn = get_db_connection()
+        conn.execute("DELETE FROM chartink_scanners WHERE user_id = ? AND url = ?", (user_id, url))
+        conn.commit()
+        conn.close()

@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v24',
+    VERSION: 'v25',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -450,10 +450,10 @@ const app = {
                         <div class="card" style="border-left: 4px solid #2AABEE; padding:16px;">
                             <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
                                 <div style="font-weight:700; color:#2AABEE;">Market Wisdom</div>
-                                <div style="font-size:11px; color:var(--text-secondary);">${esc(String(msg.timestamp||'').replace('+00:00', ''))}</div>
+                                <div style="font-size:11px; color:var(--text-secondary);">${msg.timestamp.replace('+00:00', '')}</div>
                             </div>
-                            <div style="font-size:14px; line-height:1.6; color:var(--text-primary); white-space:pre-wrap;">${esc(msg.text)}</div>
-                            ${msg.link && /^https?:\/\//.test(msg.link) ? `<div style="margin-top:12px;text-align:right;"><a href="${esc(msg.link)}" target="_blank" rel="noopener noreferrer" style="font-size:12px; color:#2AABEE; text-decoration:none;">View on Telegram →</a></div>` : ''}
+                            <div style="font-size:14px; line-height:1.6; color:var(--text-primary); white-space:pre-wrap;">${msg.text}</div>
+                            ${msg.link ? `<div style="margin-top:12px;text-align:right;"><a href="${msg.link}" target="_blank" style="font-size:12px; color:#2AABEE; text-decoration:none;">View on Telegram →</a></div>` : ''}
                         </div>
                     `;
                 });
@@ -971,11 +971,11 @@ const app = {
                 <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px">
                     <div style="flex:1;min-width:240px">
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-                            <span style="font-size:20px;font-weight:800">${esc(d.company_name)}</span>
-                            <span class="badge badge-blue">${esc(d.ticker)}</span>
-                            <span style="font-size:11px;color:var(--text-secondary)">${esc(d.sector)}</span>
+                            <span style="font-size:20px;font-weight:800">${d.company_name || ''}</span>
+                            <span class="badge badge-blue">${d.ticker || ''}</span>
+                            <span style="font-size:11px;color:var(--text-secondary)">${d.sector || ''}</span>
                         </div>
-                        <p style="font-size:13px;color:var(--text-secondary);line-height:1.7;max-width:520px;margin-bottom:12px">${esc(d.description)}</p>
+                        <p style="font-size:13px;color:var(--text-secondary);line-height:1.7;max-width:520px;margin-bottom:12px">${d.description || ''}</p>
                         ${Components.RatingButtons(d.ticker, d.company_name, d.sector, d.current_price)}
                     </div>
                     <div style="text-align:right">
@@ -1088,9 +1088,9 @@ const app = {
             d.news.slice(0, 5).forEach(n => {
                 html += `
                 <div style="padding-bottom:12px;border-bottom:1px solid rgba(15,23,42,0.06)">
-                    <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${esc(n.headline)}</div>
+                    <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${n.headline}</div>
                     <div style="font-size:11px;color:var(--text-secondary)">
-                        <span style="color:var(--text-accent)">${esc(n.source)}</span> • ${esc(n.date)}
+                        <span style="color:var(--text-accent)">${n.source}</span> • ${n.date}
                     </div>
                 </div>`;
             });
@@ -1133,7 +1133,7 @@ const app = {
             resDiv.innerHTML = `
                 <div class="card" style="text-align:center;padding:40px">
                     <div class="big-spinner"></div>
-                    <div style="color:var(--text-accent);font-weight:600">Researching ${esc(company)}...</div>
+                    <div style="color:var(--text-accent);font-weight:600">Researching ${company}...</div>
                     <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">This takes 30-90 seconds. Gemini AI is thinking.</div>
                 </div>
             `;
@@ -1178,7 +1178,7 @@ const app = {
             resDiv.innerHTML = `
                 <div class="card" style="text-align:center;padding:40px">
                     <div class="big-spinner"></div>
-                    <div style="color:var(--text-accent);font-weight:600">Fetching Stock Action for ${esc(company)}...</div>
+                    <div style="color:var(--text-accent);font-weight:600">Fetching Stock Action for ${company}...</div>
                     <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">Using Gemini to summarize block deals and news.</div>
                 </div>
             `;
@@ -1203,8 +1203,8 @@ const app = {
             <div class="card" style="background:linear-gradient(135deg,rgba(245,158,11,0.1),rgba(16,185,129,0.05)); border-color:var(--border-color)">
                 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
                     <div>
-                        <div style="font-size:20px;font-weight:800">${esc(company)}</div>
-                        <div style="font-size:13px;color:var(--text-secondary);margin-top:4px">${esc(ticker)}</div>
+                        <div style="font-size:20px;font-weight:800">${company}</div>
+                        <div style="font-size:13px;color:var(--text-secondary);margin-top:4px">${ticker}</div>
                     </div>
                     <div style="text-align:right">
                         <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">P/E Ratio</div>
@@ -1219,7 +1219,7 @@ const app = {
             html += `
             <div class="card" style="border-color:rgba(16,185,129,0.2)">
                 <div class="section-title">⚡ Change of Hands & Deals</div>
-                <p style="font-size:14px;color:var(--text-primary);line-height:1.6">${esc(d.action_summary)}</p>
+                <p style="font-size:14px;color:var(--text-primary);line-height:1.6">${d.action_summary}</p>
             </div>`;
         }
 
@@ -1229,9 +1229,9 @@ const app = {
             d.news.slice(0, 10).forEach(n => {
                 html += `
                 <div style="padding-bottom:12px;border-bottom:1px solid rgba(15,23,42,0.06)">
-                    <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${esc(n.headline)}</div>
+                    <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${n.headline}</div>
                     <div style="font-size:11px;color:var(--text-secondary)">
-                        <span style="color:var(--text-accent)">${esc(n.source)}</span> • ${esc(n.date)}
+                        <span style="color:var(--text-accent)">${n.source}</span> • ${n.date}
                     </div>
                 </div>`;
             });
@@ -1253,11 +1253,11 @@ const app = {
                 <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px">
                     <div style="flex:1">
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-                            <span style="font-size:20px;font-weight:800">${esc(d.company_name)}</span>
-                            <span class="badge badge-blue">${esc(d.ticker)}</span>
-                            <span style="font-size:11px;color:var(--text-secondary)">${esc(d.sector)}</span>
+                            <span style="font-size:20px;font-weight:800">${d.company_name || ''}</span>
+                            <span class="badge badge-blue">${d.ticker || ''}</span>
+                            <span style="font-size:11px;color:var(--text-secondary)">${d.sector || ''}</span>
                         </div>
-                        <p style="font-size:13px;color:var(--text-secondary);line-height:1.7;max-width:500px;margin-bottom:12px">${esc(d.description)}</p>
+                        <p style="font-size:13px;color:var(--text-secondary);line-height:1.7;max-width:500px;margin-bottom:12px">${d.description || ''}</p>
                         ${Components.RatingButtons(d.ticker, d.company_name, d.sector, d.current_price)}
                     </div>
                     <div style="text-align:right">
@@ -1373,9 +1373,9 @@ const app = {
             d.news.slice(0, 5).forEach(n => {
                 html += `
                 <div style="padding-bottom:12px;border-bottom:1px solid rgba(15,23,42,0.06)">
-                    <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${esc(n.headline)}</div>
+                    <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">${n.headline}</div>
                     <div style="font-size:11px;color:var(--text-secondary)">
-                        <span style="color:var(--text-accent)">${esc(n.source)}</span> • ${esc(n.date)}
+                        <span style="color:var(--text-accent)">${n.source}</span> • ${n.date}
                     </div>
                 </div>`;
             });
@@ -1611,15 +1611,15 @@ const app = {
                 return `
                     <tr>
                         <td>${i+1}</td>
-                        <td><b>${esc(s.company_name)}</b><br><span style="font-size:11px;color:var(--text-secondary)">${esc(s.ticker)}</span></td>
-                        <td>${esc(s.sector)}</td>
+                        <td><b>${s.company_name}</b><br><span style="font-size:11px;color:var(--text-secondary)">${s.ticker}</span></td>
+                        <td>${s.sector}</td>
                         <td>
-                            <div style="font-size:11px;color:var(--text-secondary)">Saved: Rs.${esc(s.price)}</div>
-                            <div style="font-weight:600;margin-top:2px">Live: Rs.${esc(s.live_price)}</div>
+                            <div style="font-size:11px;color:var(--text-secondary)">Saved: Rs.${s.price}</div>
+                            <div style="font-weight:600;margin-top:2px">Live: Rs.${s.live_price}</div>
                             ${livePriceHtml}
                         </td>
                         <td>${getRatingBadge(s.rating)}</td>
-                        <td><button onclick="app.removeWatchlist('${esc(String(s.ticker)).replace(/'/g, "\\'")}')" style="background:rgba(248,113,113,0.2);color:var(--red);border:none;padding:5px 10px;border-radius:5px;cursor:pointer;">Remove</button></td>
+                        <td><button onclick="app.removeWatchlist('${s.ticker}')" style="background:rgba(248,113,113,0.2);color:var(--red);border:none;padding:5px 10px;border-radius:5px;cursor:pointer;">Remove</button></td>
                     </tr>
                 `;
             });
@@ -1655,8 +1655,9 @@ const app = {
         container.innerHTML = `
             <div style="margin-bottom:24px">
                 <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">📋 Chartink Comparator</h2>
-                <p style="font-size:13px;color:var(--text-secondary)">Paste two Chartink screener URLs to find common stocks.</p>
+                <p style="font-size:13px;color:var(--text-secondary)">Compare two screeners, or run a single one. Scans keep running in the background — navigate anywhere and come back for the result.</p>
             </div>
+
             <div class="card">
                 <div class="two-col" style="margin-bottom:12px">
                     <div>
@@ -1678,61 +1679,199 @@ const app = {
                 </div>
                 <button class="btn" id="btn-chartink">🔍 Compare Screeners</button>
             </div>
+            <div id="chartink-status" style="display:none"></div>
             <div id="chartink-result"></div>
+
+            <div style="margin-top:36px;margin-bottom:14px">
+                <h3 style="font-size:18px;font-weight:800;color:var(--text-primary);margin-bottom:2px">🔎 Run a Single Scanner</h3>
+                <p style="font-size:12px;color:var(--text-secondary)">Paste any Chartink screener link — or pick one of your saved scanners. Every scanner you run is saved to your account automatically.</p>
+            </div>
+            <div class="card">
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+                    <select id="saved-scanners" style="flex:1;min-width:200px;padding:12px 14px;border-radius:10px;border:1px solid rgba(79,70,229,0.3);background:#fff;color:var(--text-primary);font-size:14px;font-family:inherit">
+                        <option value="">— My saved scanners —</option>
+                    </select>
+                    <button id="btn-del-saved" title="Remove selected from saved" style="background:none;border:1px solid rgba(220,38,38,0.35);color:var(--red);border-radius:10px;padding:11px 14px;cursor:pointer;font-size:13px">🗑</button>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap">
+                    <input type="text" id="single-url" placeholder="https://chartink.com/screener/your-scanner" style="flex:2;min-width:220px"/>
+                    <button class="btn" id="btn-single-scan">🔎 Search</button>
+                </div>
+            </div>
+            <div id="single-status" style="display:none"></div>
+            <div id="single-result"></div>
         `;
-        document.getElementById('btn-chartink').addEventListener('click', async (e) => {
-            const btn = e.target;
-            const res = document.getElementById('chartink-result');
+
+        const esc = (s) => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        const timers = { compare: null, single: null };
+
+        const renderCompare = (data) => {
+            const el = document.getElementById('chartink-result');
+            if (!el) return;
+            const l1 = data.label1 || 'S1', l2 = data.label2 || 'S2';
+            let html = '<div class="stat-grid" style="margin-top:16px">';
+            html += Components.StatCard(`${l1} Total`, data.count1, '#2563eb');
+            html += Components.StatCard('Common', data.common_count, 'var(--green)');
+            html += Components.StatCard(`${l2} Total`, data.count2, '#9333ea');
+            html += '</div>';
+            const mkTable = (title, stocks, color) => {
+                let r = `<div class="card" style="padding:0;overflow:hidden"><div style="padding:12px 16px;font-weight:800;font-size:13px;color:${color}">${title} (${stocks.length})</div>`;
+                r += stocks.length
+                    ? '<div style="max-height:320px;overflow:auto"><table><tbody>' + stocks.map((s,i)=>`<tr><td style="width:34px;color:var(--text-secondary)">${i+1}</td><td style="color:${color};font-weight:600">${esc(s)}</td></tr>`).join('') + '</tbody></table></div>'
+                    : '<p style="padding:0 16px 14px;color:var(--text-secondary);font-size:13px">No stocks</p>';
+                return r + '</div>';
+            };
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px">';
+            html += mkTable('✅ Common', data.common || [], 'var(--green)');
+            html += mkTable(`Only in ${l1}`, data.only_in_1 || [], '#2563eb');
+            html += mkTable(`Only in ${l2}`, data.only_in_2 || [], '#9333ea');
+            html += '</div>';
+            html += `<div style="text-align:right;margin-top:10px;font-size:11px;color:var(--text-secondary);font-style:italic">Last scanned: ${esc(data.timestamp||'')}</div>`;
+            el.innerHTML = html;
+        };
+
+        const renderSingle = (data) => {
+            const el = document.getElementById('single-result');
+            if (!el) return;
+            let html = `<div class="card" style="margin-top:16px">
+                <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+                    <div style="font-weight:800;font-size:15px">${esc(data.name || 'Scanner')} <span style="color:var(--text-secondary);font-weight:600">— ${data.count} stock(s)</span></div>
+                    <a href="${esc(data.url)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--text-accent);text-decoration:none">open on Chartink ↗</a>
+                </div>`;
+            if (data.stocks && data.stocks.length) {
+                html += '<div style="display:flex;flex-wrap:wrap;gap:8px">';
+                data.stocks.forEach(s => {
+                    html += `<span style="background:rgba(79,70,229,0.08);border:1px solid rgba(79,70,229,0.2);color:var(--text-primary);font-weight:700;font-size:12px;padding:6px 12px;border-radius:18px">${esc(s)}</span>`;
+                });
+                html += '</div>';
+            } else {
+                html += '<div style="color:var(--text-secondary);font-size:13px">The scanner returned no stocks right now.</div>';
+            }
+            html += `<div style="text-align:right;margin-top:12px;font-size:11px;color:var(--text-secondary);font-style:italic">Last scanned: ${esc(data.timestamp||'')}</div>`;
+            html += '</div>';
+            el.innerHTML = html;
+        };
+
+        const ui = {
+            compare: { btn:'btn-chartink',    bar:'chartink-status', label:'🔍 Compare Screeners', render: renderCompare, msg:'Comparing screeners' },
+            single:  { btn:'btn-single-scan', bar:'single-status',   label:'🔎 Search',            render: renderSingle,  msg:'Running scanner' },
+        };
+
+        const setRunning = (mode, on, errText) => {
+            const u = ui[mode];
+            const btn = document.getElementById(u.btn);
+            const bar = document.getElementById(u.bar);
+            if (btn) { btn.disabled = on; btn.innerHTML = on ? '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Scanning...' : u.label; }
+            if (!bar) return;
+            if (on) {
+                bar.style.display = 'block';
+                bar.innerHTML = `<div class="card" style="padding:12px 16px;background:rgba(22,163,74,0.06);border-color:rgba(22,163,74,0.25);display:flex;align-items:center;gap:12px;margin-top:14px"><span class="spinner"></span><span style="color:var(--green);font-weight:600">${u.msg} in the background... You can navigate away — the result will be here when you return.</span></div>`;
+            } else if (errText) {
+                bar.style.display = 'block';
+                bar.innerHTML = `<div class="card" style="padding:12px 16px;border-color:var(--red);margin-top:14px"><span style="color:var(--red);font-weight:600">Scan failed: ${esc(errText)}</span></div>`;
+            } else {
+                bar.style.display = 'none';
+            }
+        };
+
+        const poll = (mode) => {
+            if (timers[mode]) clearInterval(timers[mode]);
+            setRunning(mode, true);
+            timers[mode] = setInterval(async () => {
+                try {
+                    const st = await api.chartinkStatus(mode);
+                    if (st.status === 'done') {
+                        clearInterval(timers[mode]); timers[mode] = null;
+                        setRunning(mode, false);
+                        const data = await api.chartinkResults(mode);
+                        if (!data.empty) ui[mode].render(data);
+                    } else if (st.status === 'error') {
+                        clearInterval(timers[mode]); timers[mode] = null;
+                        setRunning(mode, false, st.error || 'Unknown error');
+                    }
+                } catch (e) {}
+            }, 5000);
+        };
+
+        const resume = async (mode) => {
+            try {
+                const data = await api.chartinkResults(mode);
+                if (!data.empty) {
+                    ui[mode].render(data);
+                    if (mode === 'compare') {
+                        if (data.url1) document.getElementById('url1').value = data.url1;
+                        if (data.url2) document.getElementById('url2').value = data.url2;
+                        if (data.label1) document.getElementById('label1').value = data.label1;
+                        if (data.label2) document.getElementById('label2').value = data.label2;
+                    } else if (data.url) {
+                        document.getElementById('single-url').value = data.url;
+                    }
+                }
+            } catch (e) {}
+            try {
+                const st = await api.chartinkStatus(mode);
+                if (st.status === 'running') poll(mode);
+            } catch (e) {}
+        };
+
+        const loadSaved = async () => {
+            try {
+                const data = await api.chartinkSaved();
+                const sel = document.getElementById('saved-scanners');
+                if (!sel) return;
+                const cur = sel.value;
+                sel.innerHTML = '<option value="">— My saved scanners —</option>';
+                (data.scanners || []).forEach(s => {
+                    const o = document.createElement('option');
+                    o.value = s.url;
+                    o.textContent = `${s.name || 'Scanner'}  ·  ${s.url.replace('https://chartink.com/screener/','')}`;
+                    sel.appendChild(o);
+                });
+                if (cur) sel.value = cur;
+            } catch (e) {}
+        };
+
+        document.getElementById('btn-chartink').addEventListener('click', async () => {
             const u1 = document.getElementById('url1').value.trim();
             const u2 = document.getElementById('url2').value.trim();
-            const l1 = document.getElementById('label1').value.trim() || 'S1';
-            const l2 = document.getElementById('label2').value.trim() || 'S2';
-
-            if (!u1 || !u2) return alert("Please enter both URLs");
-            
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Scanning...';
-            res.innerHTML = `
-                <div class="card" style="text-align:center;padding:40px">
-                    <div class="big-spinner"></div>
-                    <div style="color:var(--text-accent);font-weight:600">Scanning Chartink...</div>
-                    <div style="color:var(--text-secondary);font-size:12px;margin-top:8px">This takes ~30 seconds to scrape pages</div>
-                </div>
-            `;
-
+            if (!u1 || !u2) return alert('Please enter both URLs');
             try {
-                const data = await api.compareChartink(u1, l1, u2, l2);
-                let html = '<div class="stat-grid" style="margin-top:16px">';
-                html += Components.StatCard(`${l1} Total`, data.count1, '#60a5fa');
-                html += Components.StatCard('Common', data.common_count, 'var(--green)');
-                html += Components.StatCard(`${l2} Total`, data.count2, '#c084fc');
-                html += '</div>';
-
-                const mkTable = (title, stocks, color) => {
-                    let r = stocks.length ? '<table><tbody>' : '<p style="padding:12px;color:var(--text-secondary)">No stocks</p>';
-                    if (stocks.length) {
-                        stocks.forEach((s, i) => r += `<tr><td style="width:30px;color:var(--text-secondary)">${i+1}</td><td style="color:${color};font-weight:600">${s}</td></tr>`);
-                        r += '</tbody></table>';
-                    }
-                    return `<div class="card" style="border-color:${color.replace('var(--','rgba(').replace(')','')}">` +
-                        `<div class="section-title" style="color:${color}">${title} <span class="badge">${stocks.length}</span></div>` +
-                        r + `</div>`;
-                };
-
-                html += mkTable('✅ Common Stocks', data.common || [], 'var(--green)');
-                html += '<div class="two-col">';
-                html += mkTable(`📋 Only in ${l1}`, data.only_in_1 || [], '#60a5fa');
-                html += mkTable(`📋 Only in ${l2}`, data.only_in_2 || [], '#c084fc');
-                html += '</div>';
-                
-                res.innerHTML = html;
-            } catch (err) {
-                res.innerHTML = `<div class="error">❌ ${err.message}</div>`;
-            } finally {
-                btn.disabled = false;
-                btn.textContent = '🔍 Compare Screeners';
-            }
+                await api.chartinkRun({ mode:'compare', url1:u1, url2:u2,
+                    label1: document.getElementById('label1').value.trim(),
+                    label2: document.getElementById('label2').value.trim() });
+                poll('compare');
+                loadSaved();
+            } catch (err) { alert('Failed to start: ' + err.message); }
         });
+
+        document.getElementById('btn-single-scan').addEventListener('click', async () => {
+            const url = document.getElementById('single-url').value.trim();
+            if (!url) return alert('Please paste a Chartink screener URL or pick a saved one');
+            try {
+                await api.chartinkRun({ mode:'single', url });
+                poll('single');
+                loadSaved();
+            } catch (err) { alert('Failed to start: ' + err.message); }
+        });
+
+        document.getElementById('saved-scanners').addEventListener('change', (e) => {
+            if (e.target.value) document.getElementById('single-url').value = e.target.value;
+        });
+
+        document.getElementById('btn-del-saved').addEventListener('click', async () => {
+            const sel = document.getElementById('saved-scanners');
+            if (!sel.value) return alert('Pick a saved scanner from the dropdown first');
+            if (!confirm('Remove this scanner from your saved list?')) return;
+            try { await api.chartinkDeleteSaved(sel.value); sel.value=''; loadSaved(); } catch (e) {}
+        });
+
+        document.getElementById('single-url').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') document.getElementById('btn-single-scan').click();
+        });
+
+        loadSaved();
+        resume('compare');
+        resume('single');
     },
 
     // Nifty Analysis Rendering
