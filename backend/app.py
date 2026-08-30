@@ -868,6 +868,7 @@ def _scrape_chartink_playwright(url, max_pages=3):
         return [], "Playwright not installed"
 
     all_names = []
+    all_rich = []
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -886,7 +887,7 @@ def _scrape_chartink_playwright(url, max_pages=3):
                 page.wait_for_selector("table.scan-results-table", timeout=30000)
             except Exception:
                 pass
-            
+
             # Click the Run Scan button to run the scan with live data
             try:
                 btn = page.locator("text='Run Scan'")
@@ -895,8 +896,27 @@ def _scrape_chartink_playwright(url, max_pages=3):
                     time.sleep(4)  # Wait for results to refresh
             except Exception:
                 pass
-            
+
             time.sleep(2)
+
+            # Read the header row once so we can locate the % change column by name.
+            header = page.evaluate(
+                "() => {"
+                "  const t = document.querySelector('table.scan-results-table');"
+                "  if (!t) return [];"
+                "  const h = t.querySelector('thead tr');"
+                "  if (!h) return [];"
+                "  return Array.from(h.querySelectorAll('th')).map(c => c.innerText.trim().toLowerCase());"
+                "}"
+            ) or []
+            def col_index(*keys):
+                for i, h in enumerate(header):
+                    if any(k in h for k in keys):
+                        return i
+                return None
+            idx_chg   = col_index("% chg", "chg %", "change", "per chg")
+            idx_price = col_index("price", "ltp", "close")
+            idx_sym   = col_index("symbol", "stock name", "nse", "name")
 
             for page_num in range(1, max_pages + 1):
                 rows_data = page.evaluate(
@@ -912,16 +932,32 @@ def _scrape_chartink_playwright(url, max_pages=3):
                     "}"
                 )
                 names = []
+                rich = []
                 for cells in (rows_data or []):
                     if len(cells) >= 2:
-                        name = cells[1].strip()
-                        if name and len(name) > 1:
-                            try: float(name)
-                            except ValueError: names.append(name)
+                        # Symbol column: use detected index, else fall back to cell[1]
+                        si = idx_sym if (idx_sym is not None and idx_sym < len(cells)) else 1
+                        name = cells[si].strip()
+                        if not name or len(name) <= 1:
+                            continue
+                        try:
+                            float(name); continue      # skip pure-number cells
+                        except ValueError:
+                            pass
+                        def _pct(v):
+                            try:
+                                return round(float(str(v).replace('%','').replace(',','').strip()), 2)
+                            except (TypeError, ValueError):
+                                return None
+                        per_chg = _pct(cells[idx_chg]) if (idx_chg is not None and idx_chg < len(cells)) else None
+                        close   = _pct(cells[idx_price]) if (idx_price is not None and idx_price < len(cells)) else None
+                        names.append(name)
+                        rich.append({"symbol": name, "name": name, "per_chg": per_chg, "close": close, "volume": None})
 
                 if not names:
                     break
                 all_names.extend(names)
+                all_rich.extend(rich)
 
                 if page_num >= max_pages:
                     break
@@ -947,9 +983,17 @@ def _scrape_chartink_playwright(url, max_pages=3):
 
             browser.close()
     except Exception as e:
-        return [], str(e)
+        return [], str(e), []
 
-    return list(dict.fromkeys(all_names)), None
+    # De-dupe preserving order
+    seen, names_u, rich_u = set(), [], []
+    for n, rr in zip(all_names, all_rich):
+        if n in seen:
+            continue
+        seen.add(n)
+        names_u.append(n)
+        rich_u.append(rr)
+    return names_u, None, rich_u
 
 
 def scrape_chartink_http(url):
@@ -1007,22 +1051,59 @@ def scrape_chartink_http(url):
             return [], f"process status {resp.status_code}"
         rows = (resp.json() or {}).get("data", []) or []
         names = []
+        rich = []
         for row in rows:
             sym = row.get("nsecode") or row.get("name") or row.get("bsecode")
-            if sym:
-                names.append(str(sym).strip())
-        return list(dict.fromkeys(names)), None
+            if not sym:
+                continue
+            sym = str(sym).strip()
+            names.append(sym)
+            # Chartink returns per_chg (% change) and close (LTP) per row.
+            def _num(v):
+                try:
+                    return round(float(v), 2)
+                except (TypeError, ValueError):
+                    return None
+            rich.append({
+                "symbol":  sym,
+                "name":    str(row.get("name") or sym).strip(),
+                "per_chg": _num(row.get("per_chg")),
+                "close":   _num(row.get("close")),
+                "volume":  row.get("volume"),
+            })
+        # De-dupe on symbol while preserving Chartink's native order.
+        seen, names_u, rich_u = set(), [], []
+        for n, rr in zip(names, rich):
+            if n in seen:
+                continue
+            seen.add(n)
+            names_u.append(n)
+            rich_u.append(rr)
+        return names_u, None, rich_u
     except Exception as e:
-        return [], str(e)
+        return [], str(e), []
+
+
+def scrape_chartink_rich(url, max_pages=3):
+    """Return (rich_rows, err) where rich_rows preserve Chartink's native order
+    and carry per-row % change and price. Fast HTTP path first, Playwright fallback."""
+    names, err, rich = scrape_chartink_http(url)
+    if names:
+        return rich, None
+    names, err, rich = _scrape_chartink_playwright(url, max_pages=max_pages)
+    if names:
+        return rich, None
+    return [], err
 
 
 def scrape_chartink(url, max_pages=3):
-    """Dispatcher: try the fast HTTP endpoint first; fall back to the Playwright scrape
-    only if HTTP returns nothing."""
-    names, err = scrape_chartink_http(url)
+    """Dispatcher (symbols only, for set math): try fast HTTP first, then Playwright.
+    Order-preserving, so callers that want native order can rely on it too."""
+    names, err, _rich = scrape_chartink_http(url)
     if names:
         return names, None
-    return _scrape_chartink_playwright(url, max_pages=max_pages)
+    names, err, _rich = _scrape_chartink_playwright(url, max_pages=max_pages)
+    return names, err
 
 
 _nse_cookie_cache = {"cookie": None, "ts": 0}
@@ -2395,11 +2476,13 @@ def api_chartink_run():
     def worker():
         try:
             if mode == "single":
-                names, err = scrape_chartink(payload["url"], 3)
-                if err:
+                rows, err = scrape_chartink_rich(payload["url"], 3)
+                if err and not rows:
                     raise Exception(err)
                 result = {"mode": "single", "url": payload["url"], "name": payload["name"],
-                          "stocks": sorted(names), "count": len(names)}
+                          "rows": rows,
+                          "stocks": [r["symbol"] for r in rows],   # kept for back-compat
+                          "count": len(rows)}
             else:
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:

@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v25',
+    VERSION: 'v26',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -1733,17 +1733,34 @@ const app = {
         const renderSingle = (data) => {
             const el = document.getElementById('single-result');
             if (!el) return;
+            const rows = data.rows || (data.stocks || []).map(s => ({ symbol: s, per_chg: null, close: null }));
             let html = `<div class="card" style="margin-top:16px">
                 <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:12px">
                     <div style="font-weight:800;font-size:15px">${esc(data.name || 'Scanner')} <span style="color:var(--text-secondary);font-weight:600">— ${data.count} stock(s)</span></div>
                     <a href="${esc(data.url)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--text-accent);text-decoration:none">open on Chartink ↗</a>
                 </div>`;
-            if (data.stocks && data.stocks.length) {
-                html += '<div style="display:flex;flex-wrap:wrap;gap:8px">';
-                data.stocks.forEach(s => {
-                    html += `<span style="background:rgba(79,70,229,0.08);border:1px solid rgba(79,70,229,0.2);color:var(--text-primary);font-weight:700;font-size:12px;padding:6px 12px;border-radius:18px">${esc(s)}</span>`;
+            if (rows.length) {
+                const fmtPct = (v) => (v === null || v === undefined) ? '—' : (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+                const fmtPr  = (v) => (v === null || v === undefined) ? '—' : '₹' + Number(v).toLocaleString('en-IN');
+                html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">';
+                html += '<thead><tr>'
+                     +  '<th style="text-align:left">#</th>'
+                     +  '<th style="text-align:left">Symbol</th>'
+                     +  '<th style="text-align:right">% Chg</th>'
+                     +  '<th style="text-align:right">Price</th>'
+                     +  '</tr></thead><tbody>';
+                rows.forEach((r, i) => {
+                    const c = (r.per_chg === null || r.per_chg === undefined) ? 'var(--text-secondary)'
+                              : (r.per_chg >= 0 ? 'var(--green)' : 'var(--red)');
+                    html += `<tr>
+                        <td style="color:var(--text-secondary);width:34px">${i+1}</td>
+                        <td style="font-weight:700;color:var(--text-primary)">${esc(r.symbol)}</td>
+                        <td style="text-align:right;font-weight:700;color:${c}">${fmtPct(r.per_chg)}</td>
+                        <td style="text-align:right;color:#334155">${fmtPr(r.close)}</td>
+                    </tr>`;
                 });
-                html += '</div>';
+                html += '</tbody></table></div>';
+                html += '<div style="font-size:11px;color:var(--text-secondary);margin-top:8px">Shown in the scanner\u2019s own order, with the % change at scan time.</div>';
             } else {
                 html += '<div style="color:var(--text-secondary);font-size:13px">The scanner returned no stocks right now.</div>';
             }
