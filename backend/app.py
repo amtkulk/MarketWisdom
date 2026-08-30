@@ -865,7 +865,7 @@ def _scrape_chartink_playwright(url, max_pages=3):
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        return [], "Playwright not installed"
+        return [], "Playwright not installed", []
 
     all_names = []
     all_rich = []
@@ -1007,12 +1007,12 @@ def scrape_chartink_http(url):
         }
         r = cffi_requests.get(url, headers=headers, impersonate="chrome120", timeout=10)
         if r.status_code != 200:
-            return [], f"page status {r.status_code}"
+            return [], f"page status {r.status_code}", []
         html = r.text
 
         m = re.search(r'name="csrf-token"\s+content="([^"]+)"', html)
         if not m:
-            return [], "no csrf token"
+            return [], "no csrf token", []
         csrf = m.group(1)
 
         clause = None
@@ -1026,7 +1026,7 @@ def scrape_chartink_http(url):
                 clause = mm.group(1)
                 break
         if not clause:
-            return [], "no scan clause"
+            return [], "no scan clause", []
         # Unescape HTML entities and backslash escapes
         clause = clause.replace("&quot;", '"').replace("&amp;", "&")
         try:
@@ -1048,7 +1048,7 @@ def scrape_chartink_http(url):
             cookies=r.cookies, impersonate="chrome120", timeout=15,
         )
         if resp.status_code != 200:
-            return [], f"process status {resp.status_code}"
+            return [], f"process status {resp.status_code}", []
         rows = (resp.json() or {}).get("data", []) or []
         names = []
         rich = []
