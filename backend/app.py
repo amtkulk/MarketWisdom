@@ -2924,7 +2924,7 @@ def _run_screener_background(market):
 def api_screener_start():
     """Start a background scan. Returns immediately."""
     market = request.args.get("market", "india").lower()
-    if market not in ("india", "us", "india_next500", "india_master", "india_smallmid_master", "india_microcap", "india_hidden_gems"):
+    if market not in ("india", "us", "india_next500", "india_master", "india_smallmid_master", "india_microcap", "india_hidden_gems", "india_wyckoff"):
         return jsonify({"error": "Invalid market."}), 400
 
     with _screener_lock:
@@ -2953,7 +2953,7 @@ def api_screener_status():
 def api_screener_results():
     """Get last saved results from the database."""
     market = request.args.get("market", "india").lower()
-    if market not in ("india", "us", "india_next500", "india_master", "india_smallmid_master", "india_microcap", "india_hidden_gems"):
+    if market not in ("india", "us", "india_next500", "india_master", "india_smallmid_master", "india_microcap", "india_hidden_gems", "india_wyckoff"):
         return jsonify({"error": "Invalid market."}), 400
 
     data, updated_at = get_screener_results(market)
@@ -3034,6 +3034,32 @@ def api_telegram_feed():
 @app.route("/")
 def index():
     return send_from_directory("../frontend", "index.html")
+
+
+@app.route("/privacy")
+def privacy_alias():
+    return send_from_directory("../frontend", "privacy.html")
+
+
+@app.route("/.well-known/assetlinks.json")
+def assetlinks():
+    return send_from_directory(os.path.join("..", "frontend", ".well-known"),
+                               "assetlinks.json", mimetype="application/json")
+
+
+@app.route("/ads.txt")
+def ads_txt():
+    return send_from_directory("../frontend", "ads.txt", mimetype="text/plain")
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    return send_from_directory("../frontend", "robots.txt", mimetype="text/plain")
+
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    return send_from_directory("../frontend", "sitemap.xml", mimetype="application/xml")
 
 @app.route("/<path:path>")
 def serve_frontend(path):

@@ -341,6 +341,9 @@ def run_screener(market="india"):
     if market == "india_hidden_gems":
         return run_hidden_gems_screener()
 
+    if market == "india_wyckoff":
+        return run_wyckoff_screener()
+
     if market == "us":
         tickers = get_sp500_tickers()
         label   = "S&P 500"
@@ -479,7 +482,10 @@ def _macd_bullish(closes):
 
 
 def _bulk_download_ohlc(tickers, period="1y"):
-    """Batched 1-y daily download returning {ticker: [(date, close, volume, high), ...]}."""
+    """Batched 1-y daily download returning
+    {ticker: [(date, close, volume, high, low), ...]}.
+    Index 4 (low) was added for the Wyckoff scanner; all earlier callers use
+    only indices 0-3 (date, close, volume, high), so appending low is safe."""
     import yfinance as yf
     out = {}
     if not tickers:
@@ -496,11 +502,14 @@ def _bulk_download_ohlc(tickers, period="1y"):
             closes = sub["Close"]
             vols = sub["Volume"]
             highs = sub["High"]
+            lows = sub["Low"]
             for idx in sub.index:
                 c, v, h = closes.get(idx), vols.get(idx), highs.get(idx)
+                lo = lows.get(idx)
                 if c == c and v == v:          # NaN check
                     rows.append((idx.to_pydatetime(), float(c), float(v),
-                                 float(h) if h == h else float(c)))
+                                 float(h) if h == h else float(c),
+                                 float(lo) if lo == lo else float(c)))
             return rows
         except Exception:
             return []
@@ -1205,6 +1214,240 @@ def run_hidden_gems_screener():
     print(f"[HiddenGems] Done in {elapsed}s — {len(results)} gems")
     return {
         "market": "Hidden Gems",
+        "total_scanned": total,
+        "total_passed": len(candidates),
+        "results": results,
+        "scan_time_seconds": elapsed,
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+#  WYCKOFF MOMENTUM SCANNER  (Nifty 1000)
+#  Operationalizes Wyckoff's phases from OHLCV:
+#    ACCUMULATION — a multi-week TIGHT range on DECLINING volume after a prior
+#      decline; big money quietly absorbing supply (the "cause").
+#    SPRING       — a recent dip BELOW the base low that reclaimed it fast (the
+#      shakeout of weak holders) — a high-probability pre-markup trigger.
+#    EARLY MARKUP — price BREAKING OUT of the base on volume >= 1.5x average,
+#      closing in the top of the day's range (demand > supply), and not yet
+#      extended far past the breakout (so we catch the move near its start).
+#  Laws applied: Supply/Demand (close position + volume), Cause/Effect (base
+#  length), Effort vs Result (volume vs price progress).
+#  Runs on BOTH daily (swing) and weekly (position) candles; each stock shows
+#  which timeframe(s) fired.
+# ══════════════════════════════════════════════════════════════
+
+def _weekly_from_daily(rows):
+    """Collapse daily (date,close,vol,high,low) into weekly bars by ISO week."""
+    if not rows:
+        return []
+    weeks = {}
+    order = []
+    for (dt_, c, v, h, lo) in rows:
+        key = (dt_.isocalendar()[0], dt_.isocalendar()[1])
+        if key not in weeks:
+            weeks[key] = {"o_close": c, "close": c, "vol": 0.0, "high": h, "low": lo, "dt": dt_}
+            order.append(key)
+        wk = weeks[key]
+        wk["close"] = c
+        wk["vol"] += v
+        wk["high"] = max(wk["high"], h)
+        wk["low"] = min(wk["low"], lo)
+        wk["dt"] = dt_
+    return [(weeks[k]["dt"], weeks[k]["close"], weeks[k]["vol"],
+             weeks[k]["high"], weeks[k]["low"]) for k in order]
+
+
+def _wyckoff_analyze(bars, base_len, min_bars):
+    """Detect Wyckoff phase on a bar series (daily or weekly).
+    bars: [(date, close, vol, high, low), ...]  oldest->newest.
+    Returns dict {phase, score, detail...} or None if nothing fires."""
+    n = len(bars)
+    if n < min_bars:
+        return None
+    closes = [b[1] for b in bars]
+    vols   = [b[2] for b in bars]
+    highs  = [b[3] for b in bars]
+    lows   = [b[4] for b in bars]
+    price  = closes[-1]
+
+    # ---- define the "base" as the window just BEFORE the latest few bars ----
+    # base window: bars [-(base_len+3) : -3]   (leave last 3 for breakout read)
+    if n < base_len + 6:
+        return None
+    base = slice(n - base_len - 3, n - 3)
+    base_highs = highs[base]; base_lows = lows[base]; base_vols = vols[base]
+    base_closes = closes[base]
+    base_hi = max(base_highs); base_lo = min(base_lows)
+    if base_hi <= 0 or base_lo <= 0:
+        return None
+
+    # Range tightness: (hi-lo)/lo over the base. Tight = good accumulation.
+    rng_pct = (base_hi - base_lo) / base_lo * 100
+    # Prior trend: compare base midpoint to the 20 bars before the base (want
+    # a prior decline or sideways, i.e. not already extended up).
+    pre = slice(max(0, n - base_len - 23), n - base_len - 3)
+    pre_closes = closes[pre] if (n - base_len - 23) >= 0 else base_closes
+    prior_move = (base_closes[0] - (pre_closes[0] if pre_closes else base_closes[0]))
+
+    # Volume dry-up in the base: base avg vol vs the pre-base avg vol.
+    base_avg_v = sum(base_vols) / len(base_vols) if base_vols else 0
+    pre_vols = vols[pre] if (n - base_len - 23) >= 0 else base_vols
+    pre_avg_v = sum(pre_vols) / len(pre_vols) if pre_vols else base_avg_v
+    vol_dryup = (base_avg_v < pre_avg_v) if pre_avg_v else False
+
+    last = bars[-1]
+    last_close, last_vol, last_high, last_low = last[1], last[2], last[3], last[4]
+    vol20 = sum(vols[-20:]) / min(20, len(vols))
+    # Close position within the last bar's range (1 = closed at high).
+    rng = (last_high - last_low) or 1e-9
+    close_pos = (last_close - last_low) / rng
+
+    phase = None
+    score = 0
+    detail = {
+        "base_len": base_len, "range_pct": round(rng_pct, 1),
+        "base_hi": round(base_hi, 2), "base_lo": round(base_lo, 2),
+        "vol_vs_avg": round(last_vol / vol20, 2) if vol20 else None,
+        "vol_dryup": vol_dryup,
+    }
+
+    tight = rng_pct <= 22          # base no wider than ~22%
+    # ---- EARLY MARKUP: breakout above base high on effort, not extended ----
+    if (tight and last_close > base_hi and close_pos >= 0.55
+            and vol20 and last_vol >= 1.5 * vol20):
+        ext = (last_close - base_hi) / base_hi * 100      # how far past breakout
+        if ext <= 12:                                     # still early
+            phase = "markup"
+            score = 55
+            score += 12 if vol_dryup else 0               # textbook dry-up then surge
+            score += min(15, (last_vol / vol20 - 1.5) * 10)  # extra volume thrust
+            score += 8 if close_pos >= 0.8 else 0
+            score += max(0, 8 - ext)                      # earlier = better
+            detail["breakout_ext_pct"] = round(ext, 1)
+
+    # ---- SPRING: recent dip below base low that reclaimed it ----
+    if phase is None and tight:
+        recent_low = min(lows[-4:])
+        if recent_low < base_lo and last_close > base_lo and close_pos >= 0.5:
+            phase = "spring"
+            score = 48
+            score += 12 if vol_dryup else 0
+            score += 10 if close_pos >= 0.75 else 0
+            score += max(0, 10 - rng_pct * 0.3)
+            detail["spring_undercut_pct"] = round((base_lo - recent_low) / base_lo * 100, 1)
+
+    # ---- ACCUMULATION: still inside a tight, dried-up base ----
+    if phase is None and tight and vol_dryup and prior_move <= 0:
+        # price sitting in the upper half of the base = coiling toward breakout
+        pos_in_base = (last_close - base_lo) / ((base_hi - base_lo) or 1e-9)
+        if 0.35 <= pos_in_base <= 1.02:
+            phase = "accumulation"
+            score = 38
+            score += max(0, 12 - rng_pct * 0.4)           # tighter = better cause
+            score += 8 * pos_in_base                       # nearer the top = readier
+            detail["pos_in_base"] = round(pos_in_base, 2)
+
+    if phase is None:
+        return None
+    detail["phase"] = phase
+    detail["score"] = round(min(score, 100), 1)
+    return detail
+
+
+def run_wyckoff_screener():
+    """Wyckoff momentum scan over Nifty 1000 on daily + weekly timeframes."""
+    import time
+    start = time.time()
+    try:
+        tickers = get_nifty1000_tickers()
+    except Exception:
+        tickers = []
+    total = len(tickers)
+    print(f"[Wyckoff] Scanning {total} Nifty-1000 stocks (daily + weekly)")
+
+    price_data = {}
+    CHUNK = 100
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+        futs = [ex.submit(_bulk_download_ohlc, tickers[i:i+CHUNK], "2y")
+                for i in range(0, total, CHUNK)]
+        for f in concurrent.futures.as_completed(futs):
+            try:
+                price_data.update(f.result() or {})
+            except Exception:
+                pass
+
+    PHASE_LABEL = {"markup": "🚀 Early Markup", "spring": "🪤 Spring",
+                   "accumulation": "🏗️ Accumulation"}
+    PHASE_RANK  = {"markup": 3, "spring": 2, "accumulation": 1}
+
+    candidates = []
+    for t, rows in price_data.items():
+        if len(rows) < 120:
+            continue
+        closes = [r[1] for r in rows]
+        price = closes[-1]
+        # Liquidity floor (turnover > 1 Cr), same spirit as other scanners
+        vol20 = sum(r[2] for r in rows[-20:]) / 20
+        if vol20 * price < 1e7:
+            continue
+
+        daily = _wyckoff_analyze(rows, base_len=30, min_bars=90)          # ~6-week base
+        weekly_bars = _weekly_from_daily(rows)
+        weekly = _wyckoff_analyze(weekly_bars, base_len=12, min_bars=30)  # ~12-week base
+
+        if not daily and not weekly:
+            continue
+
+        # Combined: prefer the stronger phase; confluence (both fire) is gold.
+        tfs = {}
+        if daily:  tfs["daily"] = daily
+        if weekly: tfs["weekly"] = weekly
+        # pick the "headline" phase = highest PHASE_RANK across timeframes
+        headline = max(tfs.values(), key=lambda d: (PHASE_RANK[d["phase"]], d["score"]))
+        combo = headline["score"]
+        if daily and weekly:
+            combo += 10                                   # multi-timeframe confluence
+        if daily and weekly and daily["phase"] == weekly["phase"]:
+            combo += 6                                    # same phase both = strong
+        candidates.append({
+            "ticker": t, "sym": t.replace(".NS", "").replace(".BO", ""),
+            "price": round(price, 2),
+            "headline_phase": headline["phase"],
+            "daily": daily, "weekly": weekly,
+            "wyckoff_score": round(min(combo, 100), 1),
+            "tf": "+".join(tfs.keys()),
+        })
+
+    candidates.sort(key=lambda c: (PHASE_RANK[c["headline_phase"]], c["wyckoff_score"]),
+                    reverse=True)
+    top = candidates[:20]
+
+    results = []
+    for i, c in enumerate(top):
+        d = c["daily"] or {}; w = c["weekly"] or {}
+        results.append({
+            "rank": i + 1, "ticker": c["sym"], "price": c["price"],
+            "wyckoff_score": c["wyckoff_score"],
+            "phase": PHASE_LABEL[c["headline_phase"]],
+            "phase_key": c["headline_phase"],
+            "timeframes": c["tf"],
+            "daily_phase": PHASE_LABEL.get(d.get("phase")) if d else None,
+            "weekly_phase": PHASE_LABEL.get(w.get("phase")) if w else None,
+            "range_pct": (d or w).get("range_pct"),
+            "vol_vs_avg": (d or w).get("vol_vs_avg"),
+            "vol_dryup": (d or w).get("vol_dryup"),
+            "base_hi": (d or w).get("base_hi"),
+            "base_lo": (d or w).get("base_lo"),
+            "breakout_ext_pct": (d or w).get("breakout_ext_pct"),
+            "spring_undercut_pct": (d or w).get("spring_undercut_pct"),
+        })
+
+    elapsed = round(time.time() - start, 1)
+    print(f"[Wyckoff] {len(price_data)} priced, {len(candidates)} matched, "
+          f"top {len(results)} in {elapsed}s")
+    return {
+        "market": "Wyckoff Momentum",
         "total_scanned": total,
         "total_passed": len(candidates),
         "results": results,

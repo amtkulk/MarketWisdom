@@ -3,12 +3,15 @@
  */
 
 const app = {
-    VERSION: 'v29',
+    VERSION: 'v31',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
     GATE_ENABLED: true,
-    PUBLIC_ROUTES: new Set(['home']),
+    // Public (no sign-in) so the AdSense crawler + search engines see real
+    // content, and casual visitors get value before signing up. Personal/compute
+    // -heavy pages (watchlist, screeners, overview, chartink) stay gated.
+    PUBLIC_ROUTES: new Set(['home', 'global', 'heatmap', 'war-news', 'about', 'contact', 'disclaimer']),
 
     setupMobileMenu() {
         const toggle  = document.getElementById('menu-toggle');
@@ -99,7 +102,7 @@ const app = {
         }
         const label = ({
             global: 'Global Market', 'war-news': 'War News', telegram: 'Telegram Feed',
-            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', stock: 'Stock Research',
+            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', wyckoff: 'Wyckoff Momentum', stock: 'Stock Research',
             overview: 'Stock Overview', action: 'Stock Action', heatmap: 'Indices Heatmap', chartink: 'Chartink Comparator',
             nifty: 'Nifty Analysis', watchlist: 'Watchlist',
         })[attemptedRoute] || 'this page';
@@ -181,6 +184,9 @@ const app = {
             case 'gems':
                 this.renderHiddenGems(container);
                 break;
+            case 'wyckoff':
+                this.renderWyckoff(container);
+                break;
             case 'stock':
                 this.renderStock(container);
                 break;
@@ -202,14 +208,53 @@ const app = {
             case 'watchlist':
                 this.renderWatchlist(container);
                 break;
+            case 'about':
+                this.renderInfoPage(container, 'about');
+                break;
+            case 'contact':
+                this.renderInfoPage(container, 'contact');
+                break;
+            case 'disclaimer':
+                this.renderInfoPage(container, 'disclaimer');
+                break;
             default:
                 this.renderHome(container);
         }
     },
 
-    // -------------------------------------------------------------
-    // VIEWS
-    // -------------------------------------------------------------
+    renderInfoPage(container, which) {
+        const wrap = (title, inner) => `
+            <div style="max-width:780px;margin:0 auto">
+                <h2 style="font-size:24px;font-weight:800;color:var(--text-primary);margin-bottom:6px">${title}</h2>
+                <div class="card" style="line-height:1.75;font-size:14px;color:#334155">${inner}</div>
+                <div style="text-align:center;margin-top:20px;font-size:12px;color:var(--text-secondary)">
+                    <a href="#about" style="color:var(--text-accent);text-decoration:none;margin:0 8px">About</a> ·
+                    <a href="#contact" style="color:var(--text-accent);text-decoration:none;margin:0 8px">Contact</a> ·
+                    <a href="#disclaimer" style="color:var(--text-accent);text-decoration:none;margin:0 8px">Disclaimer</a> ·
+                    <a href="/privacy" style="color:var(--text-accent);text-decoration:none;margin:0 8px">Privacy</a>
+                </div>
+            </div>`;
+        const pages = {
+            about: wrap('About Market Wisdom', `
+                <p><b>Market Wisdom</b> is an independent stock-market research hub focused on the Indian market. We bring together, in one clean place, the things an active investor checks every day — live Nifty analysis, a global-market overview, an NSE indices heatmap, multi-factor stock screeners, and market &amp; world news that can move prices.</p>
+                <p style="margin-top:12px">Our screeners — the Master Screener, Small/Mid &amp; Micro Cap scanners, and the Hidden Gems wonder-stock finder — score stocks on a transparent blend of technical and fundamental signals computed from public data sources including NSE India, Yahoo Finance and Screener.in. Signed-in users also get a personal watchlist and AI-assisted stock deep-dives.</p>
+                <p style="margin-top:12px">Market Wisdom was built by a solo developer who wanted a faster, cleaner way to scan the market than flipping between a dozen tabs. It is a research and education tool — not a broker, not an advisory service, and not a source of investment recommendations.</p>
+                <p style="margin-top:12px">Questions or feedback? See the <a href="#contact" style="color:var(--text-accent)">Contact</a> page.</p>`),
+            contact: wrap('Contact Us', `
+                <p>We'd love to hear from you — feature requests, bug reports, data corrections, partnership or advertising enquiries, or anything about how you use the site.</p>
+                <p style="margin-top:14px"><b>Email:</b> <a href="mailto:login4amit@gmail.com" style="color:var(--text-accent)">login4amit@gmail.com</a></p>
+                <p style="margin-top:6px"><b>Based in:</b> Mumbai, Maharashtra, India</p>
+                <p style="margin-top:14px">We read every message and typically reply within a few business days. For account or data-deletion requests, please write from the email address you signed in with so we can verify it's you.</p>`),
+            disclaimer: wrap('Disclaimer', `
+                <p><b>Not investment advice.</b> Everything on Market Wisdom — scores, screeners, charts, AI-generated notes, news summaries and any other content — is provided for general information and educational purposes only. It is <b>not</b> investment, financial, legal or tax advice, and must not be treated as a recommendation to buy, sell or hold any security.</p>
+                <p style="margin-top:12px"><b>Do your own research.</b> Markets carry risk; you can lose money. Always do your own due diligence and consult a SEBI-registered investment adviser before making any investment decision. Past performance and any screening score are not indicators of future results.</p>
+                <p style="margin-top:12px"><b>Data accuracy.</b> Data is sourced from third parties (NSE India, Yahoo Finance, Screener.in, Chartink, Google News and others) and may be delayed, incomplete or inaccurate. We make no warranty as to its accuracy and accept no liability for any loss arising from its use.</p>
+                <p style="margin-top:12px"><b>No registration.</b> Market Wisdom and its operator are not registered with SEBI or any financial regulator as an adviser, research analyst or broker.</p>
+                <p style="margin-top:12px"><b>Affiliate links.</b> Some outbound links (for example to stock brokers) may be affiliate or referral links, meaning we could earn a commission at no extra cost to you. This never influences the research or scores shown on the site.</p>
+                <p style="margin-top:12px"><b>Advertising.</b> This site may display third-party ads (including Google AdSense). Advertisers are not endorsed by Market Wisdom, and ad content is not investment advice.</p>`),
+        };
+        container.innerHTML = pages[which] || pages.about;
+    },
 
     renderGlobalMarket(container) {
         container.innerHTML = `
@@ -1101,6 +1146,132 @@ const app = {
         loadLast();
     },
 
+    renderWyckoff(container) {
+        const MKT = 'india_wyckoff';
+        container.innerHTML = `
+            <div style="margin-bottom:16px">
+                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">📐 Wyckoff Momentum Scanner</h2>
+                <p style="font-size:13px;color:var(--text-secondary)">Finds Nifty 1000 stocks at the Wyckoff accumulation→markup turn — where institutional buying ignites momentum. Each pick is tagged with its phase, on daily (swing) and weekly (position) candles.</p>
+            </div>
+            <div class="two-col" style="align-items:start;margin-bottom:16px">
+                <div class="card" style="border-top:3px solid #16a34a">
+                    <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:var(--text-primary)">The phases it detects</div>
+                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.9">
+                        <b>🏗️ Accumulation</b> — a tight range on <i>drying-up</i> volume after a decline. Big money quietly absorbing supply (the "cause").<br>
+                        <b>🪤 Spring</b> — a false breakdown below the base that snapped back. The shakeout of weak hands before the move.<br>
+                        <b>🚀 Early Markup</b> — breakout above the base on volume ≥1.5× average, closing strong, not yet extended. Momentum igniting.
+                    </div>
+                </div>
+                <div class="card" style="border-top:3px solid #4f46e5">
+                    <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:var(--text-primary)">Wyckoff's three laws, in code</div>
+                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.9">
+                        <b>Supply &amp; Demand</b> — breakout days must close in the top of their range on rising volume.<br>
+                        <b>Cause &amp; Effect</b> — a longer, tighter base scores higher (bigger coil → bigger move).<br>
+                        <b>Effort vs Result</b> — volume (effort) must confirm the price move (result); dry-up then surge is textbook.
+                    </div>
+                </div>
+            </div>
+            <div class="card" style="margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+                <div style="font-size:12px;color:var(--text-secondary)">Scans Nifty 1000 on 2 years of data across both timeframes — first run takes <b style="color:var(--text-primary)">2–4 minutes</b>. You can navigate away; results are saved.</div>
+                <div style="flex:1"></div>
+                <button id="btn-scan-wyckoff" class="btn" style="padding:10px 24px;font-size:14px;font-weight:700">📐 Run Wyckoff Scan</button>
+            </div>
+            <div id="wyckoff-filter" style="display:none;gap:8px;flex-wrap:wrap;margin-bottom:14px"></div>
+            <div id="wyckoff-status" style="display:none"></div>
+            <div id="wyckoff-result"><div style="text-align:center;padding:30px;color:var(--text-secondary)"><div class="spinner"></div></div></div>
+            <div style="text-align:center;margin-top:16px;font-size:11px;color:var(--text-secondary)">Wyckoff phase detection is a pattern-recognition aid, not investment advice. Confirm the setup on a chart and do your own research.</div>
+        `;
+        let pollTimer = null;
+        let lastData = null;
+        let activeFilter = 'all';
+        const scoreColor = (v) => v >= 75 ? 'var(--green)' : v >= 55 ? 'var(--yellow)' : 'var(--text-secondary)';
+        const fmt = (v, s='') => (v === null || v === undefined) ? '—' : v + s;
+
+        const renderFilter = () => {
+            const bar = document.getElementById('wyckoff-filter');
+            if (!bar || !lastData || !lastData.results) { if (bar) bar.style.display='none'; return; }
+            const counts = { all: lastData.results.length, markup:0, spring:0, accumulation:0, daily:0, weekly:0 };
+            lastData.results.forEach(r => { counts[r.phase_key] = (counts[r.phase_key]||0)+1; if ((r.timeframes||'').includes('daily')) counts.daily++; if ((r.timeframes||'').includes('weekly')) counts.weekly++; });
+            const chip = (key, label) => '<button data-f="'+key+'" class="wyk-chip" style="padding:6px 12px;border-radius:16px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--border-color);background:'+(activeFilter===key?'var(--text-accent)':'var(--bg-card)')+';color:'+(activeFilter===key?'#fff':'var(--text-secondary)')+'">'+label+'</button>';
+            bar.style.display = 'flex';
+            bar.innerHTML = chip('all','All ('+counts.all+')') + chip('markup','🚀 Markup ('+counts.markup+')') + chip('spring','🪤 Spring ('+counts.spring+')') + chip('accumulation','🏗️ Accumulation ('+counts.accumulation+')') + chip('daily','Daily ('+counts.daily+')') + chip('weekly','Weekly ('+counts.weekly+')');
+            bar.querySelectorAll('.wyk-chip').forEach(b => b.addEventListener('click', () => { activeFilter = b.getAttribute('data-f'); renderFilter(); renderRows(); }));
+        };
+
+        const renderRows = () => {
+            const el = document.getElementById('wyckoff-result');
+            if (!el || !lastData) return;
+            let rows = lastData.results || [];
+            if (activeFilter === 'markup' || activeFilter === 'spring' || activeFilter === 'accumulation') rows = rows.filter(r => r.phase_key === activeFilter);
+            else if (activeFilter === 'daily' || activeFilter === 'weekly') rows = rows.filter(r => (r.timeframes||'').includes(activeFilter));
+            if (!rows.length) { el.innerHTML = '<div class="card" style="text-align:center;padding:30px;color:var(--text-secondary)">No stocks in this filter.</div>'; return; }
+            let h = '<div style="display:grid;gap:10px">';
+            rows.forEach(s => {
+                const sc = scoreColor(s.wyckoff_score);
+                const tfTag = (s.timeframes||'').split('+').map(t => '<span style="background:rgba(15,23,42,0.05);color:var(--text-secondary);font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;text-transform:uppercase">'+t+'</span>').join(' ');
+                const conf = (s.daily_phase && s.weekly_phase) ? '<span style="background:rgba(22,163,74,0.12);color:var(--green);font-size:10px;font-weight:800;padding:2px 7px;border-radius:10px">D+W CONFLUENCE</span>' : '';
+                let extra = '';
+                if (s.breakout_ext_pct !== null && s.breakout_ext_pct !== undefined) extra = '<div style="text-align:right"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">Past breakout</div><div style="font-weight:700">+'+s.breakout_ext_pct+'%</div></div>';
+                else if (s.spring_undercut_pct !== null && s.spring_undercut_pct !== undefined) extra = '<div style="text-align:right"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">Spring dip</div><div style="font-weight:700">-'+s.spring_undercut_pct+'%</div></div>';
+                h += '<div class="card" style="padding:14px 16px"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">';
+                h += '<div style="display:flex;align-items:center;gap:12px;min-width:220px"><div style="font-size:18px;font-weight:800;color:var(--text-secondary);width:26px">'+s.rank+'</div><div><div style="font-weight:800;color:var(--text-primary);font-size:15px">'+s.ticker+'</div><div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center"><span style="font-size:12px;font-weight:700;color:var(--text-primary)">'+s.phase+'</span> '+tfTag+' '+conf+'</div></div></div>';
+                h += '<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">';
+                h += '<div style="text-align:right"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">Price</div><div style="font-weight:700">₹'+Number(s.price).toLocaleString("en-IN")+'</div></div>';
+                h += '<div style="text-align:right"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">Base range</div><div style="font-weight:700">'+fmt(s.range_pct,'%')+'</div></div>';
+                h += '<div style="text-align:right"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">Vol vs avg</div><div style="font-weight:700">'+fmt(s.vol_vs_avg,'×')+'</div></div>';
+                h += extra;
+                h += '<div style="text-align:right;min-width:90px"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">Wyckoff</div><div style="display:flex;align-items:center;gap:6px;justify-content:flex-end"><div style="width:44px;height:6px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.wyckoff_score,100)+'%;height:100%;background:'+sc+'"></div></div><b style="color:'+sc+'">'+s.wyckoff_score+'</b></div></div>';
+                h += '</div></div></div>';
+            });
+            h += '</div>';
+            h += '<div style="text-align:right;margin-top:12px;font-size:11px;color:var(--text-secondary);font-style:italic">Last scanned: '+(lastData.timestamp||'')+'</div>';
+            el.innerHTML = h;
+        };
+
+        const renderResults = (data) => {
+            lastData = data;
+            if (!data.results || !data.results.length) {
+                document.getElementById('wyckoff-result').innerHTML = '<div class="card" style="text-align:center;padding:40px;border-color:var(--yellow)"><div style="font-size:40px;margin-bottom:14px">📐</div><div style="color:var(--yellow);font-weight:800">No Wyckoff setups right now</div><div style="color:var(--text-secondary);margin-top:8px">Clean accumulation and breakout structures are relatively rare — in trending or choppy markets few stocks show them. Try again after the next close.</div></div>';
+                document.getElementById('wyckoff-filter').style.display='none';
+                return;
+            }
+            renderFilter(); renderRows();
+        };
+
+        const startPolling = () => {
+            if (pollTimer) clearInterval(pollTimer);
+            const btn = document.getElementById('btn-scan-wyckoff');
+            const bar = document.getElementById('wyckoff-status');
+            if (btn) { btn.disabled=true; btn.innerHTML='<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Scanning...'; }
+            if (bar) { bar.style.display='block'; bar.innerHTML='<div class="card" style="padding:12px 16px;background:rgba(22,163,74,0.06);border-color:rgba(22,163,74,0.25);display:flex;align-items:center;gap:12px;margin-bottom:16px"><span class="spinner"></span><span style="color:var(--green);font-weight:600">Reading Wyckoff structures across Nifty 1000 (2–4 min)... You can navigate away.</span></div>'; }
+            pollTimer = setInterval(async () => {
+                try {
+                    const st = await api.getScreenerStatus(MKT);
+                    if (st.status === 'done') { clearInterval(pollTimer); pollTimer=null; if (btn){btn.disabled=false;btn.innerHTML='📐 Run Wyckoff Scan';} if (bar) bar.style.display='none'; loadLast(); }
+                    else if (st.status === 'error') { clearInterval(pollTimer); pollTimer=null; if (btn){btn.disabled=false;btn.innerHTML='📐 Run Wyckoff Scan';} if (bar){bar.style.display='block';bar.innerHTML='<div class="card" style="padding:12px 16px;border-color:var(--red);margin-bottom:16px"><span style="color:var(--red);font-weight:600">Scan failed: '+(st.error||'Unknown error')+'</span></div>';} }
+                } catch(e) {}
+            }, 6000);
+        };
+
+        const loadLast = async () => {
+            const el = document.getElementById('wyckoff-result');
+            if (!el) return;
+            try {
+                const data = await api.getScreenerResults(MKT);
+                if (data.empty) { el.innerHTML = '<div class="card" style="text-align:center;padding:40px;border-color:rgba(79,70,229,0.2)"><div style="font-size:40px;margin-bottom:14px">📐</div><div style="color:var(--text-accent);font-weight:800;font-size:16px">No scan yet</div><div style="color:var(--text-secondary);margin-top:8px">Click <b>Run Wyckoff Scan</b> to find stocks at the accumulation→markup turn. Best run after the market close.</div></div>'; }
+                else { renderResults(data); }
+            } catch(e) { el.innerHTML = '<div class="card" style="text-align:center;padding:20px;color:var(--text-secondary)">Could not load previous results.</div>'; }
+            try { const st = await api.getScreenerStatus(MKT); if (st.status === 'running') startPolling(); } catch(e) {}
+        };
+
+        document.getElementById('btn-scan-wyckoff').addEventListener('click', async () => {
+            try { await api.startScreenerScan(MKT); startPolling(); }
+            catch (err) { alert('Failed to start scan: ' + err.message); }
+        });
+
+        loadLast();
+    },
+
     renderHome(container) {
         const owl = `<svg viewBox="0 0 64 64" fill="none" style="width:84px;height:84px;filter:drop-shadow(0 8px 24px rgba(129,140,248,0.3))">
             <path d="M32 6C16 6 10 18 10 32c0 16 10 26 22 26s22-10 22-26C54 18 48 6 32 6Z" fill="#0f172a" stroke="#818cf8" stroke-width="2.5"/>
@@ -1146,6 +1317,7 @@ const app = {
                 ${card('#smallmid', '#a78bfa', '💎', 'Small/Mid Master', 'Same 12-factor score, applied to the small &amp; mid-cap universe beyond the Nifty 1000. Higher risk, higher potential.', 'Rank Small/Mid', true)}
                 ${card('#microcap', '#f472b6', '🔬', 'Micro Cap Scanner', 'Micro caps under ₹2,000 Cr trading within 7% of their 52-week high — the tightest momentum coil, ranked by the same 12-factor score.', 'Scan Micro Caps', true)}
                 ${card('#gems', '#16a34a', '💎', 'Hidden Gems', 'The wonder-stock finder: a full-market fusion scan tagging stealth accumulation, turnarounds &amp; breakouts, ranked by Wonder Score with AI deep-dives.', 'Find Gems', true)}
+                ${card('#wyckoff', '#0ea5e9', '📐', 'Wyckoff Scanner', 'Finds Nifty 1000 stocks at the accumulation→markup turn using Wyckoff phase analysis on daily &amp; weekly candles — momentum as it ignites.', 'Run Wyckoff', true)}
                 ${card('#screener', '#60a5fa', '📊', 'Stock Screener', 'Scan the Nifty 500 — and the next 501–1000 — for breakouts by P/E, volume spike and RSI.', 'Run a Scan')}
                 ${card('#chartink', '#c084fc', '📋', 'Chartink Comparator', 'Find the stocks that appear in both of your favourite Chartink screeners.', 'Compare')}
             </div>
@@ -1164,7 +1336,26 @@ const app = {
                 ${card('#telegram', '#2AABEE', '💬', 'Telegram Feed', 'Live messages and updates straight from the Market Wisdom Telegram channel.', 'View Feed')}
             </div>
 
-            <footer>Market Wisdom · For informational purposes only · Not investment advice</footer>
+            ${sectionLabel('Start Investing')}
+            <div class="card" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;border-top:3px solid #16a34a">
+                <div style="flex:1;min-width:240px">
+                    <div style="font-weight:800;font-size:15px;color:var(--text-primary);margin-bottom:4px">Need a demat account to act on these ideas?</div>
+                    <div style="font-size:12.5px;color:var(--text-secondary)">Open a free account with a leading Indian broker and start investing. <span style="opacity:.8">These are referral links — Market Wisdom may earn a commission at no extra cost to you.</span></div>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap">
+                    <a href="BROKER_AFFILIATE_LINK_1" target="_blank" rel="noopener sponsored" class="btn" style="padding:10px 18px;font-size:13px;text-decoration:none">Open with Zerodha →</a>
+                    <a href="BROKER_AFFILIATE_LINK_2" target="_blank" rel="noopener sponsored" class="btn" style="padding:10px 18px;font-size:13px;text-decoration:none;background:var(--bg-card);border:1px solid var(--border-color);color:var(--text-primary)">Open with Upstox →</a>
+                </div>
+            </div>
+
+            <footer>Market Wisdom · For informational purposes only · Not investment advice<br>
+                <span style="display:inline-block;margin-top:8px">
+                    <a href="#about" style="color:var(--text-secondary);text-decoration:none;margin:0 6px">About</a> ·
+                    <a href="#contact" style="color:var(--text-secondary);text-decoration:none;margin:0 6px">Contact</a> ·
+                    <a href="#disclaimer" style="color:var(--text-secondary);text-decoration:none;margin:0 6px">Disclaimer</a> ·
+                    <a href="/privacy" style="color:var(--text-secondary);text-decoration:none;margin:0 6px">Privacy</a>
+                </span>
+            </footer>
         `;
     },
 

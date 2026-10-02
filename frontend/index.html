@@ -3,14 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Market Research Hub</title>
+    <title>Market Wisdom — Indian Stock Market Research, Screeners & Live Nifty Analysis</title>
+    <meta name="description" content="Market Wisdom is a free Indian stock-market research hub: live Nifty analysis, NSE indices heatmap, global markets, multi-factor stock screeners and the Hidden Gems wonder-stock finder.">
+    <meta name="keywords" content="Indian stock market, Nifty analysis, NSE heatmap, stock screener, stock research, market news">
+    <!-- Open Graph for link previews / SEO -->
+    <meta property="og:title" content="Market Wisdom — Indian Stock Market Research">
+    <meta property="og:description" content="Live Nifty analysis, NSE heatmap, screeners and the Hidden Gems wonder-stock finder.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://marketwisdom.co.in">
     <!-- PWA Meta Tags -->
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#ffffff">
     <link rel="apple-touch-icon" href="icon-192.png">
-    
+
+    <!-- Google AdSense — replace ca-pub-XXXXXXXXXXXXXXXX with your real publisher ID
+         after AdSense approves the site, then uncomment the script tag below.
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-XXXXXXXXXXXXXXXX"
+            crossorigin="anonymous"></script>
+    -->
+
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=29">
+    <link rel="stylesheet" href="style.css?v=31">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -29,6 +42,7 @@
         <a href="#smallmid" class="nav-btn" data-target="smallmid">💎 Small/Mid Master</a>
         <a href="#microcap" class="nav-btn" data-target="microcap">🔬 Micro Cap</a>
         <a href="#gems" class="nav-btn" data-target="gems">💎 Hidden Gems</a>
+        <a href="#wyckoff" class="nav-btn" data-target="wyckoff">📐 Wyckoff</a>
         <a href="#overview" class="nav-btn" data-target="overview">🧭 Stock Overview</a>
         <!-- Stock Research hidden from UI (page code kept; restore by uncommenting)
         <a href="#stock" class="nav-btn" data-target="stock">🔍 Stock Research</a> -->
@@ -46,10 +60,10 @@
     </div>
 
     <!-- Scripts -->
-    <script src="api.js?v=29"></script>
-    <script src="auth.js?v=29"></script>
-    <script src="components.js?v=29"></script>
-    <script src="app.js?v=29"></script>
+    <script src="api.js?v=31"></script>
+    <script src="auth.js?v=31"></script>
+    <script src="components.js?v=31"></script>
+    <script src="app.js?v=31"></script>
 
     <!-- PWA Service Worker: register + auto-reload when a new version activates -->
     <script>
