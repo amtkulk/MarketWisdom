@@ -1694,6 +1694,115 @@ def telegram_feed():
 
 
 
+# ══════════════════════════════════════════════════════════════
+#  INDICES HEATMAP  (replicates NSE's live indices heatmap)
+#  Source: NSE /api/allIndices — one call returns every index with its
+#  percentChange, last value, and advance/decline breadth. We group the
+#  indices the way NSE's own page does so the tiles read familiarly.
+# ══════════════════════════════════════════════════════════════
+
+# Classify each index into a section + keep NSE's rough display order.
+_HEATMAP_GROUPS = [
+    ("Broad Market", [
+        "NIFTY 50", "NIFTY NEXT 50", "NIFTY 100", "NIFTY 200", "NIFTY 500",
+        "NIFTY MIDCAP 50", "NIFTY MIDCAP 100", "NIFTY MIDCAP 150",
+        "NIFTY SMALLCAP 50", "NIFTY SMALLCAP 100", "NIFTY SMALLCAP 250",
+        "NIFTY MIDSMALLCAP 400", "NIFTY LARGEMIDCAP 250", "NIFTY MICROCAP 250",
+        "NIFTY TOTAL MARKET", "NIFTY500 MULTICAP 50:25:25",
+    ]),
+    ("Sectoral", [
+        "NIFTY BANK", "NIFTY AUTO", "NIFTY FINANCIAL SERVICES", "NIFTY FIN SERVICE",
+        "NIFTY FMCG", "NIFTY IT", "NIFTY MEDIA", "NIFTY METAL", "NIFTY PHARMA",
+        "NIFTY PSU BANK", "NIFTY PRIVATE BANK", "NIFTY REALTY",
+        "NIFTY HEALTHCARE INDEX", "NIFTY CONSUMER DURABLES", "NIFTY OIL & GAS",
+        "NIFTY FINANCIAL SERVICES 25/50",
+    ]),
+    ("Thematic", [
+        "NIFTY COMMODITIES", "NIFTY INDIA CONSUMPTION", "NIFTY CPSE",
+        "NIFTY ENERGY", "NIFTY INFRASTRUCTURE", "NIFTY MNC", "NIFTY PSE",
+        "NIFTY SERVICES SECTOR", "NIFTY INDIA DIGITAL", "NIFTY INDIA MANUFACTURING",
+        "NIFTY INDIA DEFENCE", "NIFTY MOBILITY", "NIFTY EV & NEW AGE AUTOMOTIVE",
+    ]),
+    ("Strategy", [
+        "NIFTY DIVIDEND OPPORTUNITIES 50", "NIFTY50 VALUE 20", "NIFTY100 QUALITY 30",
+        "NIFTY50 EQUAL WEIGHT", "NIFTY100 EQUAL WEIGHT", "NIFTY100 LOW VOLATILITY 30",
+        "NIFTY ALPHA 50", "NIFTY200 MOMENTUM 30", "NIFTY MIDCAP150 MOMENTUM 50",
+    ]),
+]
+
+
+def _classify_index(name):
+    up = (name or "").upper().strip()
+    for group, members in _HEATMAP_GROUPS:
+        if up in members:
+            return group, members.index(up)
+    # Fallbacks by keyword so new/renamed indices still land somewhere sensible
+    if any(k in up for k in ("BANK", "AUTO", "FMCG", "IT", "PHARMA", "METAL",
+                             "REALTY", "MEDIA", "ENERGY", "OIL", "HEALTH",
+                             "CONSUMER DURABLES", "FINANCIAL", "FIN SERVICE")):
+        return "Sectoral", 999
+    if any(k in up for k in ("MIDCAP", "SMALLCAP", "NIFTY 50", "NIFTY 100",
+                             "NIFTY 200", "NIFTY 500", "NEXT 50", "TOTAL MARKET",
+                             "MICROCAP", "MULTICAP", "LARGEMID")):
+        return "Broad Market", 999
+    return "Other", 999
+
+
+@cached(60)          # heatmap: refresh at most once a minute
+def fetch_indices_heatmap():
+    data = get_nse_data("/api/allIndices")
+    if not data or "data" not in data:
+        return {"ok": False, "error": "Could not reach NSE allIndices feed", "groups": []}
+
+    def _num(v):
+        try:
+            return round(float(v), 2)
+        except (TypeError, ValueError):
+            return None
+
+    buckets = {}
+    for row in data.get("data", []):
+        name = (row.get("index") or row.get("indexSymbol") or "").strip()
+        if not name:
+            continue
+        group, order = _classify_index(name)
+        if group == "Other":
+            continue        # skip fixed-income / misc indices NSE hides from the heatmap
+        pct = _num(row.get("percentChange"))
+        buckets.setdefault(group, []).append({
+            "name":     name,
+            "last":     _num(row.get("last")),
+            "pct":      pct,
+            "change":   _num(row.get("variation")),
+            "advances": row.get("advances"),
+            "declines": row.get("declines"),
+            "unchanged": row.get("unchanged"),
+            "_order":   order,
+        })
+
+    groups = []
+    for group, _members in _HEATMAP_GROUPS:
+        rows = buckets.get(group, [])
+        if not rows:
+            continue
+        rows.sort(key=lambda r: (r["_order"], r["name"]))
+        for r in rows:
+            r.pop("_order", None)
+        groups.append({"group": group, "indices": rows})
+
+    ts = data.get("timestamp") or datetime.now().strftime("%d-%b-%Y %H:%M:%S")
+    total = sum(len(g["indices"]) for g in groups)
+    return {"ok": True, "groups": groups, "timestamp": ts, "count": total}
+
+
+@app.route("/api/indices_heatmap")
+def api_indices_heatmap():
+    try:
+        return jsonify(fetch_indices_heatmap())
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "groups": []}), 200
+
+
 @app.route("/api/global_market")
 def api_global_market():
     try:

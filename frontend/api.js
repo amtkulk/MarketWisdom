@@ -235,6 +235,12 @@ const api = {
         return res.json();
     },
 
+    async fetchIndicesHeatmap() {
+        const res = await fetch(`${API_BASE_URL}/indices_heatmap`, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        return res.json();
+    },
+
     async startScreenerScan(market) {
         const res = await fetch(`${API_BASE_URL}/screener/start?market=${market}`, { method: 'POST' });
         if (!res.ok) {

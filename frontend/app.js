@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v26',
+    VERSION: 'v27',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -100,7 +100,7 @@ const app = {
         const label = ({
             global: 'Global Market', 'war-news': 'War News', telegram: 'Telegram Feed',
             screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', stock: 'Stock Research',
-            overview: 'Stock Overview', action: 'Stock Action', chartink: 'Chartink Comparator',
+            overview: 'Stock Overview', action: 'Stock Action', heatmap: 'Indices Heatmap', chartink: 'Chartink Comparator',
             nifty: 'Nifty Analysis', watchlist: 'Watchlist',
         })[attemptedRoute] || 'this page';
         container.innerHTML = `
@@ -156,6 +156,9 @@ const app = {
                 break;
             case 'global':
                 this.renderGlobalMarket(container);
+                break;
+            case 'heatmap':
+                this.renderHeatmap(container);
                 break;
             case 'war-news':
                 this.renderWarNews(container);
@@ -332,6 +335,105 @@ const app = {
         };
 
         const rb = document.getElementById('btn-refresh-global');
+        if (rb) rb.addEventListener('click', load);
+        load();
+    },
+
+    renderHeatmap(container) {
+        container.innerHTML = `
+            <div style="margin-bottom:18px;display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px">
+                <div>
+                    <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🗺️ Indices Heatmap</h2>
+                    <p style="font-size:13px;color:var(--text-secondary)">Live NSE indices, coloured by today's % change · green = up, red = down</p>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px">
+                    <div id="heatmap-legend" style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-secondary)"></div>
+                    <button class="btn" id="btn-refresh-heatmap" style="padding:8px 16px;font-size:13px">↻ Refresh</button>
+                </div>
+            </div>
+            <div id="heatmap-body"><div style="text-align:center;padding:40px"><div class="big-spinner"></div><div style="color:var(--text-secondary);font-size:13px">Loading indices…</div></div></div>
+        `;
+
+        // Build the legend swatches once.
+        const legend = document.getElementById('heatmap-legend');
+        if (legend) {
+            const stops = [-3, -1.5, 0, 1.5, 3];
+            legend.innerHTML = '<span>-3%</span>' +
+                stops.map(v => `<span style="display:inline-block;width:20px;height:12px;border-radius:2px;background:${tileColor(v)}"></span>`).join('') +
+                '<span>+3%</span>';
+        }
+
+        // Diverging colour scale: red (neg) → neutral → green (pos), intensity by magnitude.
+        function tileColor(pct) {
+            if (pct === null || pct === undefined || isNaN(pct)) return '#e2e8f0';
+            const cap = 3;                                   // saturate at ±3%
+            const t = Math.max(-1, Math.min(1, pct / cap));  // -1..1
+            const mag = Math.abs(t);
+            // Light→deep shade so text stays readable; mix with white at low magnitude.
+            if (t >= 0) {
+                const base = [22, 163, 74];                  // green
+                return mix([255,255,255], base, 0.15 + 0.85 * mag);
+            } else {
+                const base = [220, 38, 38];                  // red
+                return mix([255,255,255], base, 0.15 + 0.85 * mag);
+            }
+        }
+        function mix(a, b, w) {
+            const r = Math.round(a[0] + (b[0]-a[0])*w);
+            const g = Math.round(a[1] + (b[1]-a[1])*w);
+            const bl = Math.round(a[2] + (b[2]-a[2])*w);
+            return `rgb(${r},${g},${bl})`;
+        }
+        function textOn(pct) {
+            // Deep tiles need white text; pale tiles keep dark text.
+            return (pct !== null && Math.abs(pct) >= 1.2) ? '#ffffff' : '#1e293b';
+        }
+
+        const render = (data) => {
+            const body = document.getElementById('heatmap-body');
+            if (!body) return;
+            if (!data || !data.ok || !data.groups || !data.groups.length) {
+                body.innerHTML = `<div class="card" style="text-align:center;padding:36px;border-color:var(--yellow)">
+                    <div style="font-size:34px;margin-bottom:10px">🗺️</div>
+                    <div style="color:var(--yellow);font-weight:800">Couldn't load the indices feed</div>
+                    <div style="color:var(--text-secondary);margin-top:6px;font-size:13px">${(data && data.error) ? data.error : 'NSE did not respond. Try Refresh in a moment.'}</div>
+                </div>`;
+                return;
+            }
+            let html = '';
+            data.groups.forEach(g => {
+                html += `<div style="margin-bottom:22px">
+                    <div style="font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--text-accent);margin-bottom:10px">${g.group} <span style="color:var(--text-secondary);font-weight:600">· ${g.indices.length}</span></div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">`;
+                g.indices.forEach(ix => {
+                    const bg = tileColor(ix.pct);
+                    const fg = textOn(ix.pct);
+                    const sign = (ix.pct !== null && ix.pct > 0) ? '+' : '';
+                    const pctTxt = (ix.pct === null || ix.pct === undefined) ? '—' : `${sign}${ix.pct.toFixed(2)}%`;
+                    const lastTxt = (ix.last === null || ix.last === undefined) ? '' : Number(ix.last).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+                    html += `<div title="${ix.name}" style="background:${bg};color:${fg};border-radius:10px;padding:11px 12px;overflow:hidden">
+                        <div style="font-size:11.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.95">${ix.name}</div>
+                        <div style="font-size:18px;font-weight:800;margin-top:4px;line-height:1">${pctTxt}</div>
+                        <div style="font-size:10.5px;margin-top:3px;opacity:.85">${lastTxt}</div>
+                    </div>`;
+                });
+                html += `</div></div>`;
+            });
+            html += `<div style="text-align:right;font-size:11px;color:var(--text-secondary);font-style:italic;margin-top:4px">NSE · as of ${esc(data.timestamp || '')}</div>`;
+            body.innerHTML = html;
+        };
+        const esc = (s) => String(s||'').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+
+        const load = async () => {
+            const body = document.getElementById('heatmap-body');
+            try {
+                const data = await api.fetchIndicesHeatmap();
+                render(data);
+            } catch (e) {
+                if (body) body.innerHTML = `<div class="card" style="text-align:center;padding:30px;color:var(--text-secondary)">Could not load heatmap: ${e.message}</div>`;
+            }
+        };
+        const rb = document.getElementById('btn-refresh-heatmap');
         if (rb) rb.addEventListener('click', load);
         load();
     },
@@ -898,6 +1000,7 @@ const app = {
             ${sectionLabel('Markets & News')}
             <div class="feature-grid">
                 ${card('#global', '#f59e0b', '🌍', 'Global Market', "World indices, commodities and FX in separate tables, plus today's biggest moves and live market news.", 'View Markets')}
+                ${card('#heatmap', '#10b981', '🗺️', 'Indices Heatmap', "Every live NSE index in one colour-coded grid — spot sector rotation and market breadth at a glance.", 'Open Heatmap', true)}
                 ${card('#war-news', '#ef4444', '📰', 'War News', 'Live US–Iran and Russia–Ukraine headlines, newest first, in two columns.', 'Read News')}
                 ${card('#action', '#fbbf24', '⚡', 'Stock Action', 'The latest announcements, results and conference-call notes for a company.', 'View Action')}
             </div>
