@@ -267,6 +267,17 @@ const api = {
         return res.json();
     },
 
+    async hiddenGemsDeepDive(stock) {
+        const res = await fetch(`${API_BASE_URL}/hidden_gems/deepdive`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(typeof Auth !== "undefined" ? Auth.headers() : {}) },
+            body: JSON.stringify(stock)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Deep dive failed');
+        return data;
+    },
+
     async fetchWarNews() {
         // Always fetch fresh — the user wants the latest headlines on every open.
         const res = await fetch(`${API_BASE_URL}/war_news`, { cache: 'no-store' });

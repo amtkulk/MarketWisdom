@@ -338,6 +338,9 @@ def run_screener(market="india"):
     if market == "india_microcap":
         return run_microcap_screener()
 
+    if market == "india_hidden_gems":
+        return run_hidden_gems_screener()
+
     if market == "us":
         tickers = get_sp500_tickers()
         label   = "S&P 500"
@@ -1019,6 +1022,191 @@ def run_microcap_screener():
         "market": "Micro Cap (< Rs 2000 Cr)",
         "total_scanned": total,
         "total_passed": len(scored),
+        "results": results,
+        "scan_time_seconds": elapsed,
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+#  HIDDEN GEMS SCANNER  ("wonder stock" finder)
+#  A pro-trader fusion scan over the FULL market that tags each stock with
+#  which institutional setup it matches, then ranks by a Wonder Score:
+#    🤫 STEALTH    — quality name grinding up on RISING volume, still NOT
+#                    extended (10-25% below 52wH): the coil before the move.
+#    🔄 TURNAROUND — reclaimed the 200-DMA recently with momentum turning up
+#                    (MACD bullish, RSI rising through 50): bottom with proof.
+#    🚀 BREAKOUT   — strong name pushing to new highs (<5% from 52wH) on
+#                    above-average volume: established winner in motion.
+#  Every candidate must clear a quality floor (liquidity + not a falling
+#  knife) so results are tradeable, not junk.
+# ══════════════════════════════════════════════════════════════
+
+def _sma(vals, n):
+    return sum(vals[-n:]) / n if len(vals) >= n else None
+
+
+def _detect_gem_setups(closes, vols, d):
+    """Given price/vol history and the technical_score dict d, return
+    (setups:list, extra:dict) describing which wonder-stock patterns fire."""
+    setups = []
+    extra = {}
+    if len(closes) < 60:
+        return setups, extra
+
+    price = closes[-1]
+    sma200 = _sma(closes, 200)
+    sma50  = _sma(closes, 50)
+
+    # Volume: last 10 days vs the prior 50 (is money flowing in now?)
+    v_recent = sum(vols[-10:]) / 10 if len(vols) >= 10 else None
+    v_base   = sum(vols[-60:-10]) / 50 if len(vols) >= 60 else None
+    vol_surge = (v_recent / v_base) if (v_recent and v_base) else None
+    extra["vol_surge"] = round(vol_surge, 2) if vol_surge else None
+    rising_vol = vol_surge is not None and vol_surge >= 1.2
+
+    rsi_d = d.get("rsi_d")
+    dist  = d.get("dist_52wh")          # % below 52-week high
+    mcap_ok = True                      # (fundamental gate handled by caller)
+
+    # 🤫 STEALTH ACCUMULATION
+    #   uptrending (above 200DMA & 50DMA), still has room (10-25% below high),
+    #   RSI in constructive 50-65 band, and volume quietly rising.
+    if (d.get("above_200dma") and d.get("above_50dma") and dist is not None
+            and 8 <= dist <= 25 and rsi_d is not None and 50 <= rsi_d <= 68
+            and rising_vol):
+        setups.append("stealth")
+
+    # 🔄 TURNAROUND / REVERSAL
+    #   price reclaimed the 200DMA within the last ~15 sessions (was below,
+    #   now above), MACD bullish, RSI rising through 50.
+    if sma200 is not None and price > sma200 and d.get("macd_bull"):
+        # was it below the 200DMA recently?
+        below_recently = False
+        if len(closes) >= 215:
+            for k in range(2, 16):
+                past = closes[-k]
+                past_sma = _sma(closes[:len(closes)-k+1], 200)
+                if past_sma and past < past_sma:
+                    below_recently = True
+                    break
+        if below_recently and rsi_d is not None and 48 <= rsi_d <= 65:
+            setups.append("turnaround")
+
+    # 🚀 BREAKOUT MOMENTUM
+    #   near/at 52w high (<5% below), strong RSI, on above-average volume.
+    if (dist is not None and dist <= 5 and rsi_d is not None and rsi_d >= 60
+            and (vol_surge is None or vol_surge >= 1.1) and d.get("above_50dma")):
+        setups.append("breakout")
+
+    return setups, extra
+
+
+def run_hidden_gems_screener():
+    """Full-market 'wonder stock' scan. Tags each pick with its setup(s) and
+    ranks by Wonder Score = technical score + fundamental score + setup bonus."""
+    import time
+    start = time.time()
+
+    # FULL market = Nifty 1000 ∪ beyond-1000 universe
+    try:
+        u1 = get_nifty1000_tickers()
+    except Exception:
+        u1 = []
+    try:
+        u2 = get_small_mid_cap_tickers()
+    except Exception:
+        u2 = []
+    seen, tickers = set(), []
+    for t in list(u1) + list(u2):
+        if t not in seen:
+            seen.add(t); tickers.append(t)
+    total = len(tickers)
+    print(f"[HiddenGems] Full-market scan: {total} tickers")
+
+    price_data = {}
+    CHUNK = 100
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+        futs = [ex.submit(_bulk_download_ohlc, tickers[i:i+CHUNK], "1y")
+                for i in range(0, total, CHUNK)]
+        futs.append(ex.submit(_bulk_download_ohlc, ["^NSEI"], "1y"))
+        for f in concurrent.futures.as_completed(futs):
+            try:
+                price_data.update(f.result() or {})
+            except Exception:
+                pass
+
+    nifty_rows = price_data.pop("^NSEI", [])
+    nifty_closes = [r[1] for r in nifty_rows]
+
+    candidates = []
+    for t, rows in price_data.items():
+        res = technical_score(rows, nifty_closes)
+        if not res:
+            continue
+        tech, d = res
+        # Quality floor: must be liquid and not a falling knife (above 200DMA).
+        if not (d.get("liquid") and d.get("above_200dma")):
+            continue
+        closes = [r[1] for r in rows]
+        vols   = [r[2] for r in rows]
+        setups, extra = _detect_gem_setups(closes, vols, d)
+        if not setups:
+            continue
+        candidates.append({"ticker": t, "tech": tech, "d": d,
+                           "setups": setups, "extra": extra})
+
+    # Rank by technical first, take a generous finalist pool for fundamentals.
+    candidates.sort(key=lambda c: (len(c["setups"]), c["tech"]), reverse=True)
+    finalists = candidates[:50]
+    print(f"[HiddenGems] {len(price_data)} priced, {len(candidates)} matched a setup, "
+          f"enriching top {len(finalists)}")
+
+    def enrich(c):
+        sym = c["ticker"].replace(".NS", "").replace(".BO", "")
+        f = _fetch_fundamentals(sym)
+        c["f"] = f
+        c["fund"] = fundamental_score(f)
+        c["sym"] = sym
+        return c
+
+    if finalists:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+            finalists = list(ex.map(enrich, finalists))
+
+    SETUP_BONUS = {"stealth": 8, "turnaround": 6, "breakout": 5}
+    for c in finalists:
+        bonus = sum(SETUP_BONUS.get(s, 0) for s in c["setups"])
+        # multi-setup confluence is the strongest tell → extra points
+        if len(c["setups"]) >= 2:
+            bonus += 6
+        c["wonder"] = round(c["tech"] + c["fund"] + bonus, 1)
+
+    finalists.sort(key=lambda c: c["wonder"], reverse=True)
+
+    LABELS = {"stealth": "🤫 Stealth", "turnaround": "🔄 Turnaround", "breakout": "🚀 Breakout"}
+    results = []
+    for i, c in enumerate(finalists[:15]):
+        d, f = c["d"], c.get("f", {})
+        results.append({
+            "rank": i + 1, "ticker": c["sym"], "price": d.get("price"),
+            "wonder_score": c["wonder"], "tech_score": c["tech"], "fund_score": c["fund"],
+            "setups": [LABELS.get(s, s) for s in c["setups"]],
+            "setup_keys": c["setups"],
+            "rsi_d": d.get("rsi_d"), "rsi_w": d.get("rsi_w"),
+            "rs_6m": d.get("rs_6m"), "dist_52wh": d.get("dist_52wh"),
+            "vol_surge": c["extra"].get("vol_surge"),
+            "macd_bull": d.get("macd_bull"), "golden_stack": d.get("golden_stack"),
+            "roe": f.get("roe"), "roce": f.get("roce"),
+            "sales_g": f.get("sales_g"), "profit_g": f.get("profit_g"),
+            "pe": f.get("pe"), "mcap": f.get("mcap"),
+        })
+
+    elapsed = round(time.time() - start, 1)
+    print(f"[HiddenGems] Done in {elapsed}s — {len(results)} gems")
+    return {
+        "market": "Hidden Gems",
+        "total_scanned": total,
+        "total_passed": len(candidates),
         "results": results,
         "scan_time_seconds": elapsed,
     }

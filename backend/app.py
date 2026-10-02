@@ -2822,6 +2822,84 @@ from screener import run_screener
 from database import save_screener_results, get_screener_results
 import threading
 
+
+@app.route("/api/hidden_gems/deepdive", methods=["POST"])
+def api_hidden_gems_deepdive():
+    """On-demand institutional-style AI breakdown for ONE gem, grounded strictly
+    in the live numbers we pass in (so Gemini reasons, it does not invent data)."""
+    user = current_user()
+    if not user:
+        return jsonify({"error": "Please sign in first."}), 401
+    body = request.get_json() or {}
+    sym = (body.get("ticker") or "").strip().upper()
+    if not sym:
+        return jsonify({"error": "ticker required"}), 400
+    if not GEMINI_API_KEY:
+        return jsonify({"error": "AI analysis is not configured on the server."}), 501
+
+    # Only trust numbers the client got from our own scan result.
+    def g(k):
+        v = body.get(k)
+        return v if v is not None else "n/a"
+    facts = (
+        f"Stock: {sym}\n"
+        f"Setups detected: {', '.join(body.get('setups') or []) or 'n/a'}\n"
+        f"Price: Rs {g('price')}\n"
+        f"Wonder Score: {g('wonder_score')} (technical {g('tech_score')} + fundamental {g('fund_score')})\n"
+        f"Daily RSI: {g('rsi_d')}, Weekly RSI: {g('rsi_w')}\n"
+        f"Relative strength vs Nifty (6m): {g('rs_6m')}%\n"
+        f"Distance below 52-week high: {g('dist_52wh')}%\n"
+        f"Recent volume surge (10d vs 50d): {g('vol_surge')}x\n"
+        f"MACD bullish: {g('macd_bull')}, Golden stack (50>200 DMA): {g('golden_stack')}\n"
+        f"ROE: {g('roe')}%, ROCE: {g('roce')}%, Sales growth: {g('sales_g')}%, "
+        f"Profit growth: {g('profit_g')}%, P/E: {g('pe')}, Market cap: Rs {g('mcap')} Cr\n"
+    )
+    prompt = (
+        "You are a senior portfolio strategist at a top institutional desk writing a crisp "
+        "internal note on an Indian stock flagged by a 'hidden gems' momentum+quality scan. "
+        "Use ONLY the verified figures below — do NOT invent any numbers, price targets, or "
+        "financials not given. If something is 'n/a', say it's not available.\n\n"
+        f"{facts}\n"
+        "Write a tight institutional note with these sections (plain text, no markdown headers, "
+        "use short labelled lines):\n"
+        "1. THE SETUP — in 2-3 sentences, what pattern this is and why it can precede a big move.\n"
+        "2. WHAT'S WORKING — the strongest 2-3 signals from the data.\n"
+        "3. THE RISKS — the 2-3 things that could invalidate it (be honest).\n"
+        "4. WHAT TO WATCH — the specific trigger/level a trader should confirm before acting.\n"
+        "End with one line: 'Not investment advice — do your own research.' "
+        "Keep it under 220 words. Plain text only."
+    )
+
+    try:
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        MODELS = ["gemini-3.1-flash-lite-preview", "gemini-3-flash-preview",
+                  "gemini-flash-latest", "gemini-pro-latest"]
+        for model in MODELS:
+            try:
+                resp = client.models.generate_content(
+                    model=model, contents=prompt,
+                    config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1200),
+                )
+                text = ""
+                try: text = resp.text or ""
+                except Exception: pass
+                if not text:
+                    try:
+                        for cand in resp.candidates:
+                            for part in cand.content.parts:
+                                if getattr(part, "text", None): text += part.text
+                    except Exception: pass
+                if text:
+                    return jsonify({"ok": True, "analysis": text.strip()})
+            except Exception:
+                continue
+        return jsonify({"error": "AI could not generate an analysis right now."}), 200
+    except ImportError:
+        return jsonify({"error": "google-genai not installed."}), 501
+
+
 # In-memory state for background scans
 _screener_state = {}  # { "india": {"status": "running"/"done"/"error", "error": "..."} }
 _screener_lock = threading.Lock()
@@ -2846,7 +2924,7 @@ def _run_screener_background(market):
 def api_screener_start():
     """Start a background scan. Returns immediately."""
     market = request.args.get("market", "india").lower()
-    if market not in ("india", "us", "india_next500", "india_master", "india_smallmid_master", "india_microcap"):
+    if market not in ("india", "us", "india_next500", "india_master", "india_smallmid_master", "india_microcap", "india_hidden_gems"):
         return jsonify({"error": "Invalid market."}), 400
 
     with _screener_lock:
@@ -2875,7 +2953,7 @@ def api_screener_status():
 def api_screener_results():
     """Get last saved results from the database."""
     market = request.args.get("market", "india").lower()
-    if market not in ("india", "us", "india_next500", "india_master", "india_smallmid_master", "india_microcap"):
+    if market not in ("india", "us", "india_next500", "india_master", "india_smallmid_master", "india_microcap", "india_hidden_gems"):
         return jsonify({"error": "Invalid market."}), 400
 
     data, updated_at = get_screener_results(market)

@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v28',
+    VERSION: 'v29',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -99,7 +99,7 @@ const app = {
         }
         const label = ({
             global: 'Global Market', 'war-news': 'War News', telegram: 'Telegram Feed',
-            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', stock: 'Stock Research',
+            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', stock: 'Stock Research',
             overview: 'Stock Overview', action: 'Stock Action', heatmap: 'Indices Heatmap', chartink: 'Chartink Comparator',
             nifty: 'Nifty Analysis', watchlist: 'Watchlist',
         })[attemptedRoute] || 'this page';
@@ -177,6 +177,9 @@ const app = {
                 break;
             case 'microcap':
                 this.renderMicroCapScreener(container);
+                break;
+            case 'gems':
+                this.renderHiddenGems(container);
                 break;
             case 'stock':
                 this.renderStock(container);
@@ -949,6 +952,155 @@ const app = {
         });
     },
 
+    renderHiddenGems(container) {
+        const MKT = 'india_hidden_gems';
+        container.innerHTML = `
+            <div style="margin-bottom:18px">
+                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">💎 Hidden Gems — Wonder Stock Finder</h2>
+                <p style="font-size:13px;color:var(--text-secondary)">A pro-trader fusion scan across the <b>full market</b> that tags each stock with the institutional setup it matches, then ranks by a composite <b>Wonder Score</b>.</p>
+            </div>
+            <div class="two-col" style="align-items:start;margin-bottom:16px">
+                <div class="card" style="border-top:3px solid #16a34a">
+                    <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:var(--text-primary)">The three setups it hunts</div>
+                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.9">
+                        <b>🤫 Stealth</b> — quality name grinding up on <i>rising volume</i>, still 8–25% below its high. The coil before the move.<br>
+                        <b>🔄 Turnaround</b> — just reclaimed the 200-DMA with momentum turning up. A bottom with proof.<br>
+                        <b>🚀 Breakout</b> — strong name pushing to new highs (&lt;5% away) on above-average volume.
+                    </div>
+                </div>
+                <div class="card" style="border-top:3px solid #4f46e5">
+                    <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:var(--text-primary)">How the Wonder Score works</div>
+                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.9">
+                        Technical strength <b>+</b> fundamental quality <b>+</b> a bonus for each setup matched. Stocks hitting <b>two or more setups at once</b> (confluence) get an extra boost — that overlap is the strongest tell.<br>
+                        <span style="font-size:11.5px">Quality floor: every pick is liquid and above its 200-DMA — no falling knives.</span>
+                    </div>
+                </div>
+            </div>
+            <div class="card" style="margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+                <div style="font-size:12px;color:var(--text-secondary)">Scans the full market (~1700 stocks) with 1 year of data — first run takes <b style="color:var(--text-primary)">3–6 minutes</b>. You can navigate away; results are saved. Click any gem for an AI deep-dive.</div>
+                <div style="flex:1"></div>
+                <button id="btn-scan-gems" class="btn" style="padding:10px 24px;font-size:14px;font-weight:700">💎 Find Hidden Gems</button>
+            </div>
+            <div id="gems-status" style="display:none"></div>
+            <div id="gems-result"><div style="text-align:center;padding:30px;color:var(--text-secondary)"><div class="spinner"></div></div></div>
+            <div style="text-align:center;margin-top:16px;font-size:11px;color:var(--text-secondary)">A high Wonder Score means the stock currently matches more of these setups with strong underlying data — a screening aid, not investment advice. Do your own research.</div>
+            <div id="gems-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,0.55);z-index:300;align-items:center;justify-content:center;padding:20px">
+                <div style="background:var(--bg-card);border-radius:16px;max-width:620px;width:100%;max-height:85vh;overflow:auto;padding:24px;box-shadow:0 20px 60px rgba(15,23,42,0.3)">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+                        <div id="gems-modal-title" style="font-size:18px;font-weight:800;color:var(--text-primary)"></div>
+                        <button id="gems-modal-close" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-secondary)">×</button>
+                    </div>
+                    <div id="gems-modal-body"></div>
+                </div>
+            </div>
+        `;
+        let pollTimer = null;
+        const fmt = (v, s='') => (v === null || v === undefined) ? '—' : v + s;
+
+        const scoreColor = (v) => v >= 85 ? 'var(--green)' : v >= 65 ? 'var(--yellow)' : 'var(--text-secondary)';
+
+        const renderResults = (data) => {
+            const el = document.getElementById('gems-result');
+            if (!el) return;
+            let h = '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px">';
+            h += '<div class="card" style="flex:1;min-width:120px;text-align:center;padding:14px;border-left:4px solid #4f46e5"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Scanned</div><div style="font-size:20px;font-weight:800;color:var(--text-accent);margin-top:4px">'+data.total_scanned+'</div></div>';
+            h += '<div class="card" style="flex:1;min-width:120px;text-align:center;padding:14px;border-left:4px solid var(--green)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Matched a setup</div><div style="font-size:20px;font-weight:800;color:var(--green);margin-top:4px">'+data.total_passed+'</div></div>';
+            h += '<div class="card" style="flex:1;min-width:120px;text-align:center;padding:14px;border-left:4px solid var(--yellow)"><div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Scan time</div><div style="font-size:20px;font-weight:800;color:var(--yellow);margin-top:4px">'+data.scan_time_seconds+'s</div></div>';
+            h += '</div>';
+            if (data.results && data.results.length) {
+                h += '<div style="display:grid;gap:10px">';
+                data.results.forEach(s => {
+                    const sc = scoreColor(s.wonder_score);
+                    const tags = (s.setups || []).map(t => '<span style="background:rgba(79,70,229,0.08);border:1px solid rgba(79,70,229,0.2);color:var(--text-accent);font-size:11px;font-weight:700;padding:3px 9px;border-radius:14px">'+t+'</span>').join(' ');
+                    const conf = (s.setups && s.setups.length >= 2) ? '<span style="background:rgba(22,163,74,0.12);color:var(--green);font-size:10px;font-weight:800;padding:3px 8px;border-radius:12px;margin-left:4px">CONFLUENCE</span>' : '';
+                    const rsCol = (s.rs_6m||0) >= 0 ? 'var(--green)' : 'var(--red)';
+                    h += '<div class="card gem-row" data-ticker="'+s.ticker+'" style="padding:14px 16px;cursor:pointer;transition:transform .15s" title="Click for AI deep-dive">';
+                    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">';
+                    h += '<div style="display:flex;align-items:center;gap:12px;min-width:200px">';
+                    h += '<div style="font-size:18px;font-weight:800;color:var(--text-secondary);width:28px">'+s.rank+'</div>';
+                    h += '<div><div style="font-weight:800;color:var(--text-primary);font-size:15px">'+s.ticker+(s.macd_bull?' <span title="MACD bullish" style="font-size:11px">📈</span>':'')+'</div><div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center">'+tags+conf+'</div></div>';
+                    h += '</div>';
+                    h += '<div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">';
+                    h += '<div style="text-align:right"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">Price</div><div style="font-weight:700">₹'+Number(s.price).toLocaleString("en-IN")+'</div></div>';
+                    h += '<div style="text-align:right"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">RS 6m</div><div style="font-weight:700;color:'+rsCol+'">'+fmt(s.rs_6m,'%')+'</div></div>';
+                    h += '<div style="text-align:right"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">52wH Δ</div><div style="font-weight:700">-'+fmt(s.dist_52wh,'%')+'</div></div>';
+                    h += '<div style="text-align:right"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">Vol surge</div><div style="font-weight:700">'+fmt(s.vol_surge,'×')+'</div></div>';
+                    h += '<div style="text-align:right;min-width:90px"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">Wonder</div><div style="display:flex;align-items:center;gap:6px;justify-content:flex-end"><div style="width:44px;height:6px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.wonder_score,100)+'%;height:100%;background:'+sc+'"></div></div><b style="color:'+sc+'">'+s.wonder_score+'</b></div></div>';
+                    h += '</div></div></div>';
+                });
+                h += '</div>';
+            } else {
+                h += '<div class="card" style="text-align:center;padding:40px;border-color:var(--yellow)"><div style="font-size:40px;margin-bottom:14px">💎</div><div style="color:var(--yellow);font-weight:800">No gems matched today</div><div style="color:var(--text-secondary);margin-top:8px">In weak or choppy markets, few stocks show a clean accumulation, turnaround, or breakout setup. Try again another day.</div></div>';
+            }
+            h += '<div style="text-align:right;margin-top:12px;font-size:11px;color:var(--text-secondary);font-style:italic">Last scanned: '+(data.timestamp||'')+'</div>';
+            el.innerHTML = h;
+
+            // Wire row clicks -> deep dive
+            el.querySelectorAll('.gem-row').forEach(row => {
+                row.addEventListener('mouseenter', () => row.style.transform = 'translateY(-2px)');
+                row.addEventListener('mouseleave', () => row.style.transform = 'translateY(0)');
+                row.addEventListener('click', () => {
+                    const t = row.getAttribute('data-ticker');
+                    const stock = data.results.find(x => x.ticker === t);
+                    if (stock) openDeepDive(stock);
+                });
+            });
+        };
+
+        const openDeepDive = async (stock) => {
+            const modal = document.getElementById('gems-modal');
+            const title = document.getElementById('gems-modal-title');
+            const bodyEl = document.getElementById('gems-modal-body');
+            title.innerHTML = '💎 ' + stock.ticker + ' <span style="font-size:12px;color:var(--text-secondary);font-weight:600">· Wonder ' + stock.wonder_score + '</span>';
+            bodyEl.innerHTML = '<div style="text-align:center;padding:30px"><div class="spinner"></div><div style="color:var(--text-secondary);font-size:13px;margin-top:10px">Generating institutional deep-dive from live data…</div></div>';
+            modal.style.display = 'flex';
+            try {
+                const r = await api.hiddenGemsDeepDive(stock);
+                const txt = (r.analysis || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+                bodyEl.innerHTML = '<div style="font-size:13.5px;line-height:1.7;color:#334155">'+txt+'</div>';
+            } catch (e) {
+                bodyEl.innerHTML = '<div style="color:var(--red);font-size:13px">Could not generate the deep-dive: '+e.message+'</div>';
+            }
+        };
+
+        document.getElementById('gems-modal-close').addEventListener('click', () => document.getElementById('gems-modal').style.display='none');
+        document.getElementById('gems-modal').addEventListener('click', (e) => { if (e.target.id === 'gems-modal') e.currentTarget.style.display='none'; });
+
+        const startPolling = () => {
+            if (pollTimer) clearInterval(pollTimer);
+            const btn = document.getElementById('btn-scan-gems');
+            const bar = document.getElementById('gems-status');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Scanning full market...'; }
+            if (bar) { bar.style.display='block'; bar.innerHTML = '<div class="card" style="padding:12px 16px;background:rgba(22,163,74,0.06);border-color:rgba(22,163,74,0.25);display:flex;align-items:center;gap:12px;margin-bottom:16px"><span class="spinner"></span><span style="color:var(--green);font-weight:600">Hunting for hidden gems (3–6 min)... You can navigate away. Results will be saved.</span></div>'; }
+            pollTimer = setInterval(async () => {
+                try {
+                    const st = await api.getScreenerStatus(MKT);
+                    if (st.status === 'done') { clearInterval(pollTimer); pollTimer=null; if (btn){btn.disabled=false;btn.innerHTML='💎 Find Hidden Gems';} if (bar) bar.style.display='none'; loadLast(); }
+                    else if (st.status === 'error') { clearInterval(pollTimer); pollTimer=null; if (btn){btn.disabled=false;btn.innerHTML='💎 Find Hidden Gems';} if (bar){bar.style.display='block';bar.innerHTML='<div class="card" style="padding:12px 16px;border-color:var(--red);margin-bottom:16px"><span style="color:var(--red);font-weight:600">Scan failed: '+(st.error||'Unknown error')+'</span></div>';} }
+                } catch(e) {}
+            }, 6000);
+        };
+
+        const loadLast = async () => {
+            const el = document.getElementById('gems-result');
+            if (!el) return;
+            try {
+                const data = await api.getScreenerResults(MKT);
+                if (data.empty) {
+                    el.innerHTML = '<div class="card" style="text-align:center;padding:40px;border-color:rgba(79,70,229,0.2)"><div style="font-size:40px;margin-bottom:14px">💎</div><div style="color:var(--text-accent);font-weight:800;font-size:16px">No scan yet</div><div style="color:var(--text-secondary);margin-top:8px">Click <b>Find Hidden Gems</b> to scan the full market for stealth accumulation, turnarounds, and breakouts. Best run after 4 PM IST.</div></div>';
+                } else { renderResults(data); }
+            } catch(e) { el.innerHTML = '<div class="card" style="text-align:center;padding:20px;color:var(--text-secondary)">Could not load previous results.</div>'; }
+            try { const st = await api.getScreenerStatus(MKT); if (st.status === 'running') startPolling(); } catch(e) {}
+        };
+
+        document.getElementById('btn-scan-gems').addEventListener('click', async () => {
+            try { await api.startScreenerScan(MKT); startPolling(); }
+            catch (err) { alert('Failed to start scan: ' + err.message); }
+        });
+
+        loadLast();
+    },
+
     renderHome(container) {
         const owl = `<svg viewBox="0 0 64 64" fill="none" style="width:84px;height:84px;filter:drop-shadow(0 8px 24px rgba(129,140,248,0.3))">
             <path d="M32 6C16 6 10 18 10 32c0 16 10 26 22 26s22-10 22-26C54 18 48 6 32 6Z" fill="#0f172a" stroke="#818cf8" stroke-width="2.5"/>
@@ -993,6 +1145,7 @@ const app = {
                 ${card('#master', '#fbbf24', '🏆', 'Master Screener', 'Ranks the Nifty 1000 on 12 technical + fundamental checks and returns the Top 10 with a full score breakdown.', 'Rank the Market', true)}
                 ${card('#smallmid', '#a78bfa', '💎', 'Small/Mid Master', 'Same 12-factor score, applied to the small &amp; mid-cap universe beyond the Nifty 1000. Higher risk, higher potential.', 'Rank Small/Mid', true)}
                 ${card('#microcap', '#f472b6', '🔬', 'Micro Cap Scanner', 'Micro caps under ₹2,000 Cr trading within 7% of their 52-week high — the tightest momentum coil, ranked by the same 12-factor score.', 'Scan Micro Caps', true)}
+                ${card('#gems', '#16a34a', '💎', 'Hidden Gems', 'The wonder-stock finder: a full-market fusion scan tagging stealth accumulation, turnarounds &amp; breakouts, ranked by Wonder Score with AI deep-dives.', 'Find Gems', true)}
                 ${card('#screener', '#60a5fa', '📊', 'Stock Screener', 'Scan the Nifty 500 — and the next 501–1000 — for breakouts by P/E, volume spike and RSI.', 'Run a Scan')}
                 ${card('#chartink', '#c084fc', '📋', 'Chartink Comparator', 'Find the stocks that appear in both of your favourite Chartink screeners.', 'Compare')}
             </div>
