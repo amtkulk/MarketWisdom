@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v27',
+    VERSION: 'v28',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -419,7 +419,7 @@ const app = {
                 });
                 html += `</div></div>`;
             });
-            html += `<div style="text-align:right;font-size:11px;color:var(--text-secondary);font-style:italic;margin-top:4px">NSE · as of ${esc(data.timestamp || '')}</div>`;
+            html += `<div style="text-align:right;font-size:11px;color:var(--text-secondary);font-style:italic;margin-top:4px">${data.source === 'yfinance' ? 'Yahoo Finance (NSE feed unavailable — major indices only, no breadth) · ' : 'NSE · '}as of ${esc(data.timestamp || '')}</div>`;
             body.innerHTML = html;
         };
         const esc = (s) => String(s||'').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));

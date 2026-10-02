@@ -1752,6 +1752,12 @@ def _classify_index(name):
 def fetch_indices_heatmap():
     data = get_nse_data("/api/allIndices")
     if not data or "data" not in data:
+        # NSE blocked the server (common on cloud hosts) or is down.
+        # Fall back to yfinance so the heatmap still shows the major indices,
+        # using the last two daily closes (works when the market is closed too).
+        fb = _heatmap_from_yfinance()
+        if fb and fb.get("groups"):
+            return fb
         return {"ok": False, "error": "Could not reach NSE allIndices feed", "groups": []}
 
     def _num(v):
@@ -1793,6 +1799,97 @@ def fetch_indices_heatmap():
     ts = data.get("timestamp") or datetime.now().strftime("%d-%b-%Y %H:%M:%S")
     total = sum(len(g["indices"]) for g in groups)
     return {"ok": True, "groups": groups, "timestamp": ts, "count": total}
+
+
+# Yahoo Finance tickers for the NSE indices that have them. Used only as a
+# fallback when NSE's own feed is unreachable (e.g. blocked from the cloud host)
+# or outside market hours. Breadth (advances/declines) isn't available here.
+_YF_INDEX_MAP = [
+    ("NIFTY 50",            "Broad Market", "^NSEI"),
+    ("NIFTY 100",           "Broad Market", "^CNX100"),
+    ("NIFTY 200",           "Broad Market", "^CNX200"),
+    ("NIFTY 500",           "Broad Market", "^CRSLDX"),
+    ("NIFTY MIDCAP 50",     "Broad Market", "^NSEMDCP50"),
+    ("NIFTY MIDCAP 100",    "Broad Market", "NIFTY_MIDCAP_100.NS"),
+    ("NIFTY SMALLCAP 100",  "Broad Market", "^CNXSC"),
+    ("NIFTY BANK",          "Sectoral",     "^NSEBANK"),
+    ("NIFTY AUTO",          "Sectoral",     "^CNXAUTO"),
+    ("NIFTY FINANCIAL SERVICES", "Sectoral","NIFTY_FIN_SERVICE.NS"),
+    ("NIFTY FMCG",          "Sectoral",     "^CNXFMCG"),
+    ("NIFTY IT",            "Sectoral",     "^CNXIT"),
+    ("NIFTY MEDIA",         "Sectoral",     "^CNXMEDIA"),
+    ("NIFTY METAL",         "Sectoral",     "^CNXMETAL"),
+    ("NIFTY PHARMA",        "Sectoral",     "^CNXPHARMA"),
+    ("NIFTY PSU BANK",      "Sectoral",     "^CNXPSUBANK"),
+    ("NIFTY REALTY",        "Sectoral",     "^CNXREALTY"),
+    ("NIFTY ENERGY",        "Thematic",     "^CNXENERGY"),
+    ("NIFTY INFRASTRUCTURE","Thematic",     "^CNXINFRA"),
+    ("NIFTY COMMODITIES",   "Thematic",     "^CNXCMDT"),
+    ("NIFTY PSE",           "Thematic",     "^CNXPSE"),
+    ("NIFTY MNC",           "Thematic",     "^CNXMNC"),
+    ("NIFTY INDIA CONSUMPTION", "Thematic", "^CNXCONSUM"),
+]
+
+
+def _heatmap_from_yfinance():
+    """Fallback index data via yfinance. Uses the last two daily closes so it
+    works outside market hours and on days the market is shut (shows the most
+    recent session's move). No breadth (advances/declines) from this source."""
+    try:
+        import yfinance as yf
+        from datetime import datetime
+        symbols = [t for _n, _g, t in _YF_INDEX_MAP]
+        try:
+            df = yf.download(symbols, period="5d", interval="1d", group_by="ticker",
+                             threads=True, progress=False, auto_adjust=False)
+        except Exception:
+            df = None
+
+        def _num(v):
+            try:
+                return round(float(v), 2)
+            except (TypeError, ValueError):
+                return None
+
+        def last_two(sym):
+            try:
+                sub = df[sym]
+                closes = [float(x) for x in sub["Close"].tolist() if x == x]
+                if closes:
+                    return closes[-1], (closes[-2] if len(closes) > 1 else closes[-1])
+            except Exception:
+                pass
+            return None, None
+
+        buckets = {}
+        for name, group, sym in _YF_INDEX_MAP:
+            curr, prev = last_two(sym)
+            if curr is None:
+                continue
+            change = curr - prev
+            pct = (change / prev * 100) if prev else 0
+            buckets.setdefault(group, []).append({
+                "name": name, "last": _num(curr), "pct": _num(pct),
+                "change": _num(change), "advances": None, "declines": None,
+                "unchanged": None,
+            })
+
+        groups = []
+        for group, _members in _HEATMAP_GROUPS:
+            rows = buckets.get(group, [])
+            if not rows:
+                continue
+            rows.sort(key=lambda r: r["name"])
+            groups.append({"group": group, "indices": rows})
+
+        if not groups:
+            return None
+        total = sum(len(g["indices"]) for g in groups)
+        return {"ok": True, "groups": groups, "count": total,
+                "timestamp": datetime.now().strftime("%d-%b-%Y %H:%M:%S"),
+                "source": "yfinance"}
+    except Exception:
+        return None
 
 
 @app.route("/api/indices_heatmap")
