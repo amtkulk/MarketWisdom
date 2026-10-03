@@ -241,6 +241,30 @@ const api = {
         return res.json();
     },
 
+    async fetchReitsInvits() {
+        const res = await fetch(`${API_BASE_URL}/reits_invits`, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        return res.json();
+    },
+
+    async fetchActiveAlerts() {
+        const res = await fetch(`${API_BASE_URL}/alerts/active`, {
+            cache: 'no-store',
+            headers: (typeof Auth !== "undefined" ? Auth.headers() : {})
+        });
+        if (!res.ok) return { alerts: [] };
+        return res.json();
+    },
+
+    async postAlertAction(alert_id, action) {
+        const res = await fetch(`${API_BASE_URL}/alerts/action`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(typeof Auth !== "undefined" ? Auth.headers() : {}) },
+            body: JSON.stringify({ alert_id, action })
+        });
+        return res.json();
+    },
+
     async startScreenerScan(market) {
         const res = await fetch(`${API_BASE_URL}/screener/start?market=${market}`, { method: 'POST' });
         if (!res.ok) {

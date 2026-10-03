@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v31',
+    VERSION: 'v32',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -47,7 +47,81 @@ const app = {
         window.addEventListener('mw-auth-changed', () => {
             const route = window.location.hash.replace('#', '') || 'home';
             this.navigate(this._resolveRoute(route));
+            this.alerts.poll();                 // refresh alerts on auth change
         });
+
+        this.alerts.start();                    // app-wide dividend ex-date alerts
+    },
+
+    // ───────────────────────────────────────────────────────────
+    //  APP-WIDE DIVIDEND EX-DATE ALERTS (signed-in users, every page)
+    //  Polls the server; shows a popup per active alert that persists across
+    //  pages until the user clicks Read (hidden for the day) or Snooze (back
+    //  in 15 min). The server records every action against the Gmail login.
+    // ───────────────────────────────────────────────────────────
+    alerts: {
+        POLL_MS: 60000,
+        _timer: null,
+        _root() {
+            let el = document.getElementById('mw-alert-root');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'mw-alert-root';
+                el.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:400;display:flex;flex-direction:column;gap:10px;max-width:360px';
+                document.body.appendChild(el);
+            }
+            return el;
+        },
+        start() {
+            if (this._timer) clearInterval(this._timer);
+            this.poll();
+            this._timer = setInterval(() => this.poll(), this.POLL_MS);
+        },
+        async poll() {
+            // Only signed-in users get alerts (per-account, server-enforced too).
+            if (!(typeof Auth !== 'undefined' && Auth.user && Auth.user())) {
+                this._render([]); return;
+            }
+            try {
+                const data = await api.fetchActiveAlerts();
+                this._render(data.alerts || []);
+            } catch (e) { /* keep whatever is showing */ }
+        },
+        _render(alerts) {
+            const root = this._root();
+            root.innerHTML = '';
+            if (!alerts.length) return;
+            const esc = (s) => String(s||'').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+            alerts.forEach(a => {
+                const amt = (a.amount !== null && a.amount !== undefined) ? ('₹' + a.amount + ' / unit') : 'Dividend';
+                const card = document.createElement('div');
+                card.style.cssText = 'background:var(--bg-card);border:1px solid rgba(217,119,6,0.4);border-left:5px solid var(--yellow);border-radius:12px;padding:14px 16px;box-shadow:0 12px 32px rgba(15,23,42,0.22);animation:fadeIn .3s ease-out';
+                card.innerHTML = `
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                        <span style="font-size:18px">💰</span>
+                        <span style="font-weight:800;color:var(--text-primary);font-size:14px">${esc(a.symbol)} — Dividend Ex-Date</span>
+                    </div>
+                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.6">
+                        <b style="color:var(--text-primary)">${esc(a.name)}</b> (${esc(a.type)})<br>
+                        Ex-Date: <b style="color:var(--yellow)">${esc(a.ex_date)}</b>${a.record_date ? ' · Record: ' + esc(a.record_date) : ''}<br>
+                        ${esc(amt)}
+                    </div>
+                    <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
+                        <button class="mw-alert-snooze" style="padding:7px 14px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-card);color:var(--text-secondary);font-weight:700;font-size:12px;cursor:pointer">😴 Snooze 15m</button>
+                        <button class="mw-alert-read" style="padding:7px 14px;border-radius:8px;border:none;background:var(--green);color:#fff;font-weight:700;font-size:12px;cursor:pointer">✓ Read</button>
+                    </div>`;
+                card.querySelector('.mw-alert-snooze').addEventListener('click', () => this.act(a.alert_id, 'snooze', card));
+                card.querySelector('.mw-alert-read').addEventListener('click', () => this.act(a.alert_id, 'read', card));
+                root.appendChild(card);
+            });
+        },
+        async act(alert_id, action, card) {
+            if (card) card.style.opacity = '0.5';
+            try { await api.postAlertAction(alert_id, action); } catch (e) {}
+            if (card) card.remove();
+            // Re-poll so the server's view (snooze window / read-for-day) drives what's left.
+            this.poll();
+        },
     },
 
     _isSignedIn() {
@@ -103,7 +177,7 @@ const app = {
         const label = ({
             global: 'Global Market', 'war-news': 'War News', telegram: 'Telegram Feed',
             screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', wyckoff: 'Wyckoff Momentum', stock: 'Stock Research',
-            overview: 'Stock Overview', action: 'Stock Action', heatmap: 'Indices Heatmap', chartink: 'Chartink Comparator',
+            overview: 'Stock Overview', reits: 'REITs & InvITs', action: 'Stock Action', heatmap: 'Indices Heatmap', chartink: 'Chartink Comparator',
             nifty: 'Nifty Analysis', watchlist: 'Watchlist',
         })[attemptedRoute] || 'this page';
         container.innerHTML = `
@@ -163,6 +237,9 @@ const app = {
             case 'heatmap':
                 this.renderHeatmap(container);
                 break;
+            case 'reits':
+                this.renderReitsInvits(container);
+                break;
             case 'war-news':
                 this.renderWarNews(container);
                 break;
@@ -220,6 +297,7 @@ const app = {
             default:
                 this.renderHome(container);
         }
+        if (this.alerts) this.alerts.poll();     // surface ex-date alerts on every page
     },
 
     renderInfoPage(container, which) {
@@ -482,6 +560,91 @@ const app = {
             }
         };
         const rb = document.getElementById('btn-refresh-heatmap');
+        if (rb) rb.addEventListener('click', load);
+        load();
+    },
+
+    renderReitsInvits(container) {
+        container.innerHTML = `
+            <div style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px">
+                <div>
+                    <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🏢 REITs & InvITs</h2>
+                    <p style="font-size:13px;color:var(--text-secondary)">All exchange-listed REITs and InvITs — live price, announcements, and upcoming dividend ex-dates. A dividend ex-date triggers an app-wide alert on every page until you mark it Read.</p>
+                </div>
+                <button class="btn" id="btn-refresh-reits" style="padding:8px 16px;font-size:13px">↻ Refresh</button>
+            </div>
+            <div id="reits-body"><div style="text-align:center;padding:40px"><div class="big-spinner"></div><div style="color:var(--text-secondary);font-size:13px">Loading REITs & InvITs…</div></div></div>
+            <div style="text-align:center;margin-top:16px;font-size:11px;color:var(--text-secondary)">Dividend &amp; ex-date data is auto-fetched from NSE / Yahoo Finance and may occasionally be delayed or unavailable. Always confirm on the exchange before acting. Not investment advice.</div>
+        `;
+
+        const esc = (s) => String(s||'').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+        const fmtDate = (iso) => {
+            if (!iso) return '—';
+            try { const d = new Date(iso + 'T00:00:00'); return d.toLocaleDateString('en-IN', {day:'2-digit', month:'short', year:'numeric'}); }
+            catch(e) { return iso; }
+        };
+        const daysTo = (iso) => {
+            if (!iso) return null;
+            const d = new Date(iso + 'T00:00:00'), now = new Date(); now.setHours(0,0,0,0);
+            return Math.round((d - now) / 86400000);
+        };
+
+        const render = (data) => {
+            const body = document.getElementById('reits-body');
+            if (!body) return;
+            const funds = (data && data.funds) || [];
+            if (!funds.length) { body.innerHTML = '<div class="card" style="text-align:center;padding:36px;color:var(--text-secondary)">Could not load the REITs/InvITs list right now. Try Refresh in a moment.</div>'; return; }
+
+            // Upcoming ex-dates banner (what will trigger alerts)
+            const upcoming = funds.filter(f => f.next_ex_date).sort((a,b)=> a.next_ex_date < b.next_ex_date ? -1 : 1);
+            let h = '';
+            if (upcoming.length) {
+                h += '<div class="card" style="border-left:4px solid var(--yellow);margin-bottom:16px;background:rgba(217,119,6,0.05)">';
+                h += '<div style="font-weight:800;font-size:13px;color:var(--text-primary);margin-bottom:8px">💰 Upcoming Dividend Ex-Dates</div>';
+                h += '<div style="display:grid;gap:6px">';
+                upcoming.forEach(f => {
+                    const dt = daysTo(f.next_ex_date);
+                    const when = dt === 0 ? 'TODAY' : (dt > 0 ? 'in ' + dt + ' day' + (dt>1?'s':'') : '');
+                    h += '<div style="display:flex;justify-content:space-between;font-size:12.5px"><span><b style="color:var(--text-primary)">'+esc(f.symbol)+'</b> <span style="color:var(--text-secondary)">'+esc(f.name)+'</span></span><span style="color:var(--yellow);font-weight:700">'+fmtDate(f.next_ex_date)+(when?' · '+when:'')+(f.next_amount?' · ₹'+f.next_amount:'')+'</span></div>';
+                });
+                h += '</div></div>';
+            }
+
+            // Group REIT vs InvIT
+            ['REIT','InvIT'].forEach(kind => {
+                const grp = funds.filter(f => f.type === kind);
+                if (!grp.length) return;
+                h += '<div style="font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--text-accent);margin:18px 0 10px">'+(kind==='REIT'?'🏢 REITs':'🛣️ InvITs')+' · '+grp.length+'</div>';
+                h += '<div class="card" style="padding:0;overflow:hidden"><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:640px">';
+                h += '<thead><tr style="text-align:left">'
+                   + '<th style="padding:10px 12px">Fund</th>'
+                   + '<th style="padding:10px 12px;text-align:right">Price</th>'
+                   + '<th style="padding:10px 12px;text-align:right">Next Ex-Date</th>'
+                   + '<th style="padding:10px 12px;text-align:right">Amount</th>'
+                   + '<th style="padding:10px 12px">Latest Announcement</th></tr></thead><tbody>';
+                grp.forEach(f => {
+                    const latest = (f.dividends && f.dividends[0]) ? f.dividends[0] : null;
+                    const exCol = f.next_ex_date ? 'var(--yellow)' : 'var(--text-secondary)';
+                    h += '<tr style="border-top:1px solid rgba(15,23,42,0.06)">';
+                    h += '<td style="padding:10px 12px"><div style="font-weight:800;color:var(--text-primary)">'+esc(f.symbol)+'</div><div style="font-size:11px;color:var(--text-secondary)">'+esc(f.name)+'</div></td>';
+                    h += '<td style="padding:10px 12px;text-align:right;font-weight:700">'+(f.price!=null?'₹'+Number(f.price).toLocaleString('en-IN'):'—')+'</td>';
+                    h += '<td style="padding:10px 12px;text-align:right;font-weight:700;color:'+exCol+'">'+fmtDate(f.next_ex_date)+'</td>';
+                    h += '<td style="padding:10px 12px;text-align:right">'+(f.next_amount!=null?'₹'+f.next_amount:'—')+'</td>';
+                    h += '<td style="padding:10px 12px;font-size:12px;color:var(--text-secondary)">'+(latest?esc(latest.purpose)+' <span style="opacity:.7">('+fmtDate(latest.ex_date)+')</span>':'—')+'</td>';
+                    h += '</tr>';
+                });
+                h += '</tbody></table></div></div>';
+            });
+            h += '<div style="text-align:right;margin-top:10px;font-size:11px;color:var(--text-secondary);font-style:italic">As of '+esc((data&&data.timestamp)||'')+'</div>';
+            body.innerHTML = h;
+        };
+
+        const load = async () => {
+            const body = document.getElementById('reits-body');
+            try { render(await api.fetchReitsInvits()); }
+            catch (e) { if (body) body.innerHTML = '<div class="card" style="text-align:center;padding:30px;color:var(--text-secondary)">Could not load: '+e.message+'</div>'; }
+        };
+        const rb = document.getElementById('btn-refresh-reits');
         if (rb) rb.addEventListener('click', load);
         load();
     },
@@ -1326,6 +1489,7 @@ const app = {
             <div class="feature-grid">
                 ${card('#global', '#f59e0b', '🌍', 'Global Market', "World indices, commodities and FX in separate tables, plus today's biggest moves and live market news.", 'View Markets')}
                 ${card('#heatmap', '#10b981', '🗺️', 'Indices Heatmap', "Every live NSE index in one colour-coded grid — spot sector rotation and market breadth at a glance.", 'Open Heatmap', true)}
+                ${card('#reits', '#0d9488', '🏢', 'REITs & InvITs', 'All listed REITs &amp; InvITs with live price and dividend ex-dates — plus app-wide alerts when an ex-date is declared.', 'View Funds', true)}
                 ${card('#war-news', '#ef4444', '📰', 'War News', 'Live US–Iran and Russia–Ukraine headlines, newest first, in two columns.', 'Read News')}
                 ${card('#action', '#fbbf24', '⚡', 'Stock Action', 'The latest announcements, results and conference-call notes for a company.', 'View Action')}
             </div>

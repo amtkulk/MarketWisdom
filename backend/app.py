@@ -1,7 +1,7 @@
 import os
 import json
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from database import init_db, add_or_update_stock, delete_stock, get_all_stocks, upsert_user, save_chartink_scanner, get_chartink_scanners, delete_chartink_scanner
@@ -3030,6 +3030,211 @@ def api_telegram_feed():
     channel = "marketwisdom_official"
     data = fetch_telegram_messages(channel)
     return jsonify(data)
+
+# ══════════════════════════════════════════════════════════════
+#  REITs / InvITs  — list, live quotes, announcements & dividend ex-dates
+#  Small, stable universe of exchange-listed trusts. Price via NSE quote API
+#  (yfinance fallback); dividend/ex-date via NSE corporate-actions (yfinance
+#  dividend history fallback). Drives the app-wide ex-date alert system.
+# ══════════════════════════════════════════════════════════════
+REITS_INVITS = [
+    # (NSE symbol, display name, type, yahoo ticker)
+    ("EMBASSY",  "Embassy Office Parks REIT",          "REIT",  "EMBASSY.NS"),
+    ("MINDSPACE","Mindspace Business Parks REIT",       "REIT",  "MINDSPACE.NS"),
+    ("BIRET",    "Brookfield India Real Estate Trust",  "REIT",  "BIRET.NS"),
+    ("NXST",     "Nexus Select Trust",                  "REIT",  "NXST.NS"),
+    ("INDIGRID", "India Grid Trust (IndiGrid)",         "InvIT", "INDIGRID.NS"),
+    ("PGINVIT",  "PowerGrid Infrastructure InvIT",      "InvIT", "PGINVIT.NS"),
+    ("IRBINVIT", "IRB InvIT Fund",                      "InvIT", "IRBINVIT.NS"),
+]
+
+
+def _nse_corp_actions(symbol):
+    """Dividend corporate actions for a symbol from NSE. Returns list of
+    {purpose, ex_date(ISO), record_date, amount} or []."""
+    import re
+    try:
+        data = get_nse_data(f"/api/corporates-corporateActions?index=equities&symbol={symbol}")
+        if not isinstance(data, list):
+            data = (data or {}).get("data") if isinstance(data, dict) else None
+        out = []
+        for row in (data or []):
+            subject = (row.get("subject") or row.get("purpose") or "")
+            if "divid" not in subject.lower():
+                continue
+            exd = row.get("exDate") or row.get("ex_date") or ""
+            iso = _to_iso_date(exd)
+            amt = None
+            m = re.search(r'(?:rs\.?|₹)\s*([\d.]+)', subject.lower())
+            if m:
+                try: amt = float(m.group(1))
+                except Exception: amt = None
+            out.append({"purpose": subject.strip(), "ex_date": iso,
+                        "ex_date_raw": exd, "record_date": row.get("recDate", ""),
+                        "amount": amt})
+        return out
+    except Exception:
+        return []
+
+
+def _to_iso_date(s):
+    """Parse NSE date formats (e.g. '03-Oct-2026') to 'YYYY-MM-DD', else ''."""
+    if not s:
+        return ""
+    for fmt in ("%d-%b-%Y", "%d-%b-%Y %H:%M:%S", "%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(str(s).strip(), fmt).strftime("%Y-%m-%d")
+        except Exception:
+            continue
+    return ""
+
+
+def _yf_next_dividend(yticker):
+    """Fallback: most recent/upcoming dividend ex-date + amount from yfinance."""
+    try:
+        import yfinance as yf
+        t = yf.Ticker(yticker)
+        divs = t.dividends
+        if divs is None or len(divs) == 0:
+            return None
+        last_dt = divs.index[-1]
+        iso = last_dt.strftime("%Y-%m-%d")
+        return {"purpose": "Dividend (yfinance)", "ex_date": iso, "ex_date_raw": iso,
+                "record_date": "", "amount": round(float(divs.iloc[-1]), 2)}
+    except Exception:
+        return None
+
+
+@cached(1800)          # REIT/InvIT board: 30 min
+def fetch_reits_invits():
+    import concurrent.futures
+    today = date.today()
+
+    def one(item):
+        sym, name, kind, yt = item
+        row = {"symbol": sym, "name": name, "type": kind,
+               "price": None, "change_pct": None, "yield": None,
+               "dividends": [], "next_ex_date": None, "next_amount": None}
+        # price
+        try:
+            p, hi, lo = fetch_quote_nse(sym)
+            if p: row["price"] = round(float(p), 2)
+        except Exception:
+            pass
+        if row["price"] is None:
+            try:
+                import yfinance as yf
+                h = yf.Ticker(yt).history(period="5d")
+                if len(h):
+                    row["price"] = round(float(h["Close"].iloc[-1]), 2)
+                    if len(h) > 1:
+                        prev = float(h["Close"].iloc[-2])
+                        row["change_pct"] = round((row["price"] - prev) / prev * 100, 2)
+            except Exception:
+                pass
+        # dividends / ex-dates
+        divs = _nse_corp_actions(sym)
+        if not divs:
+            fb = _yf_next_dividend(yt)
+            if fb: divs = [fb]
+        # keep dividends with a parseable ex-date, newest first
+        divs = [d for d in divs if d.get("ex_date")]
+        divs.sort(key=lambda d: d["ex_date"], reverse=True)
+        row["dividends"] = divs[:5]
+        # the next upcoming (or today's) ex-date
+        upcoming = [d for d in divs if d["ex_date"] >= today.isoformat()]
+        upcoming.sort(key=lambda d: d["ex_date"])
+        if upcoming:
+            row["next_ex_date"] = upcoming[0]["ex_date"]
+            row["next_amount"] = upcoming[0].get("amount")
+        return row
+
+    rows = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex:
+        rows = list(ex.map(one, REITS_INVITS))
+    return {"funds": rows, "timestamp": datetime.now().strftime("%d %b %Y  %H:%M")}
+
+
+def _active_dividend_alerts():
+    """All REIT/InvIT dividends whose ex-date is today or in the future.
+    Each becomes an alert the user must Read/Snooze. alert_id = SYMBOL:EXDATE."""
+    data = fetch_reits_invits()
+    today = date.today().isoformat()
+    alerts = []
+    for f in data.get("funds", []):
+        for d in f.get("dividends", []):
+            exd = d.get("ex_date")
+            if exd and exd >= today:                 # show through the ex-date day
+                alerts.append({
+                    "alert_id": f"{f['symbol']}:{exd}",
+                    "symbol": f["symbol"], "name": f["name"], "type": f["type"],
+                    "ex_date": exd, "record_date": d.get("record_date", ""),
+                    "amount": d.get("amount"), "purpose": d.get("purpose", "Dividend"),
+                })
+    return alerts
+
+
+@app.route("/api/reits_invits")
+def api_reits_invits():
+    try:
+        return jsonify(fetch_reits_invits())
+    except Exception as e:
+        return jsonify({"funds": [], "error": str(e)}), 200
+
+
+@app.route("/api/alerts/active")
+def api_alerts_active():
+    """Ex-date alerts this signed-in user should currently see — excludes ones
+    read today or currently snoozed. (Signed-in users only, per-account.)"""
+    user = current_user()
+    if not user:
+        return jsonify({"alerts": []})          # logged-out: no alerts
+    from database import get_alert_actions
+    today = date.today().isoformat()
+    now = datetime.now()
+    try:
+        actions = get_alert_actions(user["email"])
+    except Exception:
+        actions = {}
+    out = []
+    for a in _active_dividend_alerts():
+        act = actions.get(a["alert_id"])
+        if act:
+            # Read today → hide for the rest of today (reappears tomorrow if ex-date not passed)
+            if act.get("action") == "read" and act.get("acted_date") == today:
+                continue
+            # Snoozed and still within the snooze window → hide
+            if act.get("action") == "snooze" and act.get("snooze_until"):
+                try:
+                    if now < datetime.strptime(act["snooze_until"], "%Y-%m-%d %H:%M:%S"):
+                        continue
+                except Exception:
+                    pass
+        out.append(a)
+    return jsonify({"alerts": out})
+
+
+@app.route("/api/alerts/action", methods=["POST"])
+def api_alerts_action():
+    user = current_user()
+    if not user:
+        return jsonify({"error": "Please sign in first."}), 401
+    body = request.get_json() or {}
+    alert_id = (body.get("alert_id") or "").strip()
+    action = (body.get("action") or "").strip()
+    if not alert_id or action not in ("read", "snooze"):
+        return jsonify({"error": "alert_id and action(read|snooze) required"}), 400
+    from database import record_alert_action
+    today = date.today().isoformat()
+    snooze_until = None
+    if action == "snooze":
+        snooze_until = (datetime.now() + timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        record_alert_action(user["email"], alert_id, action, today, snooze_until)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True, "snooze_until": snooze_until})
+
 
 @app.route("/")
 def index():

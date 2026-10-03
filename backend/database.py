@@ -65,6 +65,16 @@ def init_db():
             )
         ''')
         cursor.execute('''
+            CREATE TABLE IF NOT EXISTS alert_actions (
+                user_id TEXT NOT NULL,
+                alert_id TEXT NOT NULL,
+                action TEXT,
+                acted_date TEXT,
+                snooze_until TEXT,
+                PRIMARY KEY (user_id, alert_id)
+            )
+        ''')
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 email TEXT PRIMARY KEY,
                 name TEXT, picture TEXT, google_sub TEXT, last_login TEXT
@@ -250,3 +260,38 @@ def delete_chartink_scanner(user_id, url):
         conn.execute("DELETE FROM chartink_scanners WHERE user_id = ? AND url = ?", (user_id, url))
         conn.commit()
         conn.close()
+
+
+def record_alert_action(user_id, alert_id, action, acted_date, snooze_until=None):
+    """Record a user's Read/Snooze action on a dividend ex-date alert."""
+    if USE_MONGO:
+        db.get_collection("alert_actions").update_one(
+            {"user_id": user_id, "alert_id": alert_id},
+            {"$set": {"action": action, "acted_date": acted_date,
+                      "snooze_until": snooze_until}},
+            upsert=True)
+    else:
+        conn = get_db_connection()
+        conn.execute("""
+            INSERT INTO alert_actions (user_id, alert_id, action, acted_date, snooze_until)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, alert_id) DO UPDATE SET
+                action=excluded.action, acted_date=excluded.acted_date,
+                snooze_until=excluded.snooze_until
+        """, (user_id, alert_id, action, acted_date, snooze_until))
+        conn.commit()
+        conn.close()
+
+
+def get_alert_actions(user_id):
+    """Return {alert_id: {action, acted_date, snooze_until}} for a user."""
+    if USE_MONGO:
+        rows = db.get_collection("alert_actions").find({"user_id": user_id}, {"_id": 0})
+        return {r["alert_id"]: r for r in rows}
+    conn = get_db_connection()
+    cur = conn.execute(
+        "SELECT alert_id, action, acted_date, snooze_until FROM alert_actions WHERE user_id = ?",
+        (user_id,))
+    out = {r["alert_id"]: dict(r) for r in cur.fetchall()}
+    conn.close()
+    return out
