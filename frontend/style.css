@@ -24,44 +24,69 @@ body {
 }
 
 /* ───────── Navigation ───────── */
-nav {
-    background: var(--nav-bg);
-    border-bottom: 1px solid var(--border-color);
-    padding: 12px 20px;
+/* ───────── Top brand bar ───────── */
+:root { --sidebar-w: 228px; --topbar-h: 58px; }
+
+#topbar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: var(--topbar-h);
     display: flex;
     align-items: center;
     gap: 14px;
-    position: sticky;
-    top: 0;
-    z-index: 100;
+    padding: 0 24px;
+    background: var(--nav-bg);
+    border-bottom: 1px solid var(--border-color);
+    z-index: 130;
     box-shadow: 0 1px 3px rgba(15,23,42,0.06);
 }
-
-nav .logo {
-    font-size: 16px;
-    font-weight: 800;
+.brand { display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; }
+.brand-logo { height: 34px; width: 34px; border-radius: 8px; object-fit: cover; }
+.brand-text {
+    font-size: 24px;
+    font-weight: 900;
+    letter-spacing: 0.3px;
+    background: linear-gradient(135deg, #4f46e5, #10b981);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
     color: var(--text-accent);
-    white-space: nowrap;
 }
+
+/* ───────── Left sidebar nav ───────── */
+#sidebar {
+    position: fixed;
+    top: var(--topbar-h);
+    left: 0;
+    bottom: 0;
+    width: var(--sidebar-w);
+    background: var(--nav-bg);
+    border-right: 1px solid var(--border-color);
+    overflow-y: auto;
+    padding: 14px 12px calc(20px + env(safe-area-inset-bottom));
+    z-index: 110;
+}
+.nav-links { display: flex; flex-direction: column; gap: 3px; }
 
 nav a {
+    display: block;
     color: var(--text-secondary);
     text-decoration: none;
-    font-size: 13px;
-    padding: 6px 14px;
-    border-radius: 8px;
-    transition: 0.2s;
+    font-size: 13.5px;
+    font-weight: 600;
+    padding: 10px 14px;
+    border-radius: 9px;
+    transition: 0.15s;
+    white-space: nowrap;
 }
-
-nav a:hover, nav a.active {
-    background: rgba(79,70,229,0.10);
+nav a:hover { background: rgba(79,70,229,0.08); color: var(--text-primary); }
+nav a.active {
+    background: rgba(79,70,229,0.12);
     color: var(--text-accent);
+    font-weight: 800;
 }
 
-/* Desktop: links flow inline exactly as before */
-.nav-links { display: contents; }
-
-/* Hamburger + overlay: hidden on desktop */
+/* Hamburger (mobile only) + overlay */
 #menu-toggle {
     display: none;
     background: none;
@@ -78,18 +103,16 @@ nav a:hover, nav a.active {
     position: fixed;
     inset: 0;
     background: rgba(15,23,42,0.45);
-    /* MUST be below nav's z-index (100): nav is a stacking context, so the
-       drawer's z-index:200 lives INSIDE layer 100. An overlay above 100 would
-       sit on top of the drawer and swallow every tap on the links. */
-    z-index: 90;
+    z-index: 115;
 }
 #nav-overlay.show { display: block; }
 
 /* ───────── Layout ───────── */
 .page {
-    max-width: 960px;
-    margin: 0 auto;
-    padding: 32px 20px 60px;
+    margin-left: var(--sidebar-w);
+    margin-top: var(--topbar-h);
+    max-width: 1180px;
+    padding: 28px 36px 60px;
     animation: fadeIn 0.4s ease-out;
 }
 
@@ -273,30 +296,32 @@ footer {
 
     #menu-toggle { display: inline-flex; align-items: center; }
 
-    /* The links become a slide-in drawer on the LEFT */
-    .nav-links {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
+    /* On mobile the sidebar collapses; the links become a slide-in drawer. */
+    #sidebar {
         position: fixed;
         top: 0; left: 0;
         height: 100vh; height: 100dvh;
-        width: 78%;
+        width: 80%;
         max-width: 300px;
-        background: var(--nav-bg);
         border-right: 1px solid var(--border-color);
         box-shadow: 4px 0 24px rgba(15,23,42,0.18);
-        padding: 20px 14px calc(20px + env(safe-area-inset-bottom));
+        padding: calc(var(--topbar-h) + 10px) 12px calc(20px + env(safe-area-inset-bottom));
         transform: translateX(-105%);
         transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
         z-index: 200;
-        overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
     }
-    .nav-links.open { transform: translateX(0); }
-    .nav-links a { font-size: 15px; padding: 12px 14px; border-radius: 10px; }
+    #sidebar.open { transform: translateX(0); }
+    #sidebar a { font-size: 15px; padding: 12px 14px; border-radius: 10px; }
 
-    nav { padding: 10px 14px; gap: 10px; }
-    nav .logo { font-size: 14px; }
-    nav .logo img { height: 26px !important; }
+    /* Full-width content on mobile */
+    .page {
+        margin-left: 0;
+        margin-top: var(--topbar-h);
+        max-width: none;
+        padding: 20px 16px 60px;
+    }
+
+    #topbar { padding: 0 14px; gap: 10px; }
+    .brand-text { font-size: 19px; }
+    .brand-logo { height: 28px; width: 28px; }
 }

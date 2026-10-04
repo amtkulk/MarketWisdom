@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v32',
+    VERSION: 'v36',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -15,15 +15,17 @@ const app = {
 
     setupMobileMenu() {
         const toggle  = document.getElementById('menu-toggle');
+        const sidebar = document.getElementById('sidebar');
         const links   = document.getElementById('nav-links');
         const overlay = document.getElementById('nav-overlay');
-        if (!toggle || !links || !overlay) return;
-        const close = () => { links.classList.remove('open'); overlay.classList.remove('show'); };
-        const open  = () => { links.classList.add('open');    overlay.classList.add('show'); };
-        toggle.addEventListener('click', () => links.classList.contains('open') ? close() : open());
+        if (!toggle || !sidebar || !overlay) return;
+        // The whole sidebar slides in as the drawer on mobile.
+        const close = () => { sidebar.classList.remove('open'); overlay.classList.remove('show'); };
+        const open  = () => { sidebar.classList.add('open');    overlay.classList.add('show'); };
+        toggle.addEventListener('click', () => sidebar.classList.contains('open') ? close() : open());
         overlay.addEventListener('click', close);
         // Selecting any page closes the drawer
-        links.querySelectorAll('.nav-btn').forEach(a => a.addEventListener('click', close));
+        (links || sidebar).querySelectorAll('.nav-btn').forEach(a => a.addEventListener('click', close));
     },
 
     init() {
@@ -1491,7 +1493,6 @@ const app = {
                 ${card('#heatmap', '#10b981', '🗺️', 'Indices Heatmap', "Every live NSE index in one colour-coded grid — spot sector rotation and market breadth at a glance.", 'Open Heatmap', true)}
                 ${card('#reits', '#0d9488', '🏢', 'REITs & InvITs', 'All listed REITs &amp; InvITs with live price and dividend ex-dates — plus app-wide alerts when an ex-date is declared.', 'View Funds', true)}
                 ${card('#war-news', '#ef4444', '📰', 'War News', 'Live US–Iran and Russia–Ukraine headlines, newest first, in two columns.', 'Read News')}
-                ${card('#action', '#fbbf24', '⚡', 'Stock Action', 'The latest announcements, results and conference-call notes for a company.', 'View Action')}
             </div>
 
             ${sectionLabel('Your Space')}
@@ -2589,6 +2590,62 @@ const app = {
                     }
                     html += Components.StatCard('DMA Signal', c.above_200dma ? 'Above (Bullish)' : 'Below (Bearish)', dmaCol);
                     html += '</div></div>';
+
+                    // ── Gyaan (Gann Square-of-9) Levels ──
+                    // Fixed Gann ladder: level(k) = k² if k odd, k²+1 if k even
+                    // (1,5,9,17,25,37,49,65,81,101…). We show the 3 ladder values just
+                    // above (resistance) and 3 just below (support) the live Nifty.
+                    const gann = (price, n=3) => {
+                        if (!price) return null;
+                        const lv = [];
+                        for (let k=1; k<=1200; k++) {
+                            const v = (k % 2 === 1) ? k*k : k*k + 1;
+                            lv.push(v);
+                            if (v > price * 1.3 && lv.length > 10) break;
+                        }
+                        return { below: lv.filter(x => x < price).slice(-n),
+                                 above: lv.filter(x => x > price).slice(0, n) };
+                    };
+                    const g = gann(c.current_price, 3);
+                    if (g && (g.above.length || g.below.length)) {
+                        const px = c.current_price;
+                        const dist = (l) => { const d = l - px; return { pts: Math.round(d), pct: (d/px*100).toFixed(2) }; };
+                        html += '<div class="card" style="border-top:3px solid #9333ea">';
+                        html += '<div class="section-title" style="color:#9333ea">🧘 Gyaan Levels — Gann Square of 9</div>';
+                        html += '<div style="font-size:11px;color:var(--text-secondary);margin:-6px 0 12px">3 levels above (resistance) and 3 below (support) the current Nifty. Price closing above a resistance / below a support often signals continuation toward the next level.</div>';
+                        html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">';
+                        html += '<thead><tr style="text-align:left">'
+                             + '<th style="padding:8px 12px;color:var(--text-secondary)">Zone</th>'
+                             + '<th style="padding:8px 12px;text-align:right;color:var(--text-secondary)">Gyaan Level</th>'
+                             + '<th style="padding:8px 12px;text-align:right;color:var(--text-secondary)">Distance</th>'
+                             + '<th style="padding:8px 12px;text-align:right;color:var(--text-secondary)">%</th></tr></thead><tbody>';
+                        g.above.slice().reverse().forEach((l, i) => {
+                            const rnk = g.above.length - i;
+                            const d = dist(l);
+                            html += '<tr style="border-top:1px solid rgba(15,23,42,0.06)">'
+                                 + '<td style="padding:9px 12px;font-weight:700;color:var(--red)">R'+rnk+' · Resistance</td>'
+                                 + '<td style="padding:9px 12px;text-align:right;font-weight:800;color:var(--text-primary)">'+l.toLocaleString('en-IN')+'</td>'
+                                 + '<td style="padding:9px 12px;text-align:right;color:var(--red)">+'+d.pts+'</td>'
+                                 + '<td style="padding:9px 12px;text-align:right;color:var(--red)">+'+d.pct+'%</td></tr>';
+                        });
+                        html += '<tr style="background:rgba(147,51,234,0.08)">'
+                             + '<td style="padding:11px 12px;font-weight:800;color:#9333ea">● Current Nifty</td>'
+                             + '<td style="padding:11px 12px;text-align:right;font-weight:800;color:#9333ea">'+Number(px).toLocaleString('en-IN')+'</td>'
+                             + '<td style="padding:11px 12px;text-align:right;color:var(--text-secondary)">—</td>'
+                             + '<td style="padding:11px 12px;text-align:right;color:var(--text-secondary)">—</td></tr>';
+                        g.below.slice().reverse().forEach((l, i) => {
+                            const rnk = i + 1;
+                            const d = dist(l);
+                            html += '<tr style="border-top:1px solid rgba(15,23,42,0.06)">'
+                                 + '<td style="padding:9px 12px;font-weight:700;color:var(--green)">S'+rnk+' · Support</td>'
+                                 + '<td style="padding:9px 12px;text-align:right;font-weight:800;color:var(--text-primary)">'+l.toLocaleString('en-IN')+'</td>'
+                                 + '<td style="padding:9px 12px;text-align:right;color:var(--green)">'+d.pts+'</td>'
+                                 + '<td style="padding:9px 12px;text-align:right;color:var(--green)">'+d.pct+'%</td></tr>';
+                        });
+                        html += '</tbody></table></div>';
+                        html += '<div style="font-size:10.5px;color:var(--text-secondary);margin-top:10px;font-style:italic">Gann Square-of-9 levels (Linear GANN method). A mechanical support/resistance aid — not investment advice.</div>';
+                        html += '</div>';
+                    }
                 }
 
                 // Chart Canvas
@@ -2608,7 +2665,7 @@ const app = {
 
                 // PCR
                 const mkPcr = (title, d) => {
-                    if(!d) return `<div class="card"><div class="section-title">${title}</div><div style="font-size:12px;color:var(--red)">NSE Data Not Available</div></div>`;
+                    if(!d) return `<div class="card"><div class="section-title">${title}</div><div style="font-size:12px;color:var(--text-secondary)">Live option-chain data unavailable right now — try Refresh.</div></div>`;
                     const col = d.pcr > 1.2 ? 'var(--green)' : d.pcr < 0.8 ? 'var(--red)' : 'var(--yellow)';
                     return `<div class="card">
                         <div class="section-title">${title}</div>
@@ -2616,8 +2673,8 @@ const app = {
                         <div style="font-size:32px;font-weight:800;color:${col}">${d.pcr}</div>
                         <div style="margin:8px 0">${Components.CheckRow('Signal', d.pcr > 1.2, d.signal, '')}</div>
                         <div style="display:flex;justify-content:space-between;font-size:12px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(15,23,42,0.06)">
-                            <span style="color:var(--green)">PE OI: ${d.pe_oi.toLocaleString('en-IN')}</span>
-                            <span style="color:var(--red)">CE OI: ${d.ce_oi.toLocaleString('en-IN')}</span>
+                            <span style="color:var(--green)">PE OI: ${(d.pe_oi != null ? Number(d.pe_oi).toLocaleString('en-IN') : '—')}</span>
+                            <span style="color:var(--red)">CE OI: ${(d.ce_oi != null ? Number(d.ce_oi).toLocaleString('en-IN') : '—')}</span>
                         </div>
                     </div>`;
                 };
@@ -2663,9 +2720,10 @@ const app = {
 
                 res.innerHTML = html;
 
-                // Bind Chart drawing code
+                // Bind Chart drawing code (was calling a non-existent drawNiftyChart,
+                // and without the canvas id — so the chart never rendered).
                 if (data.chart && data.chart.ohlcv) {
-                    setTimeout(() => app.drawNiftyChart(data.chart.ohlcv), 50);
+                    setTimeout(() => app.drawChart('niftyCanvas', data.chart.ohlcv), 50);
                 }
 
             } catch (err) {

@@ -1154,62 +1154,85 @@ def get_nse_data(endpoint):
         return None
 
 @cached(180)            # option PCR: 3 min
-def fetch_pcr_data(symbol="NIFTY"):
-    try:
-        url = f"https://webapi.niftytrader.in/webapi/option/option-chain-data?symbol={symbol.lower()}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "Accept": "application/json",
-            "Referer": "https://www.niftytrader.in/"
-        }
-        import urllib.request
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=3) as r:
-            data = json.loads(r.read().decode('utf-8'))
-            res = data.get("resultData", {})
-            op_data = res.get("opDatas", [])
-            
-            if not op_data: 
-                return None
-            
-            # Aggregate OI per expiry
-            exp_aggregates = {}
-            for item in op_data:
-                exp = item.get("expiry_date", "")
+def _pcr_sigfmt(ce_oi, pe_oi, exp):
+    pcr = round(pe_oi / ce_oi, 2) if ce_oi > 0 else 0
+    return {"expiry": exp, "ce_oi": int(ce_oi), "pe_oi": int(pe_oi), "pcr": pcr,
+            "signal": "Bullish" if pcr > 1.2 else "Bearish" if pcr < 0.8 else "Neutral"}
+
+
+def _pcr_rows_niftytrader(symbol):
+    """[(sort_date, expiry_label, ce_oi, pe_oi), ...] ascending, or []. Longer
+    timeout + one retry (the old 3s timeout was the main cause of blank PCR)."""
+    import urllib.request
+    url = f"https://webapi.niftytrader.in/webapi/option/option-chain-data?symbol={symbol.lower()}"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+               "Accept": "application/json", "Referer": "https://www.niftytrader.in/"}
+    for attempt in range(2):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=9) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            op = (data.get("resultData", {}) or {}).get("opDatas", []) or []
+            agg = {}
+            for it in op:
+                exp = it.get("expiry_date", "") or ""
                 if "T" in exp: exp = exp.split("T")[0]
                 if not exp: continue
-                
-                if exp not in exp_aggregates:
-                    exp_aggregates[exp] = {"ce_oi": 0, "pe_oi": 0}
-                    
-                exp_aggregates[exp]["ce_oi"] += item.get("calls_oi", 0)
-                exp_aggregates[exp]["pe_oi"] += item.get("puts_oi", 0)
+                a = agg.setdefault(exp, {"ce": 0, "pe": 0})
+                a["ce"] += it.get("calls_oi", 0) or 0
+                a["pe"] += it.get("puts_oi", 0) or 0
+            rows = []
+            for exp, a in agg.items():
+                try: sk = datetime.strptime(exp, "%Y-%m-%d")
+                except Exception: sk = datetime.max
+                rows.append((sk, exp, a["ce"], a["pe"]))
+            rows.sort(key=lambda x: x[0])
+            if rows:
+                return rows
+        except Exception as e:
+            print(f"PCR niftytrader attempt {attempt+1} failed for {symbol}: {e}")
+    return []
 
-            expiries = sorted(list(exp_aggregates.keys()))
-            if not expiries:
-                return None
-                
-            def calc_pcr(exp):
-                totals = exp_aggregates.get(exp, {})
-                ce_oi = totals.get("ce_oi", 0)
-                pe_oi = totals.get("pe_oi", 0)
-                pcr = round(pe_oi / ce_oi, 2) if ce_oi > 0 else 0
-                return {
-                    "expiry": exp,
-                    "ce_oi": ce_oi,
-                    "pe_oi": pe_oi,
-                    "pcr": pcr,
-                    "signal": "Bullish" if pcr > 1.2 else "Bearish" if pcr < 0.8 else "Neutral",
-                }
 
-            weekly = calc_pcr(expiries[0]) if len(expiries) > 0 else None
-            monthly = calc_pcr(expiries[1]) if len(expiries) > 1 else None
-
-            return {"weekly": weekly, "monthly": monthly, "symbol": symbol}
-            
+def _pcr_rows_nse(symbol):
+    """NSE option-chain fallback → same row shape, or []."""
+    try:
+        data = get_nse_data(f"/api/option-chain-indices?symbol={symbol.upper()}")
+        recs = ((data or {}).get("records", {}) or {}).get("data", []) or []
+        if not recs:
+            return []
+        agg = {}
+        for it in recs:
+            exp = it.get("expiryDate", "") or ""
+            if not exp: continue
+            a = agg.setdefault(exp, {"ce": 0, "pe": 0})
+            a["ce"] += (it.get("CE") or {}).get("openInterest", 0) or 0
+            a["pe"] += (it.get("PE") or {}).get("openInterest", 0) or 0
+        rows = []
+        for exp, a in agg.items():
+            try: sk = datetime.strptime(exp, "%d-%b-%Y")
+            except Exception: sk = datetime.max
+            rows.append((sk, exp, a["ce"], a["pe"]))
+        rows.sort(key=lambda x: x[0])
+        return rows
     except Exception as e:
-        print(f"PCR error for {symbol}: {e}")
+        print(f"PCR NSE fallback failed for {symbol}: {e}")
+        return []
+
+
+def fetch_pcr_data(symbol="NIFTY"):
+    # Primary: niftytrader web API. Fallback: NSE option chain. Either can be
+    # blocked/slow from a cloud host, so we try both before giving up.
+    rows = _pcr_rows_niftytrader(symbol)
+    src = "niftytrader"
+    if not rows:
+        rows = _pcr_rows_nse(symbol)
+        src = "nse"
+    if not rows:
         return None
+    weekly  = _pcr_sigfmt(rows[0][2], rows[0][3], rows[0][1]) if len(rows) > 0 else None
+    monthly = _pcr_sigfmt(rows[1][2], rows[1][3], rows[1][1]) if len(rows) > 1 else None
+    return {"weekly": weekly, "monthly": monthly, "symbol": symbol, "source": src}
 
 
 @cached(300)            # nifty 1y chart: 5 min
@@ -3039,13 +3062,14 @@ def api_telegram_feed():
 # ══════════════════════════════════════════════════════════════
 REITS_INVITS = [
     # (NSE symbol, display name, type, yahoo ticker)
-    ("EMBASSY",  "Embassy Office Parks REIT",          "REIT",  "EMBASSY.NS"),
-    ("MINDSPACE","Mindspace Business Parks REIT",       "REIT",  "MINDSPACE.NS"),
-    ("BIRET",    "Brookfield India Real Estate Trust",  "REIT",  "BIRET.NS"),
-    ("NXST",     "Nexus Select Trust",                  "REIT",  "NXST.NS"),
-    ("INDIGRID", "India Grid Trust (IndiGrid)",         "InvIT", "INDIGRID.NS"),
-    ("PGINVIT",  "PowerGrid Infrastructure InvIT",      "InvIT", "PGINVIT.NS"),
-    ("IRBINVIT", "IRB InvIT Fund",                      "InvIT", "IRBINVIT.NS"),
+    # India has only 4 listed REITs — this REIT set is complete.
+    ("EMBASSY",   "Embassy Office Parks REIT",          "REIT",  "EMBASSY.NS"),
+    ("MINDSPACE", "Mindspace Business Parks REIT",       "REIT",  "MINDSPACE.NS"),
+    ("BIRET",     "Brookfield India Real Estate Trust",  "REIT",  "BIRET.NS"),
+    ("NXST",      "Nexus Select Trust",                  "REIT",  "NXST.NS"),
+    ("INDIGRID",  "India Grid Trust (IndiGrid)",         "InvIT", "INDIGRID.NS"),
+    ("PGINVIT",   "PowerGrid Infrastructure InvIT",      "InvIT", "PGINVIT.NS"),
+    ("IRBINVIT",  "IRB InvIT Fund",                      "InvIT", "IRBINVIT.NS"),
 ]
 
 

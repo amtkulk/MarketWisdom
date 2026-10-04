@@ -1,7 +1,7 @@
 // Service worker — NETWORK-FIRST for HTML/JS/CSS so users never get stuck
 // on stale code after a deploy. Old cache-first strategy caused sign-in and
 // gating logic to run mixed versions across files.
-const CACHE_NAME = 'market-wisdom-v30';
+const CACHE_NAME = 'market-wisdom-v34';
 const urlsToCache = [
   '/', '/index.html', '/style.css', '/app.js',
   '/components.js', '/api.js', '/auth.js', '/manifest.json'
