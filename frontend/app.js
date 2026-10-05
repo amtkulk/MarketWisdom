@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v36',
+    VERSION: 'v37',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -2591,10 +2591,10 @@ const app = {
                     html += Components.StatCard('DMA Signal', c.above_200dma ? 'Above (Bullish)' : 'Below (Bearish)', dmaCol);
                     html += '</div></div>';
 
-                    // ── Gyaan (Gann Square-of-9) Levels ──
-                    // Fixed Gann ladder: level(k) = k² if k odd, k²+1 if k even
-                    // (1,5,9,17,25,37,49,65,81,101…). We show the 3 ladder values just
-                    // above (resistance) and 3 just below (support) the live Nifty.
+                    // ── Gyaan (Gann Square-of-9) Levels — anchored to TODAY'S OPEN ──
+                    // Classic intraday Gann: fix the levels at the day's opening price
+                    // and use them as support/resistance through the session. Fixed
+                    // ladder: level(k) = k² if k odd, k²+1 if k even (1,5,9,17,25,37…).
                     const gann = (price, n=3) => {
                         if (!price) return null;
                         const lv = [];
@@ -2606,44 +2606,59 @@ const app = {
                         return { below: lv.filter(x => x < price).slice(-n),
                                  above: lv.filter(x => x > price).slice(0, n) };
                     };
-                    const g = gann(c.current_price, 3);
+                    // Today's opening price = open of the latest daily candle.
+                    const ohlc = (c.ohlcv && c.ohlcv.length) ? c.ohlcv[c.ohlcv.length - 1] : null;
+                    const openPx = (ohlc && ohlc.open) ? ohlc.open : c.current_price;
+                    const g = gann(openPx, 3);
                     if (g && (g.above.length || g.below.length)) {
-                        const px = c.current_price;
-                        const dist = (l) => { const d = l - px; return { pts: Math.round(d), pct: (d/px*100).toFixed(2) }; };
+                        const dist = (l) => { const d = l - openPx; return { pts: Math.round(d), pct: (d/openPx*100).toFixed(2) }; };
+                        const cur = c.current_price;
+                        const curVsOpen = cur ? (cur - openPx) : null;
                         html += '<div class="card" style="border-top:3px solid #9333ea">';
-                        html += '<div class="section-title" style="color:#9333ea">🧘 Gyaan Levels — Gann Square of 9</div>';
-                        html += '<div style="font-size:11px;color:var(--text-secondary);margin:-6px 0 12px">3 levels above (resistance) and 3 below (support) the current Nifty. Price closing above a resistance / below a support often signals continuation toward the next level.</div>';
+                        html += '<div class="section-title" style="color:#9333ea">🧘 Gyaan Levels — Gann Square of 9 (from today’s open)</div>';
+                        html += '<div style="font-size:11px;color:var(--text-secondary);margin:-6px 0 12px">Levels are fixed from <b>today’s opening price</b> and used as support/resistance through the session. 3 above (resistance) · 3 below (support). A decisive move above a resistance / below a support often continues to the next level.</div>';
+                        // Open vs current summary strip
+                        if (cur) {
+                            const col = curVsOpen >= 0 ? 'var(--green)' : 'var(--red)';
+                            const sign = curVsOpen >= 0 ? '+' : '';
+                            html += '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:12px;font-size:12.5px">'
+                                 + '<span style="color:var(--text-secondary)">Open: <b style="color:var(--text-primary)">'+Number(openPx).toLocaleString('en-IN')+'</b></span>'
+                                 + '<span style="color:var(--text-secondary)">Now: <b style="color:var(--text-primary)">'+Number(cur).toLocaleString('en-IN')+'</b> <span style="color:'+col+';font-weight:700">('+sign+Math.round(curVsOpen)+' / '+sign+(curVsOpen/openPx*100).toFixed(2)+'%)</span></span>'
+                                 + '</div>';
+                        }
                         html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">';
                         html += '<thead><tr style="text-align:left">'
                              + '<th style="padding:8px 12px;color:var(--text-secondary)">Zone</th>'
                              + '<th style="padding:8px 12px;text-align:right;color:var(--text-secondary)">Gyaan Level</th>'
-                             + '<th style="padding:8px 12px;text-align:right;color:var(--text-secondary)">Distance</th>'
+                             + '<th style="padding:8px 12px;text-align:right;color:var(--text-secondary)">From Open</th>'
                              + '<th style="padding:8px 12px;text-align:right;color:var(--text-secondary)">%</th></tr></thead><tbody>';
                         g.above.slice().reverse().forEach((l, i) => {
                             const rnk = g.above.length - i;
                             const d = dist(l);
+                            const hit = (cur && cur >= l) ? ' <span title="price has reached this level" style="font-size:10px">✓</span>' : '';
                             html += '<tr style="border-top:1px solid rgba(15,23,42,0.06)">'
                                  + '<td style="padding:9px 12px;font-weight:700;color:var(--red)">R'+rnk+' · Resistance</td>'
-                                 + '<td style="padding:9px 12px;text-align:right;font-weight:800;color:var(--text-primary)">'+l.toLocaleString('en-IN')+'</td>'
+                                 + '<td style="padding:9px 12px;text-align:right;font-weight:800;color:var(--text-primary)">'+l.toLocaleString('en-IN')+hit+'</td>'
                                  + '<td style="padding:9px 12px;text-align:right;color:var(--red)">+'+d.pts+'</td>'
                                  + '<td style="padding:9px 12px;text-align:right;color:var(--red)">+'+d.pct+'%</td></tr>';
                         });
                         html += '<tr style="background:rgba(147,51,234,0.08)">'
-                             + '<td style="padding:11px 12px;font-weight:800;color:#9333ea">● Current Nifty</td>'
-                             + '<td style="padding:11px 12px;text-align:right;font-weight:800;color:#9333ea">'+Number(px).toLocaleString('en-IN')+'</td>'
-                             + '<td style="padding:11px 12px;text-align:right;color:var(--text-secondary)">—</td>'
+                             + '<td style="padding:11px 12px;font-weight:800;color:#9333ea">● Today’s Open</td>'
+                             + '<td style="padding:11px 12px;text-align:right;font-weight:800;color:#9333ea">'+Number(openPx).toLocaleString('en-IN')+'</td>'
+                             + '<td style="padding:11px 12px;text-align:right;color:var(--text-secondary)">0</td>'
                              + '<td style="padding:11px 12px;text-align:right;color:var(--text-secondary)">—</td></tr>';
                         g.below.slice().reverse().forEach((l, i) => {
                             const rnk = i + 1;
                             const d = dist(l);
+                            const hit = (cur && cur <= l) ? ' <span title="price has reached this level" style="font-size:10px">✓</span>' : '';
                             html += '<tr style="border-top:1px solid rgba(15,23,42,0.06)">'
                                  + '<td style="padding:9px 12px;font-weight:700;color:var(--green)">S'+rnk+' · Support</td>'
-                                 + '<td style="padding:9px 12px;text-align:right;font-weight:800;color:var(--text-primary)">'+l.toLocaleString('en-IN')+'</td>'
+                                 + '<td style="padding:9px 12px;text-align:right;font-weight:800;color:var(--text-primary)">'+l.toLocaleString('en-IN')+hit+'</td>'
                                  + '<td style="padding:9px 12px;text-align:right;color:var(--green)">'+d.pts+'</td>'
                                  + '<td style="padding:9px 12px;text-align:right;color:var(--green)">'+d.pct+'%</td></tr>';
                         });
                         html += '</tbody></table></div>';
-                        html += '<div style="font-size:10.5px;color:var(--text-secondary);margin-top:10px;font-style:italic">Gann Square-of-9 levels (Linear GANN method). A mechanical support/resistance aid — not investment advice.</div>';
+                        html += '<div style="font-size:10.5px;color:var(--text-secondary);margin-top:10px;font-style:italic">Gann Square-of-9 levels (45° cross) fixed from today’s open. A ✓ means price has already reached that level today. A mechanical support/resistance aid — not investment advice.</div>';
                         html += '</div>';
                     }
                 }
