@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v37',
+    VERSION: 'v38',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -2730,6 +2730,42 @@ const app = {
                 if (data.fii) {
                     html += '<div class="card"><div class="section-title">FII Derivative Activity</div>';
                     html += this.renderFiiData(data.fii);
+                    html += '</div>';
+                }
+
+                // ── Gann Square of 9 — angle levels (45°–360°) at the bottom ──
+                // Classic sqrt-angle method: level = (√price ± angle/360)². Each 45°
+                // step = 0.125 on the square root. 90/180/270/360 are the stronger
+                // "cardinal" angles. Anchored to the current Nifty price.
+                if (data.chart && data.chart.current_price) {
+                    const base = data.chart.current_price;
+                    const root = Math.sqrt(base);
+                    const angles = [45, 90, 135, 180, 225, 270, 315, 360];
+                    const rows = angles.map(a => ({
+                        angle: a,
+                        resistance: Math.round(Math.pow(root + a / 360, 2)),
+                        support:    Math.round(Math.pow(root - a / 360, 2)),
+                        cardinal:   (a % 90 === 0),
+                    }));
+                    html += '<div class="card" style="border-top:3px solid #0ea5e9;margin-top:4px">';
+                    html += '<div class="section-title" style="color:#0ea5e9">📐 Gann Square of 9 — Angle Levels</div>';
+                    html += '<div style="font-size:12px;color:var(--text-secondary);margin:-6px 0 12px">Support &amp; resistance from the Gann Square-of-9 <b>angle method</b> — <code>level = (√price ± angle/360)²</code> — anchored to the current Nifty <b style="color:var(--text-primary)">'+Number(base).toLocaleString('en-IN')+'</b>. The <b>90°, 180°, 270°, 360°</b> (cardinal) angles are treated as the stronger levels.</div>';
+                    html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">';
+                    html += '<thead><tr style="text-align:left">'
+                         + '<th style="padding:8px 12px;color:var(--text-secondary)">Angle</th>'
+                         + '<th style="padding:8px 12px;text-align:right;color:var(--text-secondary)">Resistance</th>'
+                         + '<th style="padding:8px 12px;text-align:right;color:var(--text-secondary)">Support</th></tr></thead><tbody>';
+                    rows.forEach(r => {
+                        const bg = r.cardinal ? 'background:rgba(14,165,233,0.07);' : '';
+                        const star = r.cardinal ? ' <span title="cardinal / stronger level" style="font-size:10px">★</span>' : '';
+                        const wt = r.cardinal ? '800' : '600';
+                        html += '<tr style="border-top:1px solid rgba(15,23,42,0.06);'+bg+'">'
+                             + '<td style="padding:9px 12px;font-weight:'+wt+';color:var(--text-primary)">'+r.angle+'°'+star+'</td>'
+                             + '<td style="padding:9px 12px;text-align:right;font-weight:'+wt+';color:var(--red)">'+r.resistance.toLocaleString('en-IN')+'</td>'
+                             + '<td style="padding:9px 12px;text-align:right;font-weight:'+wt+';color:var(--green)">'+r.support.toLocaleString('en-IN')+'</td></tr>';
+                    });
+                    html += '</tbody></table></div>';
+                    html += '<div style="font-size:10.5px;color:var(--text-secondary);margin-top:10px;font-style:italic">★ = cardinal (stronger) angle. These are mathematical Gann reference levels — best combined with price action, VWAP, OI &amp; volume. Not investment advice.</div>';
                     html += '</div>';
                 }
 
