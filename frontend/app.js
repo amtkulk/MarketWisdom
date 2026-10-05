@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v38',
+    VERSION: 'v39',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -178,7 +178,7 @@ const app = {
         }
         const label = ({
             global: 'Global Market', 'war-news': 'War News', telegram: 'Telegram Feed',
-            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', wyckoff: 'Wyckoff Momentum', stock: 'Stock Research',
+            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', wyckoff: 'Wyckoff Momentum', multibagger: 'Multibagger Early Signal', stock: 'Stock Research',
             overview: 'Stock Overview', reits: 'REITs & InvITs', action: 'Stock Action', heatmap: 'Indices Heatmap', chartink: 'Chartink Comparator',
             nifty: 'Nifty Analysis', watchlist: 'Watchlist',
         })[attemptedRoute] || 'this page';
@@ -265,6 +265,9 @@ const app = {
                 break;
             case 'wyckoff':
                 this.renderWyckoff(container);
+                break;
+            case 'multibagger':
+                this.renderMultibagger(container);
                 break;
             case 'stock':
                 this.renderStock(container);
@@ -1437,6 +1440,216 @@ const app = {
         loadLast();
     },
 
+    renderMultibagger(container) {
+        const MKT = 'india_multibagger';
+        const esc = (s) => String(s === null || s === undefined ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        container.innerHTML = `
+            <div style="margin-bottom:16px">
+                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🚀 Multibagger Early Signal</h2>
+                <p style="font-size:13px;color:var(--text-secondary)">Amit's Early Signal Score (0–100). It looks for stocks that look the way <b>Wheels India at ₹950</b>, <b>Spectrum Electrical at ₹2,063</b> and <b>Fermenta at ₹388</b> did, <i>before</i> their moves. Stocks that have already run are filtered out.</p>
+            </div>
+            <div class="two-col" style="align-items:start;margin-bottom:16px">
+                <div class="card" style="border-top:3px solid #16a34a">
+                    <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:var(--text-primary)">The DNA of all three winners</div>
+                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.9">
+                        <b>📈 Business change</b>: sales, EBITDA and profit growth <i>accelerating</i>, with profit outgrowing sales.<br>
+                        <b>🔊 Abnormal volume</b>: volume well above its 20-day average. Someone is buying.<br>
+                        <b>🧱 Breakout</b>: price leaving a consolidation base, not yet extended.<br>
+                        <b>🏦 Ownership</b>: promoter holding steady or rising, FII/DII stakes rising.<br>
+                        <b>⏱️ Still early</b>: up less than 70% from the 6-month low, and valuation reasonable for the growth.
+                    </div>
+                </div>
+                <div class="card" style="border-top:3px solid #4f46e5">
+                    <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:var(--text-primary)">How the score is built</div>
+                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.9">
+                        <b>Business</b> 42 pts · <b>Price &amp; volume</b> 37 · <b>Ownership</b> 15 · <b>Valuation</b> 6<br>
+                        14 of your 20 parameters are computed automatically (plus trend/RS). The catalyst signals can't be fetched reliably, so they are <b>left out</b> and the score is rescaled to 100.<br>
+                        <b>🔥 Strong</b> = score ≥70, most signals firing, <i>and</i> profit/EBITDA accelerating.
+                    </div>
+                </div>
+            </div>
+            <div class="card" style="margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+                <div style="font-size:12px;color:var(--text-secondary)">Scans the <b style="color:var(--text-primary)">full market</b> (Nifty 1000 + small/mid caps), then pulls quarterly results &amp; shareholding for the top ~120. Takes <b style="color:var(--text-primary)">3–6 minutes</b>. You can navigate away; results are saved.</div>
+                <div style="flex:1"></div>
+                <button id="btn-scan-mb" class="btn" style="padding:10px 24px;font-size:14px;font-weight:700">🚀 Run Early Signal Scan</button>
+            </div>
+            <div id="mb-filter" style="display:none;gap:8px;flex-wrap:wrap;margin-bottom:14px"></div>
+            <div id="mb-status" style="display:none"></div>
+            <div id="mb-result"><div style="text-align:center;padding:30px;color:var(--text-secondary)"><div class="spinner"></div></div></div>
+            <div class="card" style="margin-top:16px;border-left:3px solid var(--yellow)">
+                <div style="font-weight:800;font-size:13px;margin-bottom:6px;color:var(--text-primary)">✋ Check these by hand before acting (the scanner can't see them)</div>
+                <div id="mb-omitted" style="font-size:12px;color:var(--text-secondary);line-height:1.8">Capex announcements · New products / approvals · Order wins · Investor meets · Exchange price/volume clarifications · Delivery % · Promoter open-market buys (bulk/insider deals)</div>
+                <div style="font-size:11.5px;color:var(--text-secondary);margin-top:6px">Tip: use each stock's <b>Screener ↗</b> link to open its announcements and documents.</div>
+            </div>
+            <div style="text-align:center;margin-top:16px;font-size:11px;color:var(--text-secondary)">A pattern-matching aid built from three past winners. It is not a prediction or investment advice. Most stocks with early signals do <b>not</b> become multibaggers. Size positions accordingly and do your own research.</div>
+        `;
+        let pollTimer = null;
+        let lastData = null;
+        let activeFilter = 'all';
+        const open = new Set();
+        const scoreColor = (v) => v >= 70 ? 'var(--green)' : v >= 55 ? 'var(--yellow)' : 'var(--text-secondary)';
+        const fmt = (v, s='', d=1) => (v === null || v === undefined) ? '—' : (typeof v === 'number' ? Number(v.toFixed(d)) : v) + s;
+        const sgn = (v, s='%') => (v === null || v === undefined) ? '—' : (v > 0 ? '+' : '') + Number(v.toFixed(1)) + s;
+        const TIER = {
+            strong:   { label: '🔥 Strong early signal', bg: 'rgba(22,163,74,0.12)', fg: 'var(--green)' },
+            building: { label: '✅ Building',           bg: 'rgba(234,179,8,0.14)',  fg: '#a16207' },
+            watch:    { label: '👀 Watch',              bg: 'rgba(15,23,42,0.06)',   fg: 'var(--text-secondary)' },
+        };
+        const STATE = { breakout: '🧱 Fresh breakout', at_resistance: '⏳ At base high', coiling: '🌀 Coiling in base',
+                        extended_breakout: '↗️ Breakout (extended)', none: '— No base' };
+
+        const renderFilter = () => {
+            const bar = document.getElementById('mb-filter');
+            if (!bar || !lastData || !lastData.results) { if (bar) bar.style.display='none'; return; }
+            const R = lastData.results;
+            const c = { all: R.length, strong: 0, building: 0, watch: 0, breakout: 0 };
+            R.forEach(r => { c[r.tier] = (c[r.tier]||0) + 1; if (r.breakout_state === 'breakout' || r.breakout_state === 'at_resistance') c.breakout++; });
+            const chip = (key, label) => '<button data-f="'+key+'" class="mb-chip" style="padding:6px 12px;border-radius:16px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--border-color);background:'+(activeFilter===key?'var(--text-accent)':'var(--bg-card)')+';color:'+(activeFilter===key?'#fff':'var(--text-secondary)')+'">'+label+'</button>';
+            bar.style.display = 'flex';
+            bar.innerHTML = chip('all','All ('+c.all+')') + chip('strong','🔥 Strong ('+c.strong+')') + chip('building','✅ Building ('+c.building+')') + chip('watch','👀 Watch ('+c.watch+')') + chip('breakout','🧱 Breakout / at base high ('+c.breakout+')');
+            bar.querySelectorAll('.mb-chip').forEach(b => b.addEventListener('click', () => { activeFilter = b.getAttribute('data-f'); renderFilter(); renderRows(); }));
+        };
+
+        const stat = (label, val, color) => '<div><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;white-space:nowrap">'+label+'</div><div style="font-weight:700;white-space:nowrap;'+(color?'color:'+color:'')+'">'+val+'</div></div>';
+
+        const breakdownHtml = (s) => {
+            const groups = ['Business', 'Price', 'Ownership', 'Valuation'];
+            let h = '<div style="margin-top:12px;border-top:1px dashed var(--border-color);padding-top:10px;display:grid;gap:12px">';
+            groups.forEach(g => {
+                const items = (s.breakdown||[]).filter(b => b.group === g);
+                if (!items.length) return;
+                h += '<div><div style="font-size:11px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--text-accent);margin-bottom:6px">'+g+'</div><div style="display:grid;gap:5px">';
+                items.forEach(b => {
+                    const na = b.pts === null || b.pts === undefined;
+                    const pct = na ? 0 : Math.max(0, Math.min(100, b.pts / b.max * 100));
+                    const col = na ? 'var(--text-secondary)' : b.hit ? 'var(--green)' : pct > 0 ? 'var(--yellow)' : 'var(--red)';
+                    const icon = na ? '–' : b.hit ? '✓' : pct > 0 ? '◐' : '✗';
+                    h += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px">'
+                       + '<span style="width:16px;text-align:center;font-weight:800;color:'+col+'">'+icon+'</span>'
+                       + '<span style="flex:1 1 190px;color:var(--text-primary);font-weight:600">'+esc(b.label)+'</span>'
+                       + '<span style="flex:2 1 220px;color:var(--text-secondary)">'+esc(na ? 'data not available' : b.note)+'</span>'
+                       + '<span style="display:inline-flex;align-items:center;gap:6px;min-width:96px;justify-content:flex-end"><span style="width:44px;height:5px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden;display:inline-block"><span style="display:block;width:'+pct+'%;height:100%;background:'+col+'"></span></span><b style="color:'+col+';font-size:11px">'+(na ? 'n/a' : fmt(b.pts,'',1)+'/'+b.max)+'</b></span>'
+                       + '</div>';
+                });
+                h += '</div></div>';
+            });
+            if (s.late_penalty) h += '<div style="font-size:11.5px;color:#a16207">⚠ −'+s.late_penalty+' pts "already moving" penalty: up '+fmt(s.ran_pct,'%')+' from its 6-month low.</div>';
+            h += '</div>';
+            return h;
+        };
+
+        const renderRows = () => {
+            const el = document.getElementById('mb-result');
+            if (!el || !lastData) return;
+            let rows = lastData.results || [];
+            if (['strong','building','watch'].includes(activeFilter)) rows = rows.filter(r => r.tier === activeFilter);
+            else if (activeFilter === 'breakout') rows = rows.filter(r => r.breakout_state === 'breakout' || r.breakout_state === 'at_resistance');
+            let h = '';
+            const D = lastData;
+            if (D.deep_fetched && !D.fund_fetched) {
+                h += '<div class="card" style="padding:12px 16px;border-color:var(--yellow);margin-bottom:12px;font-size:12.5px;color:#a16207">⚠ Screener.in did not respond during this scan, so the business &amp; ownership signals are missing. Scores below use price/volume only and are deliberately not rescaled. Try the scan again later.</div>';
+            }
+            if (!rows.length) { el.innerHTML = h + '<div class="card" style="text-align:center;padding:30px;color:var(--text-secondary)">No stocks in this filter.</div>'; return; }
+            h += '<div style="display:grid;gap:10px">';
+            rows.forEach(s => {
+                const sc = scoreColor(s.score);
+                const t = TIER[s.tier] || TIER.watch;
+                const isOpen = open.has(s.ticker);
+                const sym = encodeURIComponent(s.ticker);
+                h += '<div class="card" style="padding:14px 16px">';
+                const scoreBlock = '<div style="text-align:right;flex-shrink:0"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;white-space:nowrap">Early Signal</div><div style="display:flex;align-items:center;gap:6px;justify-content:flex-end"><div style="width:48px;height:6px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.score,100)+'%;height:100%;background:'+sc+'"></div></div><b style="color:'+sc+';font-size:19px">'+s.score+'</b></div></div>';
+                // header: rank + name + tags (left), score (right)
+                h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">';
+                h += '<div style="display:flex;align-items:flex-start;gap:12px;flex:1;min-width:0"><div style="font-size:18px;font-weight:800;color:var(--text-secondary);width:26px;flex-shrink:0">'+s.rank+'</div><div style="min-width:0">'
+                   + '<div style="font-weight:800;color:var(--text-primary);font-size:15px">'+esc(s.ticker)
+                   + ' <a href="https://www.screener.in/company/'+sym+'/" target="_blank" rel="noopener" style="font-size:11px;font-weight:600;color:var(--text-accent);text-decoration:none;margin-left:6px;white-space:nowrap">Screener ↗</a>'
+                   + ' <a href="https://www.tradingview.com/chart/?symbol=NSE:'+sym+'" target="_blank" rel="noopener" style="font-size:11px;font-weight:600;color:var(--text-accent);text-decoration:none;margin-left:4px;white-space:nowrap">Chart ↗</a></div>'
+                   + '<div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center">'
+                   + '<span style="background:'+t.bg+';color:'+t.fg+';font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:10px">'+t.label+'</span>'
+                   + '<span style="background:rgba(15,23,42,0.05);color:var(--text-secondary);font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px">'+(STATE[s.breakout_state]||'')+'</span>'
+                   + '<span style="background:rgba(79,70,229,0.08);color:var(--text-accent);font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px">'+s.hits+'/'+s.n_avail+' signals</span>'
+                   + (s.price_only ? '<span style="background:rgba(234,179,8,0.14);color:#a16207;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px">⚠ price data only</span>' : '')
+                   + '</div></div></div>';
+                h += scoreBlock + '</div>';
+                // stats grid underneath — same layout on every card, wraps cleanly on phones
+                h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:8px 14px;margin-top:12px;padding-left:38px">';
+                h += stat('Price', '₹'+Number(s.price).toLocaleString('en-IN'));
+                h += stat('Base high', s.base_hi ? '₹'+Number(s.base_hi).toLocaleString('en-IN') : '—');
+                h += stat('vs base', sgn(s.ext_pct));
+                h += stat('From 6M low', '+'+fmt(s.ran_pct,'%'), s.ran_pct > 45 ? '#a16207' : null);
+                h += stat('Volume', fmt(s.vol_ratio,'×'), s.vol_ratio >= 2 ? 'var(--green)' : null);
+                h += stat('PAT YoY', sgn(s.pat_yoy), s.pat_yoy > 20 ? 'var(--green)' : (s.pat_yoy < 0 ? 'var(--red)' : null));
+                h += stat('Sales YoY', sgn(s.rev_yoy), s.rev_yoy > 15 ? 'var(--green)' : (s.rev_yoy < 0 ? 'var(--red)' : null));
+                h += stat('PEG', fmt(s.peg,'',2));
+                h += stat('Mkt cap', s.mcap ? '₹'+Number(Math.round(s.mcap)).toLocaleString('en-IN')+' Cr' : '—');
+                h += '</div>';
+                h += '<button class="mb-toggle" data-t="'+esc(s.ticker)+'" style="margin-top:10px;background:none;border:none;padding:0;color:var(--text-accent);font-weight:700;font-size:12px;cursor:pointer">'+(isOpen ? 'Hide signal breakdown ▴' : 'Show all '+(s.breakdown||[]).length+' signals ▾')+'</button>';
+                if (isOpen) h += breakdownHtml(s);
+                h += '</div>';
+            });
+            h += '</div>';
+            const ex = D.excluded || {};
+            h += '<div style="margin-top:12px;font-size:11px;color:var(--text-secondary);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">'
+               + '<span>Scanned '+(D.total_priced||D.total_scanned||0)+' stocks · skipped '+(ex.already_ran||0)+' that already ran &gt;70% · '+(D.total_passed||0)+' showed a chart trigger · business data fetched for '+(D.fund_fetched||0)+'/'+(D.deep_fetched||0)+'</span>'
+               + '<span style="font-style:italic">Last scanned: '+esc(D.timestamp||'')+'</span></div>';
+            el.innerHTML = h;
+            el.querySelectorAll('.mb-toggle').forEach(b => b.addEventListener('click', () => {
+                const k = b.getAttribute('data-t');
+                if (open.has(k)) open.delete(k); else open.add(k);
+                renderRows();
+            }));
+        };
+
+        const renderResults = (data) => {
+            lastData = data;
+            if (data.omitted_signals && data.omitted_signals.length) {
+                const om = document.getElementById('mb-omitted');
+                if (om) om.innerHTML = data.omitted_signals.map(esc).join(' · ');
+            }
+            if (!data.results || !data.results.length) {
+                document.getElementById('mb-result').innerHTML = '<div class="card" style="text-align:center;padding:40px;border-color:var(--yellow)"><div style="font-size:40px;margin-bottom:14px">🚀</div><div style="color:var(--yellow);font-weight:800">No early signals right now</div><div style="color:var(--text-secondary);margin-top:8px">No stock currently combines abnormal volume or a base breakout with the other signals. That is normal in weak or choppy markets. Try again after the next close.</div></div>';
+                document.getElementById('mb-filter').style.display='none';
+                return;
+            }
+            renderFilter(); renderRows();
+        };
+
+        const resetBtn = (btn) => { if (btn) { btn.disabled = false; btn.innerHTML = '🚀 Run Early Signal Scan'; } };
+        const startPolling = () => {
+            if (pollTimer) clearInterval(pollTimer);
+            const btn = document.getElementById('btn-scan-mb');
+            const bar = document.getElementById('mb-status');
+            if (btn) { btn.disabled=true; btn.innerHTML='<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Scanning...'; }
+            if (bar) { bar.style.display='block'; bar.innerHTML='<div class="card" style="padding:12px 16px;background:rgba(22,163,74,0.06);border-color:rgba(22,163,74,0.25);display:flex;align-items:center;gap:12px;margin-bottom:16px"><span class="spinner"></span><span style="color:var(--green);font-weight:600">Scanning the full market for early signals, then reading quarterly results (3–6 min). You can navigate away.</span></div>'; }
+            pollTimer = setInterval(async () => {
+                if (!document.getElementById('btn-scan-mb')) { clearInterval(pollTimer); pollTimer = null; return; }   // user left the page
+                try {
+                    const st = await api.getScreenerStatus(MKT);
+                    if (st.status === 'done') { clearInterval(pollTimer); pollTimer=null; resetBtn(btn); if (bar) bar.style.display='none'; loadLast(); }
+                    else if (st.status === 'error') { clearInterval(pollTimer); pollTimer=null; resetBtn(btn); if (bar){bar.style.display='block';bar.innerHTML='<div class="card" style="padding:12px 16px;border-color:var(--red);margin-bottom:16px"><span style="color:var(--red);font-weight:600">Scan failed: '+esc(st.error||'Unknown error')+'</span></div>';} }
+                } catch(e) {}
+            }, 6000);
+        };
+
+        const loadLast = async () => {
+            const el = document.getElementById('mb-result');
+            if (!el) return;
+            try {
+                const data = await api.getScreenerResults(MKT);
+                if (data.empty) { el.innerHTML = '<div class="card" style="text-align:center;padding:40px;border-color:rgba(79,70,229,0.2)"><div style="font-size:40px;margin-bottom:14px">🚀</div><div style="color:var(--text-accent);font-weight:800;font-size:16px">No scan yet</div><div style="color:var(--text-secondary);margin-top:8px">Click <b>Run Early Signal Scan</b> to look for the next Wheels / Spectrum / Fermenta setup. Best run after the market closes.</div></div>'; }
+                else { renderResults(data); }
+            } catch(e) { el.innerHTML = '<div class="card" style="text-align:center;padding:20px;color:var(--text-secondary)">Could not load previous results.</div>'; }
+            try { const st = await api.getScreenerStatus(MKT); if (st.status === 'running') startPolling(); } catch(e) {}
+        };
+
+        document.getElementById('btn-scan-mb').addEventListener('click', async () => {
+            try { await api.startScreenerScan(MKT); startPolling(); }
+            catch (err) { alert('Failed to start scan: ' + err.message); }
+        });
+
+        loadLast();
+    },
+
     renderHome(container) {
         const owl = `<svg viewBox="0 0 64 64" fill="none" style="width:84px;height:84px;filter:drop-shadow(0 8px 24px rgba(129,140,248,0.3))">
             <path d="M32 6C16 6 10 18 10 32c0 16 10 26 22 26s22-10 22-26C54 18 48 6 32 6Z" fill="#0f172a" stroke="#818cf8" stroke-width="2.5"/>
@@ -1482,6 +1695,7 @@ const app = {
                 ${card('#smallmid', '#a78bfa', '💎', 'Small/Mid Master', 'Same 12-factor score, applied to the small &amp; mid-cap universe beyond the Nifty 1000. Higher risk, higher potential.', 'Rank Small/Mid', true)}
                 ${card('#microcap', '#f472b6', '🔬', 'Micro Cap Scanner', 'Micro caps under ₹2,000 Cr trading within 7% of their 52-week high — the tightest momentum coil, ranked by the same 12-factor score.', 'Scan Micro Caps', true)}
                 ${card('#gems', '#16a34a', '💎', 'Hidden Gems', 'The wonder-stock finder: a full-market fusion scan tagging stealth accumulation, turnarounds &amp; breakouts, ranked by Wonder Score with AI deep-dives.', 'Find Gems', true)}
+                ${card('#multibagger', '#dc2626', '🚀', 'Multibagger Early Signal', "Built from Amit's own winners (Wheels India, Spectrum Electrical, Fermenta): finds stocks with accelerating profits, abnormal volume and a fresh breakout that haven't run yet.", 'Find Early Signals', true)}
                 ${card('#wyckoff', '#0ea5e9', '📐', 'Wyckoff Scanner', 'Finds Nifty 1000 stocks at the accumulation→markup turn using Wyckoff phase analysis on daily &amp; weekly candles — momentum as it ignites.', 'Run Wyckoff', true)}
                 ${card('#screener', '#60a5fa', '📊', 'Stock Screener', 'Scan the Nifty 500 — and the next 501–1000 — for breakouts by P/E, volume spike and RSI.', 'Run a Scan')}
                 ${card('#chartink', '#c084fc', '📋', 'Chartink Comparator', 'Find the stocks that appear in both of your favourite Chartink screeners.', 'Compare')}
