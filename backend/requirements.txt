@@ -18,3 +18,4 @@ lxml
 beautifulsoup4
 google-auth
 itsdangerous
+pypdf

@@ -291,6 +291,14 @@ const api = {
         return res.json();
     },
 
+    async fetchOrders(refresh) {
+        const res = await fetch(`${API_BASE_URL}/orders${refresh ? '?refresh=1' : ''}`);
+        let data;
+        try { data = await res.json(); } catch(e) { throw new Error(`Server error (Status: ${res.status}).`); }
+        if (!res.ok) throw new Error(data.error || 'Failed to load orders');
+        return data;
+    },
+
     async multibaggerCheck(q) {
         const res = await fetch(`${API_BASE_URL}/multibagger/check?q=${encodeURIComponent(q)}`);
         let data;

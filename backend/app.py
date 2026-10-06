@@ -2988,6 +2988,32 @@ def api_screener_results():
     return jsonify(data)
 
 
+# ── Corporate Action New Orders (BSE "Award of Order / Receipt of Order") ──
+from orders import get_orders_view, resolve_pdf_url as _orders_pdf_url
+
+
+@app.route("/api/orders")
+def api_orders():
+    """Last 3 filing-days of BSE order announcements + breakout analytics.
+    Answers from the saved store immediately; refreshes/enriches in the background."""
+    try:
+        return jsonify(get_orders_view(force=request.args.get("refresh") == "1"))
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({"error": f"Orders feed failed: {e}", "days": [], "watch": [], "stats": {}}), 500
+
+
+@app.route("/api/orders/pdf")
+def api_orders_pdf():
+    """Redirect to the BSE attachment (it moves from AttachLive to AttachHis over time)."""
+    from flask import redirect
+    url = _orders_pdf_url(request.args.get("f", ""))
+    if not url:
+        return jsonify({"error": "Invalid attachment name."}), 400
+    return redirect(url, code=302)
+
+
 @cached(900)                 # 15 min per symbol — results only change after new data
 def _mb_check_symbol(symbol):
     return analyze_multibagger_stock(symbol)
