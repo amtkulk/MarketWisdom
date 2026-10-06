@@ -88,11 +88,11 @@ def _now_ist():
 #  1. FETCH FROM BSE
 # ══════════════════════════════════════════════════════════════
 
-def _params(page, d_from, d_to, category=CATEGORY, subcat=SUBCATEGORY):
+def _params(page, d_from, d_to, category=CATEGORY, subcat=SUBCATEGORY, scrip=""):
     return {
         "pageno": page, "strCat": category, "subcategory": subcat,
         "strPrevDate": d_from.strftime("%Y%m%d"), "strToDate": d_to.strftime("%Y%m%d"),
-        "strSearch": "P", "strscrip": "", "strType": "C",          # C = Equity segment
+        "strSearch": "P", "strscrip": scrip or "", "strType": "C",          # C = Equity segment
     }
 
 
@@ -161,11 +161,12 @@ class BseClient:
             pass
 
 
-def fetch_bse(client, category, subcat, d_from, d_to, max_pages=10):
-    """All filings of one BSE sub-category between two dates (paginated)."""
+def fetch_bse(client, category, subcat, d_from, d_to, max_pages=10, scrip=""):
+    """All filings of one BSE sub-category between two dates (paginated);
+    scrip = BSE code to restrict to one company."""
     rows, page, total_pages = [], 1, 1
     while page <= min(total_pages, max_pages):
-        data = client.get(_params(page, d_from, d_to, category, subcat))
+        data = client.get(_params(page, d_from, d_to, category, subcat, scrip))
         tbl = data.get("Table") or []
         if not tbl:
             break

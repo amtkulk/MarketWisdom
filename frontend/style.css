@@ -354,3 +354,11 @@ footer {
     .corp-tab .ct-label { font-size:11.5px; }
     .corp-tab .ct-sub { display:none; }
 }
+
+/* ── Multibagger v2 card header: score block wraps under the name on phones ── */
+.mb2-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; }
+.mb2-score { flex:0 0 170px; }
+@media (max-width: 600px) {
+    .mb2-score { flex:1 1 100%; padding-left:38px; }
+    .mb2-score > div:first-child { justify-content:flex-start !important; }
+}

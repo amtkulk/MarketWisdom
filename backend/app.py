@@ -2841,7 +2841,7 @@ def api_nse_option_chain():
     return jsonify(data)
 
 
-from screener import run_screener, analyze_multibagger_stock
+from screener import run_screener
 from database import save_screener_results, get_screener_results
 import threading
 
@@ -3030,7 +3030,8 @@ def api_orders_pdf():
 
 @cached(900)                 # 15 min per symbol — results only change after new data
 def _mb_check_symbol(symbol):
-    return analyze_multibagger_stock(symbol)
+    from multibagger import analyze_stock_v2          # 115-point model, same engine as the scan
+    return analyze_stock_v2(symbol)
 
 
 @app.route("/api/multibagger/check")

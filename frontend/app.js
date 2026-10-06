@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v42',
+    VERSION: 'v43',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -1782,13 +1782,13 @@ const app = {
         container.innerHTML = `
             <div style="margin-bottom:16px">
                 <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🚀 Multibagger Early Signal</h2>
-                <p style="font-size:13px;color:var(--text-secondary)">Amit's Early Signal Score (0–100). It looks for stocks that look the way <b>Wheels India at ₹950</b>, <b>Spectrum Electrical at ₹2,063</b> and <b>Fermenta at ₹388</b> did, <i>before</i> their moves. Check any stock you have in mind, or scan the whole market.</p>
+                <p style="font-size:13px;color:var(--text-secondary)">Amit's 115-point model, built from Wheels India, Spectrum Electrical, Fermenta, Indo Amines, Sterlite Technologies and Mukand. It looks for companies where <b>something is changing that will make the market revise its estimate of future earnings</b>, and shows how far the market has already discovered it.</p>
             </div>
             <div class="card" style="margin-bottom:16px;border-top:3px solid #dc2626">
                 <div style="font-weight:800;font-size:15px;color:var(--text-primary);margin-bottom:4px">🔎 Check any stock</div>
-                <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:10px">Type an NSE symbol or company name. It runs all the signals on that one stock and tells you what's firing, what's missing, and whether the market scan would pick it up.</div>
+                <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:10px">Type an NSE symbol or company name. You get its three scores, its stage, any red flags, its recent order / capex / approval filings, and whether the market scan would pick it up.</div>
                 <form id="mb-check-form" style="display:flex;gap:8px;flex-wrap:wrap" autocomplete="off">
-                    <input id="mb-check-input" type="text" maxlength="60" placeholder="e.g. WHEELS or Wheels India" style="flex:1 1 220px;min-width:0;padding:10px 14px;border:1px solid var(--border-color);border-radius:10px;font-size:14px;background:var(--bg-card);color:var(--text-primary)">
+                    <input id="mb-check-input" type="text" maxlength="60" placeholder="e.g. STLTECH or Sterlite Technologies" style="flex:1 1 220px;min-width:0;padding:10px 14px;border:1px solid var(--border-color);border-radius:10px;font-size:14px;background:var(--bg-card);color:var(--text-primary)">
                     <button id="mb-check-btn" type="submit" class="btn" style="padding:10px 22px;font-size:14px;font-weight:700">Check stock</button>
                 </form>
                 <div id="mb-check-recent" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px"></div>
@@ -1797,155 +1797,185 @@ const app = {
             <div style="font-family:'Inter',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-accent);font-weight:700;margin:22px 0 10px">📡 Market-wide scan</div>
             <div class="two-col" style="align-items:start;margin-bottom:16px">
                 <div class="card" style="border-top:3px solid #16a34a">
-                    <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:var(--text-primary)">The DNA of all three winners</div>
-                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.9">
-                        <b>📈 Business change</b>: sales, EBITDA and profit growth <i>accelerating</i>, with profit outgrowing sales.<br>
-                        <b>🔊 Abnormal volume</b>: volume well above its 20-day average. Someone is buying.<br>
-                        <b>🧱 Breakout</b>: price leaving a consolidation base, not yet extended.<br>
-                        <b>🏦 Ownership</b>: promoter holding steady or rising, FII/DII stakes rising.<br>
-                        <b>⏱️ Still early</b>: up less than 70% from the 6-month low, and valuation reasonable for the growth.
+                    <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:var(--text-primary)">Three scores, 115 points</div>
+                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.85">
+                        <b>A · Business Change /50</b>: revenue, EBITDA and PAT acceleration, margin expansion, ROCE, cash flow, debt.<br>
+                        <b>B · Future Growth /35</b>: order inflow vs sales, book-to-bill / orders vs market cap, large orders, structural theme (AI, defence, power, EV, railways…), new product / approval, capacity expansion.<br>
+                        <b>C · Market Recognition /30</b>: volume, breakout, relative strength, FII/DII/MF buying, promoter, QIP / preferential.<br>
+                        <b>Valuation</b> is shown separately (PEG). <b>Red flags override any score.</b>
                     </div>
                 </div>
                 <div class="card" style="border-top:3px solid #4f46e5">
-                    <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:var(--text-primary)">How the score is built</div>
-                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.9">
-                        <b>Business</b> 42 pts · <b>Price &amp; volume</b> 37 · <b>Ownership</b> 15 · <b>Valuation</b> 6<br>
-                        14 of your 20 parameters are computed automatically (plus trend/RS). The catalyst signals can't be fetched reliably, so they are <b>left out</b> and the score is rescaled to 100.<br>
-                        <b>🔥 Strong</b> = score ≥70, most signals firing, <i>and</i> profit/EBITDA accelerating.
+                    <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:var(--text-primary)">Stages: how discovered is it?</div>
+                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.85">
+                        <b>🟢 Stage 1 · Hidden</b>: Recognition &lt; 15. The best hunting zone (your bar: Business ≥ 35, Future ≥ 20).<br>
+                        <b>🟢 Stage 2 · Discovery</b>: Recognition 15–22. STL at ₹180 (bar: Business ≥ 35, Future ≥ 25).<br>
+                        <b>🟡 Stage 3 · Momentum</b>: Recognition ≥ 23. Strong, but don't chase (bar: Business ≥ 40, Future ≥ 30).<br>
+                        <b>⚪ Not yet</b>: Business Change &lt; 25. <b>🚨 Red flag</b>: fire / EHS, regulatory action, fraud, big tax demand, promoter exit, or 4+ balance-sheet warnings.
                     </div>
                 </div>
             </div>
             <div class="card" style="margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
-                <div style="font-size:12px;color:var(--text-secondary)">Scans the <b style="color:var(--text-primary)">full market</b> (Nifty 1000 + small/mid caps), then pulls quarterly results &amp; shareholding for the top ~120. Takes <b style="color:var(--text-primary)">3–6 minutes</b>. You can navigate away; results are saved.</div>
-                <div style="flex:1"></div>
+                <div style="font-size:12px;color:var(--text-secondary);flex:1 1 300px">Scans the <b style="color:var(--text-primary)">full market</b> plus <b style="color:var(--text-primary)">90 days of BSE filings</b>. It deep-checks ~230 candidates found three ways: chart moves, filing catalysts (orders, capex, approvals, meets) and quiet-quality charts, the last of which is how Stage-1 names get found. Takes <b style="color:var(--text-primary)">5–10 minutes</b> (faster within 6 hours of the last scan). You can navigate away; results are saved.</div>
                 <button id="btn-scan-mb" class="btn" style="padding:10px 24px;font-size:14px;font-weight:700">🚀 Run Early Signal Scan</button>
             </div>
             <div id="mb-filter" style="display:none;gap:8px;flex-wrap:wrap;margin-bottom:14px"></div>
             <div id="mb-status" style="display:none"></div>
             <div id="mb-result"><div style="text-align:center;padding:30px;color:var(--text-secondary)"><div class="spinner"></div></div></div>
             <div class="card" style="margin-top:16px;border-left:3px solid var(--yellow)">
-                <div style="font-weight:800;font-size:13px;margin-bottom:6px;color:var(--text-primary)">✋ Check these by hand before acting (the scanner can't see them)</div>
-                <div id="mb-omitted" style="font-size:12px;color:var(--text-secondary);line-height:1.8">Capex announcements · New products / approvals · Order wins · Investor meets · Exchange price/volume clarifications · Delivery % · Promoter open-market buys (bulk/insider deals)</div>
-                <div style="font-size:11.5px;color:var(--text-secondary);margin-top:6px">Tip: use each stock's <b>Screener ↗</b> link to open its announcements and documents.</div>
+                <div style="font-weight:800;font-size:13px;margin-bottom:6px;color:var(--text-primary)">✋ Check these by hand before acting (no free data source has them)</div>
+                <div style="font-size:12px;color:var(--text-secondary);line-height:1.8">Auditor qualification · Promoter pledge % · Related-party transactions · Full order book where the company doesn't publish it (the scanner uses disclosed order wins plus order-book figures from results press releases) · Management guidance in investor presentations.</div>
+                <div style="font-size:11.5px;color:var(--text-secondary);margin-top:6px">Tip: each stock's <b>Screener ↗</b> link opens its annual report, credit ratings and announcements.</div>
             </div>
-            <div style="text-align:center;margin-top:16px;font-size:11px;color:var(--text-secondary)">A pattern-matching aid built from three past winners. It is not a prediction or investment advice. Most stocks with early signals do <b>not</b> become multibaggers. Size positions accordingly and do your own research.</div>
+            <div style="text-align:center;margin-top:16px;font-size:11px;color:var(--text-secondary)">A pattern-matching aid built from past winners. It is not a prediction or investment advice. Most stocks with early signals do <b>not</b> become multibaggers. Size positions accordingly and do your own research.</div>
         `;
         let pollTimer = null;
         let lastData = null;
         let activeFilter = 'all';
         const open = new Set();
-        const scoreColor = (v) => v >= 70 ? 'var(--green)' : v >= 55 ? 'var(--yellow)' : 'var(--text-secondary)';
         const fmt = (v, s='', d=1) => (v === null || v === undefined) ? '—' : (typeof v === 'number' ? Number(v.toFixed(d)) : v) + s;
         const sgn = (v, s='%') => (v === null || v === undefined) ? '—' : (v > 0 ? '+' : '') + Number(v.toFixed(1)) + s;
-        const TIER = {
-            strong:   { label: '🔥 Strong early signal', bg: 'rgba(22,163,74,0.12)', fg: 'var(--green)' },
-            building: { label: '✅ Building',           bg: 'rgba(234,179,8,0.14)',  fg: '#a16207' },
-            watch:    { label: '👀 Watch',              bg: 'rgba(15,23,42,0.06)',   fg: 'var(--text-secondary)' },
-            late:     { label: '⏰ Already ran',        bg: 'rgba(220,38,38,0.10)',  fg: 'var(--red)' },
-            outside:  { label: '⚠ Outside scan limits', bg: 'rgba(234,179,8,0.14)',  fg: '#a16207' },
+        const fmtCr = (v) => v === null || v === undefined ? '—' : '₹' + (v >= 100 ? Math.round(v).toLocaleString('en-IN') : Number(v.toFixed(1)).toLocaleString('en-IN')) + ' Cr';
+        const STAGE = {
+            hidden:    { label: '🟢 Stage 1 · Hidden',    bg: 'rgba(22,163,74,0.12)',  fg: 'var(--green)' },
+            discovery: { label: '🟢 Stage 2 · Discovery', bg: 'rgba(22,163,74,0.12)',  fg: 'var(--green)' },
+            momentum:  { label: '🟡 Stage 3 · Momentum',  bg: 'rgba(234,179,8,0.16)',  fg: '#a16207' },
+            weak:      { label: '⚪ Not yet',              bg: 'rgba(15,23,42,0.06)',   fg: 'var(--text-secondary)' },
+            nodata:    { label: '❔ Not enough data',      bg: 'rgba(15,23,42,0.06)',   fg: 'var(--text-secondary)' },
+            redflag:   { label: '🚨 Red flag',             bg: 'rgba(220,38,38,0.12)',  fg: 'var(--red)' },
         };
-        const STATE = { breakout: '🧱 Fresh breakout', at_resistance: '⏳ At base high', coiling: '🌀 Coiling in base',
-                        extended_breakout: '↗️ Breakout (extended)', none: '— No base' };
-
-        const renderFilter = () => {
-            const bar = document.getElementById('mb-filter');
-            if (!bar || !lastData || !lastData.results) { if (bar) bar.style.display='none'; return; }
-            const R = lastData.results;
-            const c = { all: R.length, strong: 0, building: 0, watch: 0, breakout: 0 };
-            R.forEach(r => { c[r.tier] = (c[r.tier]||0) + 1; if (r.breakout_state === 'breakout' || r.breakout_state === 'at_resistance') c.breakout++; });
-            const chip = (key, label) => '<button data-f="'+key+'" class="mb-chip" style="padding:6px 12px;border-radius:16px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--border-color);background:'+(activeFilter===key?'var(--text-accent)':'var(--bg-card)')+';color:'+(activeFilter===key?'#fff':'var(--text-secondary)')+'">'+label+'</button>';
-            bar.style.display = 'flex';
-            bar.innerHTML = chip('all','All ('+c.all+')') + chip('strong','🔥 Strong ('+c.strong+')') + chip('building','✅ Building ('+c.building+')') + chip('watch','👀 Watch ('+c.watch+')') + chip('breakout','🧱 Breakout / at base high ('+c.breakout+')');
-            bar.querySelectorAll('.mb-chip').forEach(b => b.addEventListener('click', () => { activeFilter = b.getAttribute('data-f'); renderFilter(); renderRows(); }));
+        const VAL = { Cheap: 'var(--green)', Fair: 'var(--text-primary)', Rich: '#a16207', Expensive: 'var(--red)' };
+        const CAT_ICON = { orders: '📜', meets: '🎤', capex: '🏗', approval: '✅', product: '🆕', order: '📜', partnership: '🤝', acquisition: '🧩', fundraise: '💰', negative: '⚠' };
+        const chip = (txt, bg, fg) => '<span style="background:'+bg+';color:'+fg+';font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap">'+txt+'</span>';
+        const stat = (label, val, color, sub) => '<div style="min-width:0"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;white-space:nowrap">'+label+'</div><div style="font-weight:700;white-space:nowrap;'+(color?'color:'+color:'')+'">'+val+'</div>'+(sub ? '<div style="font-size:11px;color:var(--text-secondary);line-height:1.3">'+sub+'</div>' : '')+'</div>';
+        const bar = (label, v, mx, color) => {
+            const pct = Math.max(0, Math.min(100, (v || 0) / mx * 100));
+            return '<div style="display:grid;grid-template-columns:34px 1fr 44px;gap:6px;align-items:center;font-size:11px">'
+                 + '<b style="color:var(--text-secondary)">'+label+'</b>'
+                 + '<span style="height:6px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden;display:block"><span style="display:block;width:'+pct+'%;height:100%;background:'+color+'"></span></span>'
+                 + '<b style="color:var(--text-primary);text-align:right">'+fmt(v,'',0)+'/'+mx+'</b></div>';
         };
+        const isV2 = (r) => r && r.stage !== undefined && r.bc !== undefined;
 
-        const stat = (label, val, color) => '<div><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;white-space:nowrap">'+label+'</div><div style="font-weight:700;white-space:nowrap;'+(color?'color:'+color:'')+'">'+val+'</div></div>';
-
-        const breakdownHtml = (s) => {
-            const groups = ['Business', 'Price', 'Ownership', 'Valuation'];
+        const partsHtml = (s) => {
+            const groups = [['bc', 'A · Business Change', 50, s.bc], ['fg', 'B · Future Growth', 35, s.fg], ['mr', 'C · Market Recognition', 30, s.mr]];
             let h = '<div style="margin-top:12px;border-top:1px dashed var(--border-color);padding-top:10px;display:grid;gap:12px">';
-            groups.forEach(g => {
-                const items = (s.breakdown||[]).filter(b => b.group === g);
-                if (!items.length) return;
-                h += '<div><div style="font-size:11px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--text-accent);margin-bottom:6px">'+g+'</div><div style="display:grid;gap:5px">';
-                items.forEach(b => {
-                    const na = b.pts === null || b.pts === undefined;
-                    const pct = na ? 0 : Math.max(0, Math.min(100, b.pts / b.max * 100));
-                    const col = na ? 'var(--text-secondary)' : b.hit ? 'var(--green)' : pct > 0 ? 'var(--yellow)' : 'var(--red)';
-                    const icon = na ? '–' : b.hit ? '✓' : pct > 0 ? '◐' : '✗';
-                    h += '<div class="mb-sig">'
-                       + '<span style="text-align:center;font-weight:800;color:'+col+'">'+icon+'</span>'
-                       + '<span style="color:var(--text-primary);font-weight:600">'+esc(b.label)+'</span>'
-                       + '<span class="mb-note">'+esc(na ? 'data not available' : b.note)+'</span>'
-                       + '<span style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end"><span style="width:44px;height:5px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden;display:inline-block"><span style="display:block;width:'+pct+'%;height:100%;background:'+col+'"></span></span><b style="color:'+col+';font-size:11px">'+(na ? 'n/a' : fmt(b.pts,'',1)+'/'+b.max)+'</b></span>'
-                       + '</div>';
+            groups.forEach(([k, title, mx, got]) => {
+                h += '<div><div style="font-size:11px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--text-accent);margin-bottom:6px">'+title+' · '+fmt(got,'',1)+'/'+mx
+                   + (k === 'fg' && s.fg_scaled ? ' <span style="text-transform:none;letter-spacing:0;font-weight:600;color:var(--text-secondary)">(order items don\'t apply to this business, so it\'s rescaled over the rest)</span>' : '') + '</div><div style="display:grid;gap:5px">';
+                ((s.parts || {})[k] || []).forEach(p => {
+                    const na = p.pts === null || p.pts === undefined;
+                    const pct = na ? 0 : Math.max(0, Math.min(100, p.pts / p.max * 100));
+                    const col = na ? 'var(--text-secondary)' : pct >= 60 ? 'var(--green)' : pct > 0 ? '#a16207' : 'var(--red)';
+                    h += '<div class="mb-sig"><span style="text-align:center;font-weight:800;color:'+col+'">'+(na ? '–' : pct >= 60 ? '✓' : pct > 0 ? '◐' : '✗')+'</span>'
+                       + '<span style="color:var(--text-primary);font-weight:600">'+esc(p.label)+'</span>'
+                       + '<span class="mb-note">'+esc(na ? (p.note && p.note !== 'n/a' ? p.note : 'data not available') : p.note)+'</span>'
+                       + '<span style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end"><span style="width:44px;height:5px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden;display:inline-block"><span style="display:block;width:'+pct+'%;height:100%;background:'+col+'"></span></span><b style="color:'+col+';font-size:11px">'+(na ? 'n/a' : fmt(p.pts,'',1)+'/'+p.max)+'</b></span></div>';
                 });
                 h += '</div></div>';
             });
-            if (s.late_penalty) h += '<div style="font-size:11.5px;color:#a16207">⚠ −'+s.late_penalty+' pts "already moving" penalty: up '+fmt(s.ran_pct,'%')+' from its 6-month low.</div>';
-            h += '</div>';
+            if (s.penalty) h += '<div style="font-size:11.5px;color:#a16207">⚠ −'+s.penalty+' pts for caution flags (shown above the scores).</div>';
+            return h + '</div>';
+        };
+
+        const riskHtml = (s) => {
+            const r = s.risk || {};
+            let h = '';
+            if ((r.major || []).length) h += '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(220,38,38,0.07);border:1px solid rgba(220,38,38,0.25)"><div style="font-size:10px;font-weight:800;letter-spacing:1px;color:var(--red);margin-bottom:3px">🚨 RED FLAGS · OVERRIDE THE SCORE</div><ul style="margin:0;padding-left:18px;font-size:12px;color:var(--text-primary);line-height:1.55">' + r.major.map(x => '<li>'+esc(x)+'</li>').join('') + '</ul></div>';
+            if ((r.caution || []).length) h += '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(234,179,8,0.08);border:1px solid rgba(234,179,8,0.3)"><div style="font-size:10px;font-weight:800;letter-spacing:1px;color:#a16207;margin-bottom:3px">⚠ CAUTION</div><ul style="margin:0;padding-left:18px;font-size:12px;color:var(--text-primary);line-height:1.55">' + r.caution.map(x => '<li>'+esc(x)+'</li>').join('') + '</ul></div>';
             return h;
+        };
+
+        const catalystsHtml = (s) => {
+            const C = s.catalysts || [];
+            if (!C.length) return '';
+            return '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(79,70,229,0.04);border:1px solid rgba(79,70,229,0.10)"><div style="font-size:10px;font-weight:800;letter-spacing:1px;color:var(--text-accent);margin-bottom:3px">RECENT CATALYSTS (BSE FILINGS)</div>'
+                 + C.map(c => '<div style="font-size:12px;line-height:1.55;display:flex;gap:8px"><span style="color:var(--text-secondary);white-space:nowrap">'+esc((c.date || '').slice(5))+'</span><span>'+(CAT_ICON[c.feed === 'press' ? c.cls : c.feed] || '•')+' '+esc(c.headline)+(c.value_cr ? ' <b>('+fmtCr(c.value_cr)+')</b>' : '')
+                   + (c.attachment ? ' <a href="/api/corp/pdf?f='+encodeURIComponent(c.attachment)+'" target="_blank" rel="noopener" style="font-size:11px;font-weight:700;color:var(--text-accent);text-decoration:none">PDF ↗</a>' : '')+'</span></div>').join('') + '</div>';
         };
 
         // One stock card — shared by the market-scan list and the single-stock check.
         const cardHtml = (s, isOpen, scope) => {
-            const sc = scoreColor(s.score);
-            const t = TIER[s.tier] || TIER.watch;
+            if (!isV2(s)) return '';
+            const st = STAGE[s.stage] || STAGE.weak;
             const sym = encodeURIComponent(s.ticker);
             const tvSym = (s.exchange === 'BSE' ? 'BSE:' : 'NSE:') + sym;
             const rankCell = scope === 'check' ? '🔎' : s.rank;
+            const m = s.metrics || {};
+            const v = s.valuation || {};
+            const totCol = s.stage === 'redflag' ? 'var(--red)' : s.total >= 80 ? 'var(--green)' : s.total >= 60 ? '#a16207' : 'var(--text-secondary)';
+            let tags = chip(st.label, st.bg, st.fg);
+            if (s.meets_bar) tags += ' ' + chip('✓ Meets your bar', 'rgba(22,163,74,0.12)', 'var(--green)');
+            tags += ' ' + chip('Conviction ' + esc(s.conviction), 'rgba(79,70,229,0.08)', 'var(--text-accent)');
+            if (v.label && v.label !== 'n/a') tags += ' ' + chip(esc(v.label) + (v.peg ? ' · PEG ' + v.peg : ''), 'rgba(15,23,42,0.05)', VAL[v.label] || 'var(--text-secondary)');
+            (m.themes || []).slice(0, 2).forEach(t => { tags += ' ' + chip('🌐 ' + esc(t), 'rgba(14,165,233,0.10)', '#0369a1'); });
+            if (!s.fund_ok) tags += ' ' + chip('⚠ financials unavailable', 'rgba(234,179,8,0.14)', '#a16207');
+            const via = (s.found_via || []).map(x => ({chart: 'chart move', filings: 'filing catalyst', quiet: 'quiet quality'})[x] || x).join(', ');
             let h = '<div class="card" style="padding:14px 16px">';
-            const scoreBlock = '<div style="text-align:right;flex-shrink:0"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;white-space:nowrap">Early Signal</div><div style="display:flex;align-items:center;gap:6px;justify-content:flex-end"><div style="width:48px;height:6px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.score,100)+'%;height:100%;background:'+sc+'"></div></div><b style="color:'+sc+';font-size:19px">'+s.score+'</b></div></div>';
-            // header: rank + name + tags (left), score (right)
-            h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">';
-            h += '<div style="display:flex;align-items:flex-start;gap:12px;flex:1;min-width:0"><div style="font-size:18px;font-weight:800;color:var(--text-secondary);width:26px;flex-shrink:0">'+rankCell+'</div><div style="min-width:0">'
+            h += '<div class="mb2-head">';
+            h += '<div style="display:flex;align-items:flex-start;gap:12px;flex:1 1 240px;min-width:0"><div style="font-size:18px;font-weight:800;color:var(--text-secondary);width:26px;flex-shrink:0">'+rankCell+'</div><div style="min-width:0">'
                + '<div style="font-weight:800;color:var(--text-primary);font-size:15px">'+esc(s.ticker)
                + ' <a href="https://www.screener.in/company/'+sym+'/" target="_blank" rel="noopener" style="font-size:11px;font-weight:600;color:var(--text-accent);text-decoration:none;margin-left:6px;white-space:nowrap">Screener ↗</a>'
                + ' <a href="https://www.tradingview.com/chart/?symbol='+tvSym+'" target="_blank" rel="noopener" style="font-size:11px;font-weight:600;color:var(--text-accent);text-decoration:none;margin-left:4px;white-space:nowrap">Chart ↗</a></div>'
-               + (s.name ? '<div style="font-size:12px;color:var(--text-secondary);margin-top:1px">'+esc(s.name)+(s.exchange ? ' · '+esc(s.exchange) : '')+'</div>' : '')
-               + '<div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center">'
-               + '<span style="background:'+t.bg+';color:'+t.fg+';font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:10px">'+t.label+'</span>'
-               + '<span style="background:rgba(15,23,42,0.05);color:var(--text-secondary);font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px">'+(STATE[s.breakout_state]||'')+'</span>'
-               + '<span style="background:rgba(79,70,229,0.08);color:var(--text-accent);font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px">'+s.hits+'/'+s.n_avail+' signals</span>'
-               + (s.price_only ? '<span style="background:rgba(234,179,8,0.14);color:#a16207;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px">⚠ price data only</span>' : '')
-               + '</div></div></div>';
-            h += scoreBlock + '</div>';
-            // stats grid underneath — same layout on every card, wraps cleanly on phones
-            h += '<div class="mb-stats">';
-            h += stat('Price', '₹'+Number(s.price).toLocaleString('en-IN'));
-            h += stat('Base high', s.base_hi ? '₹'+Number(s.base_hi).toLocaleString('en-IN') : '—');
-            h += stat('vs base', sgn(s.ext_pct));
-            h += stat('From 6M low', '+'+fmt(s.ran_pct,'%'), s.ran_pct > 45 ? '#a16207' : null);
-            h += stat('Volume', fmt(s.vol_ratio,'×'), s.vol_ratio >= 2 ? 'var(--green)' : null);
-            h += stat('PAT YoY', sgn(s.pat_yoy), s.pat_yoy > 20 ? 'var(--green)' : (s.pat_yoy < 0 ? 'var(--red)' : null));
-            h += stat('Sales YoY', sgn(s.rev_yoy), s.rev_yoy > 15 ? 'var(--green)' : (s.rev_yoy < 0 ? 'var(--red)' : null));
-            h += stat('PEG', fmt(s.peg,'',2));
-            h += stat('Mkt cap', s.mcap ? '₹'+Number(Math.round(s.mcap)).toLocaleString('en-IN')+' Cr' : '—');
+               + (s.name ? '<div style="font-size:12px;color:var(--text-secondary);margin-top:1px">'+esc(s.name)+(s.exchange ? ' · '+esc(s.exchange) : '')+(via ? ' · found via '+esc(via) : '')+'</div>' : '')
+               + '<div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap;align-items:center">'+tags+'</div>'
+               + '</div></div>';
+            h += '<div class="mb2-score"><div style="display:flex;justify-content:flex-end;align-items:baseline;gap:4px"><b style="font-size:22px;color:'+totCol+'">'+fmt(s.total,'',0)+'</b><span style="font-size:11px;color:var(--text-secondary)">/115</span></div>'
+               + '<div style="display:grid;gap:3px;margin-top:4px">' + bar('BC', s.bc, 50, 'var(--green)') + bar('FG', s.fg, 35, 'var(--text-accent)') + bar('MR', s.mr, 30, '#0ea5e9') + '</div></div>';
             h += '</div>';
-            h += '<button class="mb-toggle" data-t="'+esc(s.ticker)+'" style="margin-top:10px;background:none;border:none;padding:0;color:var(--text-accent);font-weight:700;font-size:12px;cursor:pointer">'+(isOpen ? 'Hide signal breakdown ▴' : 'Show all '+(s.breakdown||[]).length+' signals ▾')+'</button>';
-            if (isOpen) h += breakdownHtml(s);
+            h += '<div class="mb-stats">';
+            h += stat('Price', s.price ? '₹'+Number(s.price).toLocaleString('en-IN') : '—');
+            h += stat('From 6M low', s.ran_pct !== null && s.ran_pct !== undefined ? '+'+fmt(s.ran_pct,'%') : '—', s.ran_pct > 70 ? 'var(--red)' : s.ran_pct > 45 ? '#a16207' : null);
+            h += stat('Volume', fmt(s.vol_ratio,'×'), s.vol_ratio >= 2 ? 'var(--green)' : null);
+            h += stat('Sales YoY', sgn(m.rev_yoy), m.rev_yoy > 15 ? 'var(--green)' : (m.rev_yoy < 0 ? 'var(--red)' : null));
+            h += stat('PAT YoY', sgn(m.pat_yoy), m.pat_yoy > 20 ? 'var(--green)' : (m.pat_yoy < 0 ? 'var(--red)' : null));
+            h += stat('Orders 90d', s.order_inflow_cr ? fmtCr(s.order_inflow_cr) : (s.n_orders ? s.n_orders+' wins' : '—'), s.order_inflow_pct_sales >= 25 ? 'var(--green)' : null,
+                      s.order_inflow_pct_sales ? s.order_inflow_pct_sales+'% of sales' : '');
+            h += stat('Order book', m.order_book_cr ? fmtCr(m.order_book_cr) : '—', m.book_to_bill >= 1.5 ? 'var(--green)' : null,
+                      m.book_to_bill ? m.book_to_bill+'× sales' : '');
+            h += stat('Mkt cap', s.mcap ? '₹'+Math.round(s.mcap).toLocaleString('en-IN')+' Cr' : '—');
+            h += '</div>';
+            h += riskHtml(s) + catalystsHtml(s);
+            h += '<button class="mb-toggle" data-t="'+esc(s.ticker)+'" style="margin-top:10px;background:none;border:none;padding:0;color:var(--text-accent);font-weight:700;font-size:12px;cursor:pointer">'+(isOpen ? 'Hide score breakdown ▴' : 'Show all 19 signals ▾')+'</button>';
+            if (isOpen) h += partsHtml(s);
             h += '</div>';
             return h;
+        };
+
+        const renderFilter = () => {
+            const bar_ = document.getElementById('mb-filter');
+            if (!bar_ || !lastData || !lastData.results) { if (bar_) bar_.style.display='none'; return; }
+            const R = lastData.results.filter(isV2);
+            if (!R.length) { bar_.style.display = 'none'; return; }
+            const c = { all: R.length, bar: R.filter(r => r.meets_bar).length };
+            R.forEach(r => { c[r.stage] = (c[r.stage]||0) + 1; });
+            const chipB = (key, label) => (key !== 'all' && !c[key]) ? '' : '<button data-f="'+key+'" class="mb-chip" style="padding:6px 12px;border-radius:16px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--border-color);background:'+(activeFilter===key?'var(--text-accent)':'var(--bg-card)')+';color:'+(activeFilter===key?'#fff':'var(--text-secondary)')+'">'+label+' ('+(c[key]||0)+')</button>';
+            bar_.style.display = 'flex';
+            bar_.innerHTML = chipB('all','All') + chipB('bar','✓ Meets your bar') + chipB('hidden','🟢 Hidden') + chipB('discovery','🟢 Discovery') + chipB('momentum','🟡 Momentum') + chipB('weak','⚪ Not yet') + chipB('nodata','❔ No data') + chipB('redflag','🚨 Red flag');
+            bar_.querySelectorAll('.mb-chip').forEach(b => b.addEventListener('click', () => { activeFilter = b.getAttribute('data-f'); renderFilter(); renderRows(); }));
         };
 
         const renderRows = () => {
             const el = document.getElementById('mb-result');
             if (!el || !lastData) return;
-            let rows = lastData.results || [];
-            if (['strong','building','watch'].includes(activeFilter)) rows = rows.filter(r => r.tier === activeFilter);
-            else if (activeFilter === 'breakout') rows = rows.filter(r => r.breakout_state === 'breakout' || r.breakout_state === 'at_resistance');
-            let h = '';
             const D = lastData;
-            if (D.deep_fetched && !D.fund_fetched) {
-                h += '<div class="card" style="padding:12px 16px;border-color:var(--yellow);margin-bottom:12px;font-size:12.5px;color:#a16207">⚠ Screener.in did not respond during this scan, so the business &amp; ownership signals are missing. Scores below use price/volume only and are deliberately not rescaled. Try the scan again later.</div>';
+            let rows = (D.results || []).filter(isV2);
+            if (activeFilter === 'bar') rows = rows.filter(r => r.meets_bar);
+            else if (activeFilter !== 'all') rows = rows.filter(r => r.stage === activeFilter);
+            let h = '';
+            if (!(D.results || []).some(isV2) && (D.results || []).length) {
+                el.innerHTML = '<div class="card" style="text-align:center;padding:30px;color:var(--text-secondary)">These saved results are from the previous scoring model. Click <b>Run Early Signal Scan</b> to rescan with the 115-point model.</div>';
+                return;
             }
+            if (D.deep_fetched && !D.fund_fetched) h += '<div class="card" style="padding:12px 16px;border-color:var(--yellow);margin-bottom:12px;font-size:12.5px;color:#a16207">⚠ Screener.in did not respond during this scan, so Business Change couldn\'t be measured. Try the scan again later.</div>';
+            if (D.filings && !D.filings.total) h += '<div class="card" style="padding:12px 16px;border-color:var(--yellow);margin-bottom:12px;font-size:12.5px;color:#a16207">⚠ BSE filings couldn\'t be loaded, so order, capex and approval signals are empty in this scan.</div>';
             if (!rows.length) { el.innerHTML = h + '<div class="card" style="text-align:center;padding:30px;color:var(--text-secondary)">No stocks in this filter.</div>'; return; }
             h += '<div style="display:grid;gap:10px">';
             rows.forEach(s => { h += cardHtml(s, open.has(s.ticker), 'scan'); });
             h += '</div>';
-            const ex = D.excluded || {};
+            const ex = D.excluded || {}, fc = (D.filings && D.filings.counts) || {};
             h += '<div style="margin-top:12px;font-size:11px;color:var(--text-secondary);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">'
-               + '<span>Scanned '+(D.total_priced||D.total_scanned||0)+' stocks · skipped '+(ex.already_ran||0)+' that already ran &gt;70% · '+(D.total_passed||0)+' showed a chart trigger · business data fetched for '+(D.fund_fetched||0)+'/'+(D.deep_fetched||0)+'</span>'
+               + '<span>Scanned '+(D.total_priced||D.total_scanned||0)+' stocks (skipped '+((ex.penny||0)+(ex.illiquid||0))+' penny / illiquid) · read '+(fc.orders||0)+' order, '+(fc.press||0)+' press-release and '+(fc.meets||0)+' meet filings · deep-checked '+(D.deep_fetched||0)+' (financials for '+(D.fund_fetched||0)+') · '+(D.order_books_found||0)+' order books found · '+(D.total_passed||0)+' scored ≥ ₹500 Cr</span>'
                + '<span style="font-style:italic">Last scanned: '+esc(D.timestamp||'')+'</span></div>';
             el.innerHTML = h;
             el.querySelectorAll('.mb-toggle').forEach(b => b.addEventListener('click', () => {
@@ -1957,12 +1987,8 @@ const app = {
 
         const renderResults = (data) => {
             lastData = data;
-            if (data.omitted_signals && data.omitted_signals.length) {
-                const om = document.getElementById('mb-omitted');
-                if (om) om.innerHTML = data.omitted_signals.map(esc).join(' · ');
-            }
             if (!data.results || !data.results.length) {
-                document.getElementById('mb-result').innerHTML = '<div class="card" style="text-align:center;padding:40px;border-color:var(--yellow)"><div style="font-size:40px;margin-bottom:14px">🚀</div><div style="color:var(--yellow);font-weight:800">No early signals right now</div><div style="color:var(--text-secondary);margin-top:8px">No stock currently combines abnormal volume or a base breakout with the other signals. That is normal in weak or choppy markets. Try again after the next close.</div></div>';
+                document.getElementById('mb-result').innerHTML = '<div class="card" style="text-align:center;padding:40px;border-color:var(--yellow)"><div style="font-size:40px;margin-bottom:14px">🚀</div><div style="color:var(--yellow);font-weight:800">No candidates right now</div><div style="color:var(--text-secondary);margin-top:8px">No company above ₹500 Cr cleared the checks in this scan. Try again after the next close.</div></div>';
                 document.getElementById('mb-filter').style.display='none';
                 return;
             }
@@ -1973,15 +1999,15 @@ const app = {
         const startPolling = () => {
             if (pollTimer) clearInterval(pollTimer);
             const btn = document.getElementById('btn-scan-mb');
-            const bar = document.getElementById('mb-status');
+            const st = document.getElementById('mb-status');
             if (btn) { btn.disabled=true; btn.innerHTML='<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Scanning...'; }
-            if (bar) { bar.style.display='block'; bar.innerHTML='<div class="card" style="padding:12px 16px;background:rgba(22,163,74,0.06);border-color:rgba(22,163,74,0.25);display:flex;align-items:center;gap:12px;margin-bottom:16px"><span class="spinner"></span><span style="color:var(--green);font-weight:600">Scanning the full market for early signals, then reading quarterly results (3–6 min). You can navigate away.</span></div>'; }
+            if (st) { st.style.display='block'; st.innerHTML='<div class="card" style="padding:12px 16px;background:rgba(22,163,74,0.06);border-color:rgba(22,163,74,0.25);display:flex;align-items:center;gap:12px;margin-bottom:16px"><span class="spinner"></span><span style="color:var(--green);font-weight:600">Scanning prices, 90 days of BSE filings and company financials (5–10 min). You can navigate away.</span></div>'; }
             pollTimer = setInterval(async () => {
                 if (!document.getElementById('btn-scan-mb')) { clearInterval(pollTimer); pollTimer = null; return; }   // user left the page
                 try {
-                    const st = await api.getScreenerStatus(MKT);
-                    if (st.status === 'done') { clearInterval(pollTimer); pollTimer=null; resetBtn(btn); if (bar) bar.style.display='none'; loadLast(); }
-                    else if (st.status === 'error') { clearInterval(pollTimer); pollTimer=null; resetBtn(btn); if (bar){bar.style.display='block';bar.innerHTML='<div class="card" style="padding:12px 16px;border-color:var(--red);margin-bottom:16px"><span style="color:var(--red);font-weight:600">Scan failed: '+esc(st.error||'Unknown error')+'</span></div>';} }
+                    const s = await api.getScreenerStatus(MKT);
+                    if (s.status === 'done') { clearInterval(pollTimer); pollTimer=null; resetBtn(btn); if (st) st.style.display='none'; loadLast(); }
+                    else if (s.status === 'error') { clearInterval(pollTimer); pollTimer=null; resetBtn(btn); if (st){st.style.display='block';st.innerHTML='<div class="card" style="padding:12px 16px;border-color:var(--red);margin-bottom:16px"><span style="color:var(--red);font-weight:600">Scan failed: '+esc(s.error||'Unknown error')+'</span></div>';} }
                 } catch(e) {}
             }, 6000);
         };
@@ -1991,10 +2017,10 @@ const app = {
             if (!el) return;
             try {
                 const data = await api.getScreenerResults(MKT);
-                if (data.empty) { el.innerHTML = '<div class="card" style="text-align:center;padding:40px;border-color:rgba(79,70,229,0.2)"><div style="font-size:40px;margin-bottom:14px">🚀</div><div style="color:var(--text-accent);font-weight:800;font-size:16px">No scan yet</div><div style="color:var(--text-secondary);margin-top:8px">Click <b>Run Early Signal Scan</b> to look for the next Wheels / Spectrum / Fermenta setup. Best run after the market closes.</div></div>'; }
+                if (data.empty) { el.innerHTML = '<div class="card" style="text-align:center;padding:40px;border-color:rgba(79,70,229,0.2)"><div style="font-size:40px;margin-bottom:14px">🚀</div><div style="color:var(--text-accent);font-weight:800;font-size:16px">No scan yet</div><div style="color:var(--text-secondary);margin-top:8px">Click <b>Run Early Signal Scan</b> to look for the next STL / Wheels / Spectrum setup. Best run after the market closes.</div></div>'; }
                 else { renderResults(data); }
             } catch(e) { el.innerHTML = '<div class="card" style="text-align:center;padding:20px;color:var(--text-secondary)">Could not load previous results.</div>'; }
-            try { const st = await api.getScreenerStatus(MKT); if (st.status === 'running') startPolling(); } catch(e) {}
+            try { const s = await api.getScreenerStatus(MKT); if (s.status === 'running') startPolling(); } catch(e) {}
         };
 
         // ---------------- Single-stock check ----------------
@@ -2012,8 +2038,8 @@ const app = {
             const el = document.getElementById('mb-check-recent');
             if (!el) return;
             const recent = getRecent();
-            const list = recent.length ? recent : ['WHEELS', 'SPECTRUM', 'FERMENTA'];
-            const lbl = recent.length ? 'Recent:' : 'Try your three winners:';
+            const list = recent.length ? recent : ['STLTECH', 'WHEELS', 'SPECTRUM', 'FERMENTA'];
+            const lbl = recent.length ? 'Recent:' : 'Try the case studies:';
             el.innerHTML = '<span style="font-size:11.5px;color:var(--text-secondary)">'+lbl+'</span>' + list.map(x =>
                 '<button type="button" class="mb-recent" data-q="'+esc(x)+'" style="padding:4px 10px;border-radius:14px;font-size:11.5px;font-weight:700;cursor:pointer;border:1px solid var(--border-color);background:var(--bg-card);color:var(--text-secondary)">'+esc(x)+'</button>').join('');
             el.querySelectorAll('.mb-recent').forEach(b => b.addEventListener('click', () => {
@@ -2026,17 +2052,15 @@ const app = {
             const el = document.getElementById('mb-check-result');
             if (!el || !checkData) return;
             const d = checkData;
+            if (!isV2(d)) { el.innerHTML = '<div class="card" style="margin-top:12px;padding:12px 14px;color:var(--text-secondary)">This result came from the previous model; check the stock again.</div>'; return; }
             const v = d.verdict || {};
-            const vColor = d.eligible && d.tier === 'strong' ? 'var(--green)' : (d.tier === 'building' ? '#a16207' : 'var(--text-primary)');
-            let h = '<div style="margin-top:12px;padding:12px 14px;border-radius:10px;background:rgba(79,70,229,0.05);border:1px solid rgba(79,70,229,0.15)">'
-                  + '<div style="font-weight:800;font-size:15px;color:'+vColor+'">'+esc(v.head || '')+'</div>'
-                  + '<div style="font-size:12.5px;color:var(--text-secondary);margin-top:3px;line-height:1.6">'+esc(v.detail || '')+'</div>'
+            const st = STAGE[d.stage] || STAGE.weak;
+            let h = '<div style="margin-top:12px;padding:12px 14px;border-radius:10px;background:'+st.bg+';border:1px solid rgba(79,70,229,0.12)">'
+                  + '<div style="font-weight:800;font-size:15px;color:'+st.fg+'">'+esc(v.head || '')+'</div>'
+                  + '<div style="font-size:12.5px;color:var(--text-primary);margin-top:3px;line-height:1.6">'+esc(v.detail || '')+'</div>'
                   + '<div style="font-size:12px;font-weight:700;margin-top:8px;color:'+(d.eligible ? 'var(--green)' : 'var(--text-secondary)')+'">'
-                  + (d.eligible ? '✓ Eligible for the market scan (it ranks the top 25 on the day)' : '✗ The market scan would skip it today')
-                  + '</div>';
-            if (d.warnings && d.warnings.length) {
-                h += '<ul style="margin:8px 0 0;padding-left:18px;font-size:12px;color:#a16207;line-height:1.6">' + d.warnings.map(w => '<li>'+esc(w)+'</li>').join('') + '</ul>';
-            }
+                  + (d.eligible ? '✓ Eligible for the market scan' : '✗ The market scan would not list it') + '</div>';
+            if (d.warnings && d.warnings.length) h += '<ul style="margin:8px 0 0;padding-left:18px;font-size:12px;color:#a16207;line-height:1.6">' + d.warnings.map(w => '<li>'+esc(w)+'</li>').join('') + '</ul>';
             h += '</div>';
             h += '<div style="margin-top:10px">' + cardHtml(d, checkOpen, 'check') + '</div>';
             el.innerHTML = h;
@@ -2051,7 +2075,7 @@ const app = {
             if (!q) { el.innerHTML = '<div style="margin-top:10px;font-size:12.5px;color:var(--red)">Type a stock name or NSE symbol first.</div>'; return; }
             const my = ++checkSeq;
             if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Checking...'; }
-            el.innerHTML = '<div style="margin-top:12px;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-secondary)"><span class="spinner"></span> Checking <b style="color:var(--text-primary)">'+esc(q)+'</b>: price history, quarterly results and shareholding (10–20 s)...</div>';
+            el.innerHTML = '<div style="margin-top:12px;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-secondary)"><span class="spinner"></span> Checking <b style="color:var(--text-primary)">'+esc(q)+'</b>: price history, financials, shareholding and BSE filings (15–30 s)...</div>';
             try {
                 const data = await api.multibaggerCheck(q);
                 if (my !== checkSeq) return;                         // a newer check started
@@ -2138,7 +2162,7 @@ const app = {
                 ${card('#microcap', '#f472b6', '🔬', 'Micro Cap Scanner', 'Micro caps under ₹2,000 Cr trading within 7% of their 52-week high — the tightest momentum coil, ranked by the same 12-factor score.', 'Scan Micro Caps', true)}
                 ${card('#gems', '#16a34a', '💎', 'Hidden Gems', 'The wonder-stock finder: a full-market fusion scan tagging stealth accumulation, turnarounds &amp; breakouts, ranked by Wonder Score with AI deep-dives.', 'Find Gems', true)}
                 ${card('#corp', '#ea580c', '📑', 'Corporate Actions', 'New orders, analyst / investor meets and press releases filed on BSE over the last 3 days. Every PDF is read for key points, and each company is scored on the news plus its chart and profit momentum.', 'Open Corporate Actions', true)}
-                ${card('#multibagger', '#dc2626', '🚀', 'Multibagger Early Signal', "Built from Amit's own winners (Wheels India, Spectrum Electrical, Fermenta): finds stocks with accelerating profits, abnormal volume and a fresh breakout that haven't run yet. Or check any stock you have in mind.", 'Find Early Signals', true)}
+                ${card('#multibagger', '#dc2626', '🚀', 'Multibagger Early Signal', "Amit's 115-point model: Business Change, Future Growth (orders, capacity, structural themes) and Market Recognition, with stages from Hidden to Momentum and red flags that override any score. Or check any stock.", 'Find Early Signals', true)}
                 ${card('#wyckoff', '#0ea5e9', '📐', 'Wyckoff Scanner', 'Finds Nifty 1000 stocks at the accumulation→markup turn using Wyckoff phase analysis on daily &amp; weekly candles — momentum as it ignites.', 'Run Wyckoff', true)}
                 ${card('#screener', '#60a5fa', '📊', 'Stock Screener', 'Scan the Nifty 500 — and the next 501–1000 — for breakouts by P/E, volume spike and RSI.', 'Run a Scan')}
                 ${card('#chartink', '#c084fc', '📋', 'Chartink Comparator', 'Find the stocks that appear in both of your favourite Chartink screeners.', 'Compare')}

@@ -345,7 +345,9 @@ def run_screener(market="india"):
         return run_wyckoff_screener()
 
     if market == "india_multibagger":
-        return run_multibagger_screener()
+        # v2: 115-point model (Business Change / Future Growth / Market Recognition + risk override)
+        from multibagger import run_multibagger_v2
+        return run_multibagger_v2()
 
     if market == "us":
         tickers = get_sp500_tickers()
@@ -1629,7 +1631,8 @@ def _mb_price_signals(rows, nifty_closes, strict=True):
     if dist <= 10: t += 2
     pts["trend_rs"] = min(MB_WEIGHT["trend_rs"], t)
     out.update({"rs_6m": rs, "dist_52wh": round(dist, 1),
-                "above_200dma": bool(sma200 and price > sma200)})
+                "above_200dma": bool(sma200 and price > sma200),
+                "above_50dma": bool(sma50 and price > sma50)})
     notes["trend_rs"] = (f"RS {rs:+.0f}pp vs Nifty, " if rs is not None else "") + f"{dist:.0f}% below 52wH"
 
     # "Already moving" penalty — earlier is better
@@ -1680,9 +1683,11 @@ def _mb_parse_screener_html(html):
             cells = tr.find_all(["td", "th"])
             if len(cells) < 2:
                 continue
-            label = re.sub(r'[\s\+ ]+$', '', cells[0].get_text(" ", strip=True)).strip()
+            label = re.sub(r'[\s\+\u00a0]+$', '', cells[0].get_text(" ", strip=True)).strip()
             label = re.sub(r'\s+', ' ', label)
             if not label:
+                if "__headers__" not in rows:      # header row: column names (… Mar 2026, TTM)
+                    rows["__headers__"] = [c.get_text(" ", strip=True) for c in cells[1:]]
                 continue
             vals = [_mb_num(c.get_text(strip=True)) for c in cells[1:]]
             rows[label] = vals
@@ -1691,11 +1696,11 @@ def _mb_parse_screener_html(html):
     def pick(rows, *names):
         for nm in names:
             for k, v in rows.items():
-                if k.lower() == nm.lower():
+                if k != "__headers__" and k.lower() == nm.lower():
                     return v
         for nm in names:
             for k, v in rows.items():
-                if k.lower().startswith(nm.lower()):
+                if k != "__headers__" and k.lower().startswith(nm.lower()):
                     return v
         return None
 
@@ -1705,12 +1710,43 @@ def _mb_parse_screener_html(html):
     raw["q_pat"]    = pick(q, "Net Profit")
     raw["q_eps"]    = pick(q, "EPS in Rs", "EPS")
     raw["q_opm"]    = pick(q, "OPM %", "OPM", "Financing Margin %")
+    raw["q_other_income"] = pick(q, "Other Income")
+    raw["q_pbt"]    = pick(q, "Profit before tax")
+    raw["q_exceptional"] = pick(q, "Exceptional items")
+    pl = table_series("section#profit-loss")
+    ttm_col = bool(pl.get("__headers__")) and pl["__headers__"][-1].strip().upper() == "TTM"
+    for key, names in (("y_sales", ("Sales", "Revenue")), ("y_ebitda", ("Operating Profit", "Financing Profit")),
+                       ("y_pat", ("Net Profit",)), ("y_other_income", ("Other Income",))):
+        ser = pick(pl, *names)
+        if ser and ttm_col:
+            ser = ser[:-1]                       # yearly columns only (TTM is derived from quarters)
+        raw[key] = ser
     r = table_series("section#ratios")
     raw["roce_hist"] = pick(r, "ROCE %", "ROCE", "ROE %")
+    raw["debtor_days"] = pick(r, "Debtor Days")
+    raw["inventory_days"] = pick(r, "Inventory Days")
+    raw["wc_days"] = pick(r, "Working Capital Days")
     b = table_series("section#balance-sheet")
     raw["borrowings"] = pick(b, "Borrowings")
+    raw["equity_capital"] = pick(b, "Equity Capital", "Share Capital")
+    raw["reserves"] = pick(b, "Reserves")
     c = table_series("section#cash-flow")
     raw["ocf"] = pick(c, "Cash from Operating Activity", "Cash from Operating")
+    # identity + business description (for structural-theme detection)
+    head_txt = " ".join(soup.get_text(" ", strip=True).split())[:6000]
+    m = re.search(r"BSE:\s*(\d{6})", head_txt)
+    raw["bse_code"] = m.group(1) if m else None
+    m = re.search(r"NSE:\s*([A-Z0-9&\-]{1,20})", head_txt)
+    raw["nse_symbol"] = m.group(1) if m else None
+    about = soup.select_one(".company-profile .about") or soup.select_one("div.about")
+    keyp = soup.select_one(".company-profile .commentary") or soup.select_one("div.commentary")
+    raw["about"] = " ".join(((about.get_text(" ", strip=True) if about else "") + " " +
+                             (keyp.get_text(" ", strip=True) if keyp else "")).split())[:2500] or None
+    inds = []
+    for a in soup.select("#peers a[title]") or []:
+        if a.get("title") in ("Broad Sector", "Sector", "Broad Industry", "Industry"):
+            inds.append(a.get_text(" ", strip=True))
+    raw["industry"] = " / ".join(dict.fromkeys(inds)) or None
     s = table_series("section#shareholding", "#quarterly-shp")
     raw["sh_prom"] = pick(s, "Promoters")
     raw["sh_fii"]  = pick(s, "FIIs")
