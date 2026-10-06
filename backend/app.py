@@ -2841,7 +2841,7 @@ def api_nse_option_chain():
     return jsonify(data)
 
 
-from screener import run_screener
+from screener import run_screener, analyze_multibagger_stock
 from database import save_screener_results, get_screener_results
 import threading
 
@@ -2986,6 +2986,48 @@ def api_screener_results():
     data["timestamp"] = updated_at
     data["empty"] = False
     return jsonify(data)
+
+
+@cached(900)                 # 15 min per symbol — results only change after new data
+def _mb_check_symbol(symbol):
+    return analyze_multibagger_stock(symbol)
+
+
+@app.route("/api/multibagger/check")
+def api_multibagger_check():
+    """Run the Multibagger Early Signal check on ONE stock the user types.
+    Accepts an NSE symbol (WHEELS), a BSE code (532xxx) or a company name
+    ("wheels india"); names are resolved via Screener.in search, then Gemini."""
+    import re as _re
+    q = (request.args.get("q") or "").strip()
+    if not q:
+        return jsonify({"error": "Type a stock name or NSE symbol."}), 400
+    if len(q) > 60:
+        return jsonify({"error": "That name is too long."}), 400
+    try:
+        tried = []
+        qu = q.upper().replace(".NS", "").replace(".BO", "").strip()
+        if _re.fullmatch(r"[A-Z0-9&\-]{1,20}", qu):
+            tried.append(qu)
+            res = _mb_check_symbol(qu)
+            if res:
+                return jsonify(res)
+        for resolver in (resolve_ticker_screener, resolve_ticker_gemini):
+            try:
+                sym = (resolver(q) or "").upper().strip()
+            except Exception:
+                sym = ""
+            if sym and sym not in tried:
+                tried.append(sym)
+                res = _mb_check_symbol(sym)
+                if res:
+                    return jsonify(res)
+        return jsonify({"error": f"Couldn't find price data for '{q}'. Try the exact NSE symbol "
+                                 f"(e.g. WHEELS, SPECTRUM)."}), 404
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({"error": f"Check failed: {e}"}), 500
 
 
 from flask import send_from_directory

@@ -291,6 +291,14 @@ const api = {
         return res.json();
     },
 
+    async multibaggerCheck(q) {
+        const res = await fetch(`${API_BASE_URL}/multibagger/check?q=${encodeURIComponent(q)}`);
+        let data;
+        try { data = await res.json(); } catch(e) { throw new Error(`Server error (Status: ${res.status}). The check may have timed out — try again.`); }
+        if (!res.ok) throw new Error(data.error || 'Check failed');
+        return data;
+    },
+
     async hiddenGemsDeepDive(stock) {
         const res = await fetch(`${API_BASE_URL}/hidden_gems/deepdive`, {
             method: 'POST',

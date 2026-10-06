@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v39',
+    VERSION: 'v40',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -1446,8 +1446,19 @@ const app = {
         container.innerHTML = `
             <div style="margin-bottom:16px">
                 <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🚀 Multibagger Early Signal</h2>
-                <p style="font-size:13px;color:var(--text-secondary)">Amit's Early Signal Score (0–100). It looks for stocks that look the way <b>Wheels India at ₹950</b>, <b>Spectrum Electrical at ₹2,063</b> and <b>Fermenta at ₹388</b> did, <i>before</i> their moves. Stocks that have already run are filtered out.</p>
+                <p style="font-size:13px;color:var(--text-secondary)">Amit's Early Signal Score (0–100). It looks for stocks that look the way <b>Wheels India at ₹950</b>, <b>Spectrum Electrical at ₹2,063</b> and <b>Fermenta at ₹388</b> did, <i>before</i> their moves. Check any stock you have in mind, or scan the whole market.</p>
             </div>
+            <div class="card" style="margin-bottom:16px;border-top:3px solid #dc2626">
+                <div style="font-weight:800;font-size:15px;color:var(--text-primary);margin-bottom:4px">🔎 Check any stock</div>
+                <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:10px">Type an NSE symbol or company name. It runs all the signals on that one stock and tells you what's firing, what's missing, and whether the market scan would pick it up.</div>
+                <form id="mb-check-form" style="display:flex;gap:8px;flex-wrap:wrap" autocomplete="off">
+                    <input id="mb-check-input" type="text" maxlength="60" placeholder="e.g. WHEELS or Wheels India" style="flex:1 1 220px;min-width:0;padding:10px 14px;border:1px solid var(--border-color);border-radius:10px;font-size:14px;background:var(--bg-card);color:var(--text-primary)">
+                    <button id="mb-check-btn" type="submit" class="btn" style="padding:10px 22px;font-size:14px;font-weight:700">Check stock</button>
+                </form>
+                <div id="mb-check-recent" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px"></div>
+                <div id="mb-check-result" style="margin-top:4px"></div>
+            </div>
+            <div style="font-family:'Inter',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-accent);font-weight:700;margin:22px 0 10px">📡 Market-wide scan</div>
             <div class="two-col" style="align-items:start;margin-bottom:16px">
                 <div class="card" style="border-top:3px solid #16a34a">
                     <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:var(--text-primary)">The DNA of all three winners</div>
@@ -1494,6 +1505,8 @@ const app = {
             strong:   { label: '🔥 Strong early signal', bg: 'rgba(22,163,74,0.12)', fg: 'var(--green)' },
             building: { label: '✅ Building',           bg: 'rgba(234,179,8,0.14)',  fg: '#a16207' },
             watch:    { label: '👀 Watch',              bg: 'rgba(15,23,42,0.06)',   fg: 'var(--text-secondary)' },
+            late:     { label: '⏰ Already ran',        bg: 'rgba(220,38,38,0.10)',  fg: 'var(--red)' },
+            outside:  { label: '⚠ Outside scan limits', bg: 'rgba(234,179,8,0.14)',  fg: '#a16207' },
         };
         const STATE = { breakout: '🧱 Fresh breakout', at_resistance: '⏳ At base high', coiling: '🌀 Coiling in base',
                         extended_breakout: '↗️ Breakout (extended)', none: '— No base' };
@@ -1524,16 +1537,57 @@ const app = {
                     const pct = na ? 0 : Math.max(0, Math.min(100, b.pts / b.max * 100));
                     const col = na ? 'var(--text-secondary)' : b.hit ? 'var(--green)' : pct > 0 ? 'var(--yellow)' : 'var(--red)';
                     const icon = na ? '–' : b.hit ? '✓' : pct > 0 ? '◐' : '✗';
-                    h += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px">'
-                       + '<span style="width:16px;text-align:center;font-weight:800;color:'+col+'">'+icon+'</span>'
-                       + '<span style="flex:1 1 190px;color:var(--text-primary);font-weight:600">'+esc(b.label)+'</span>'
-                       + '<span style="flex:2 1 220px;color:var(--text-secondary)">'+esc(na ? 'data not available' : b.note)+'</span>'
-                       + '<span style="display:inline-flex;align-items:center;gap:6px;min-width:96px;justify-content:flex-end"><span style="width:44px;height:5px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden;display:inline-block"><span style="display:block;width:'+pct+'%;height:100%;background:'+col+'"></span></span><b style="color:'+col+';font-size:11px">'+(na ? 'n/a' : fmt(b.pts,'',1)+'/'+b.max)+'</b></span>'
+                    h += '<div class="mb-sig">'
+                       + '<span style="text-align:center;font-weight:800;color:'+col+'">'+icon+'</span>'
+                       + '<span style="color:var(--text-primary);font-weight:600">'+esc(b.label)+'</span>'
+                       + '<span class="mb-note">'+esc(na ? 'data not available' : b.note)+'</span>'
+                       + '<span style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end"><span style="width:44px;height:5px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden;display:inline-block"><span style="display:block;width:'+pct+'%;height:100%;background:'+col+'"></span></span><b style="color:'+col+';font-size:11px">'+(na ? 'n/a' : fmt(b.pts,'',1)+'/'+b.max)+'</b></span>'
                        + '</div>';
                 });
                 h += '</div></div>';
             });
             if (s.late_penalty) h += '<div style="font-size:11.5px;color:#a16207">⚠ −'+s.late_penalty+' pts "already moving" penalty: up '+fmt(s.ran_pct,'%')+' from its 6-month low.</div>';
+            h += '</div>';
+            return h;
+        };
+
+        // One stock card — shared by the market-scan list and the single-stock check.
+        const cardHtml = (s, isOpen, scope) => {
+            const sc = scoreColor(s.score);
+            const t = TIER[s.tier] || TIER.watch;
+            const sym = encodeURIComponent(s.ticker);
+            const tvSym = (s.exchange === 'BSE' ? 'BSE:' : 'NSE:') + sym;
+            const rankCell = scope === 'check' ? '🔎' : s.rank;
+            let h = '<div class="card" style="padding:14px 16px">';
+            const scoreBlock = '<div style="text-align:right;flex-shrink:0"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;white-space:nowrap">Early Signal</div><div style="display:flex;align-items:center;gap:6px;justify-content:flex-end"><div style="width:48px;height:6px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.score,100)+'%;height:100%;background:'+sc+'"></div></div><b style="color:'+sc+';font-size:19px">'+s.score+'</b></div></div>';
+            // header: rank + name + tags (left), score (right)
+            h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">';
+            h += '<div style="display:flex;align-items:flex-start;gap:12px;flex:1;min-width:0"><div style="font-size:18px;font-weight:800;color:var(--text-secondary);width:26px;flex-shrink:0">'+rankCell+'</div><div style="min-width:0">'
+               + '<div style="font-weight:800;color:var(--text-primary);font-size:15px">'+esc(s.ticker)
+               + ' <a href="https://www.screener.in/company/'+sym+'/" target="_blank" rel="noopener" style="font-size:11px;font-weight:600;color:var(--text-accent);text-decoration:none;margin-left:6px;white-space:nowrap">Screener ↗</a>'
+               + ' <a href="https://www.tradingview.com/chart/?symbol='+tvSym+'" target="_blank" rel="noopener" style="font-size:11px;font-weight:600;color:var(--text-accent);text-decoration:none;margin-left:4px;white-space:nowrap">Chart ↗</a></div>'
+               + (s.name ? '<div style="font-size:12px;color:var(--text-secondary);margin-top:1px">'+esc(s.name)+(s.exchange ? ' · '+esc(s.exchange) : '')+'</div>' : '')
+               + '<div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center">'
+               + '<span style="background:'+t.bg+';color:'+t.fg+';font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:10px">'+t.label+'</span>'
+               + '<span style="background:rgba(15,23,42,0.05);color:var(--text-secondary);font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px">'+(STATE[s.breakout_state]||'')+'</span>'
+               + '<span style="background:rgba(79,70,229,0.08);color:var(--text-accent);font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px">'+s.hits+'/'+s.n_avail+' signals</span>'
+               + (s.price_only ? '<span style="background:rgba(234,179,8,0.14);color:#a16207;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px">⚠ price data only</span>' : '')
+               + '</div></div></div>';
+            h += scoreBlock + '</div>';
+            // stats grid underneath — same layout on every card, wraps cleanly on phones
+            h += '<div class="mb-stats">';
+            h += stat('Price', '₹'+Number(s.price).toLocaleString('en-IN'));
+            h += stat('Base high', s.base_hi ? '₹'+Number(s.base_hi).toLocaleString('en-IN') : '—');
+            h += stat('vs base', sgn(s.ext_pct));
+            h += stat('From 6M low', '+'+fmt(s.ran_pct,'%'), s.ran_pct > 45 ? '#a16207' : null);
+            h += stat('Volume', fmt(s.vol_ratio,'×'), s.vol_ratio >= 2 ? 'var(--green)' : null);
+            h += stat('PAT YoY', sgn(s.pat_yoy), s.pat_yoy > 20 ? 'var(--green)' : (s.pat_yoy < 0 ? 'var(--red)' : null));
+            h += stat('Sales YoY', sgn(s.rev_yoy), s.rev_yoy > 15 ? 'var(--green)' : (s.rev_yoy < 0 ? 'var(--red)' : null));
+            h += stat('PEG', fmt(s.peg,'',2));
+            h += stat('Mkt cap', s.mcap ? '₹'+Number(Math.round(s.mcap)).toLocaleString('en-IN')+' Cr' : '—');
+            h += '</div>';
+            h += '<button class="mb-toggle" data-t="'+esc(s.ticker)+'" style="margin-top:10px;background:none;border:none;padding:0;color:var(--text-accent);font-weight:700;font-size:12px;cursor:pointer">'+(isOpen ? 'Hide signal breakdown ▴' : 'Show all '+(s.breakdown||[]).length+' signals ▾')+'</button>';
+            if (isOpen) h += breakdownHtml(s);
             h += '</div>';
             return h;
         };
@@ -1551,42 +1605,7 @@ const app = {
             }
             if (!rows.length) { el.innerHTML = h + '<div class="card" style="text-align:center;padding:30px;color:var(--text-secondary)">No stocks in this filter.</div>'; return; }
             h += '<div style="display:grid;gap:10px">';
-            rows.forEach(s => {
-                const sc = scoreColor(s.score);
-                const t = TIER[s.tier] || TIER.watch;
-                const isOpen = open.has(s.ticker);
-                const sym = encodeURIComponent(s.ticker);
-                h += '<div class="card" style="padding:14px 16px">';
-                const scoreBlock = '<div style="text-align:right;flex-shrink:0"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;white-space:nowrap">Early Signal</div><div style="display:flex;align-items:center;gap:6px;justify-content:flex-end"><div style="width:48px;height:6px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.score,100)+'%;height:100%;background:'+sc+'"></div></div><b style="color:'+sc+';font-size:19px">'+s.score+'</b></div></div>';
-                // header: rank + name + tags (left), score (right)
-                h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">';
-                h += '<div style="display:flex;align-items:flex-start;gap:12px;flex:1;min-width:0"><div style="font-size:18px;font-weight:800;color:var(--text-secondary);width:26px;flex-shrink:0">'+s.rank+'</div><div style="min-width:0">'
-                   + '<div style="font-weight:800;color:var(--text-primary);font-size:15px">'+esc(s.ticker)
-                   + ' <a href="https://www.screener.in/company/'+sym+'/" target="_blank" rel="noopener" style="font-size:11px;font-weight:600;color:var(--text-accent);text-decoration:none;margin-left:6px;white-space:nowrap">Screener ↗</a>'
-                   + ' <a href="https://www.tradingview.com/chart/?symbol=NSE:'+sym+'" target="_blank" rel="noopener" style="font-size:11px;font-weight:600;color:var(--text-accent);text-decoration:none;margin-left:4px;white-space:nowrap">Chart ↗</a></div>'
-                   + '<div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center">'
-                   + '<span style="background:'+t.bg+';color:'+t.fg+';font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:10px">'+t.label+'</span>'
-                   + '<span style="background:rgba(15,23,42,0.05);color:var(--text-secondary);font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px">'+(STATE[s.breakout_state]||'')+'</span>'
-                   + '<span style="background:rgba(79,70,229,0.08);color:var(--text-accent);font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px">'+s.hits+'/'+s.n_avail+' signals</span>'
-                   + (s.price_only ? '<span style="background:rgba(234,179,8,0.14);color:#a16207;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px">⚠ price data only</span>' : '')
-                   + '</div></div></div>';
-                h += scoreBlock + '</div>';
-                // stats grid underneath — same layout on every card, wraps cleanly on phones
-                h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:8px 14px;margin-top:12px;padding-left:38px">';
-                h += stat('Price', '₹'+Number(s.price).toLocaleString('en-IN'));
-                h += stat('Base high', s.base_hi ? '₹'+Number(s.base_hi).toLocaleString('en-IN') : '—');
-                h += stat('vs base', sgn(s.ext_pct));
-                h += stat('From 6M low', '+'+fmt(s.ran_pct,'%'), s.ran_pct > 45 ? '#a16207' : null);
-                h += stat('Volume', fmt(s.vol_ratio,'×'), s.vol_ratio >= 2 ? 'var(--green)' : null);
-                h += stat('PAT YoY', sgn(s.pat_yoy), s.pat_yoy > 20 ? 'var(--green)' : (s.pat_yoy < 0 ? 'var(--red)' : null));
-                h += stat('Sales YoY', sgn(s.rev_yoy), s.rev_yoy > 15 ? 'var(--green)' : (s.rev_yoy < 0 ? 'var(--red)' : null));
-                h += stat('PEG', fmt(s.peg,'',2));
-                h += stat('Mkt cap', s.mcap ? '₹'+Number(Math.round(s.mcap)).toLocaleString('en-IN')+' Cr' : '—');
-                h += '</div>';
-                h += '<button class="mb-toggle" data-t="'+esc(s.ticker)+'" style="margin-top:10px;background:none;border:none;padding:0;color:var(--text-accent);font-weight:700;font-size:12px;cursor:pointer">'+(isOpen ? 'Hide signal breakdown ▴' : 'Show all '+(s.breakdown||[]).length+' signals ▾')+'</button>';
-                if (isOpen) h += breakdownHtml(s);
-                h += '</div>';
-            });
+            rows.forEach(s => { h += cardHtml(s, open.has(s.ticker), 'scan'); });
             h += '</div>';
             const ex = D.excluded || {};
             h += '<div style="margin-top:12px;font-size:11px;color:var(--text-secondary);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">'
@@ -1642,6 +1661,84 @@ const app = {
             try { const st = await api.getScreenerStatus(MKT); if (st.status === 'running') startPolling(); } catch(e) {}
         };
 
+        // ---------------- Single-stock check ----------------
+        const RECENT_KEY = 'mw_mb_recent';
+        const getRecent = () => { try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]').slice(0, 6); } catch (e) { return []; } };
+        const addRecent = (sym) => {
+            try {
+                const r = [sym].concat(getRecent().filter(x => x !== sym)).slice(0, 6);
+                localStorage.setItem(RECENT_KEY, JSON.stringify(r));
+            } catch (e) {}
+        };
+        let checkData = null;
+        let checkOpen = true;
+        const renderRecent = () => {
+            const el = document.getElementById('mb-check-recent');
+            if (!el) return;
+            const recent = getRecent();
+            const list = recent.length ? recent : ['WHEELS', 'SPECTRUM', 'FERMENTA'];
+            const lbl = recent.length ? 'Recent:' : 'Try your three winners:';
+            el.innerHTML = '<span style="font-size:11.5px;color:var(--text-secondary)">'+lbl+'</span>' + list.map(x =>
+                '<button type="button" class="mb-recent" data-q="'+esc(x)+'" style="padding:4px 10px;border-radius:14px;font-size:11.5px;font-weight:700;cursor:pointer;border:1px solid var(--border-color);background:var(--bg-card);color:var(--text-secondary)">'+esc(x)+'</button>').join('');
+            el.querySelectorAll('.mb-recent').forEach(b => b.addEventListener('click', () => {
+                const inp = document.getElementById('mb-check-input');
+                if (inp) inp.value = b.getAttribute('data-q');
+                runCheck(b.getAttribute('data-q'));
+            }));
+        };
+        const renderCheck = () => {
+            const el = document.getElementById('mb-check-result');
+            if (!el || !checkData) return;
+            const d = checkData;
+            const v = d.verdict || {};
+            const vColor = d.eligible && d.tier === 'strong' ? 'var(--green)' : (d.tier === 'building' ? '#a16207' : 'var(--text-primary)');
+            let h = '<div style="margin-top:12px;padding:12px 14px;border-radius:10px;background:rgba(79,70,229,0.05);border:1px solid rgba(79,70,229,0.15)">'
+                  + '<div style="font-weight:800;font-size:15px;color:'+vColor+'">'+esc(v.head || '')+'</div>'
+                  + '<div style="font-size:12.5px;color:var(--text-secondary);margin-top:3px;line-height:1.6">'+esc(v.detail || '')+'</div>'
+                  + '<div style="font-size:12px;font-weight:700;margin-top:8px;color:'+(d.eligible ? 'var(--green)' : 'var(--text-secondary)')+'">'
+                  + (d.eligible ? '✓ Eligible for the market scan (it ranks the top 25 on the day)' : '✗ The market scan would skip it today')
+                  + '</div>';
+            if (d.warnings && d.warnings.length) {
+                h += '<ul style="margin:8px 0 0;padding-left:18px;font-size:12px;color:#a16207;line-height:1.6">' + d.warnings.map(w => '<li>'+esc(w)+'</li>').join('') + '</ul>';
+            }
+            h += '</div>';
+            h += '<div style="margin-top:10px">' + cardHtml(d, checkOpen, 'check') + '</div>';
+            el.innerHTML = h;
+            el.querySelectorAll('.mb-toggle').forEach(b => b.addEventListener('click', () => { checkOpen = !checkOpen; renderCheck(); }));
+        };
+        let checkSeq = 0;
+        const runCheck = async (q) => {
+            q = (q || '').trim();
+            const el = document.getElementById('mb-check-result');
+            const btn = document.getElementById('mb-check-btn');
+            if (!el) return;
+            if (!q) { el.innerHTML = '<div style="margin-top:10px;font-size:12.5px;color:var(--red)">Type a stock name or NSE symbol first.</div>'; return; }
+            const my = ++checkSeq;
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Checking...'; }
+            el.innerHTML = '<div style="margin-top:12px;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-secondary)"><span class="spinner"></span> Checking <b style="color:var(--text-primary)">'+esc(q)+'</b>: price history, quarterly results and shareholding (10–20 s)...</div>';
+            try {
+                const data = await api.multibaggerCheck(q);
+                if (my !== checkSeq) return;                         // a newer check started
+                if (data.error === 'short_history') {
+                    el.innerHTML = '<div class="card" style="margin-top:12px;padding:12px 14px;border-color:var(--yellow);font-size:12.5px;color:#a16207">'+esc((data.name ? data.name+' ('+data.ticker+')' : data.ticker)+': '+data.message)+'</div>';
+                } else {
+                    checkData = data; checkOpen = true;
+                    addRecent(data.ticker); renderRecent();
+                    renderCheck();
+                }
+            } catch (err) {
+                if (my !== checkSeq) return;
+                el.innerHTML = '<div class="card" style="margin-top:12px;padding:12px 14px;border-color:var(--red);font-size:12.5px;color:var(--red)">'+esc(err.message || 'Check failed')+'</div>';
+            } finally {
+                if (my === checkSeq && btn) { btn.disabled = false; btn.innerHTML = 'Check stock'; }
+            }
+        };
+        document.getElementById('mb-check-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            runCheck(document.getElementById('mb-check-input').value);
+        });
+        renderRecent();
+
         document.getElementById('btn-scan-mb').addEventListener('click', async () => {
             try { await api.startScreenerScan(MKT); startPolling(); }
             catch (err) { alert('Failed to start scan: ' + err.message); }
@@ -1695,7 +1792,7 @@ const app = {
                 ${card('#smallmid', '#a78bfa', '💎', 'Small/Mid Master', 'Same 12-factor score, applied to the small &amp; mid-cap universe beyond the Nifty 1000. Higher risk, higher potential.', 'Rank Small/Mid', true)}
                 ${card('#microcap', '#f472b6', '🔬', 'Micro Cap Scanner', 'Micro caps under ₹2,000 Cr trading within 7% of their 52-week high — the tightest momentum coil, ranked by the same 12-factor score.', 'Scan Micro Caps', true)}
                 ${card('#gems', '#16a34a', '💎', 'Hidden Gems', 'The wonder-stock finder: a full-market fusion scan tagging stealth accumulation, turnarounds &amp; breakouts, ranked by Wonder Score with AI deep-dives.', 'Find Gems', true)}
-                ${card('#multibagger', '#dc2626', '🚀', 'Multibagger Early Signal', "Built from Amit's own winners (Wheels India, Spectrum Electrical, Fermenta): finds stocks with accelerating profits, abnormal volume and a fresh breakout that haven't run yet.", 'Find Early Signals', true)}
+                ${card('#multibagger', '#dc2626', '🚀', 'Multibagger Early Signal', "Built from Amit's own winners (Wheels India, Spectrum Electrical, Fermenta): finds stocks with accelerating profits, abnormal volume and a fresh breakout that haven't run yet. Or check any stock you have in mind.", 'Find Early Signals', true)}
                 ${card('#wyckoff', '#0ea5e9', '📐', 'Wyckoff Scanner', 'Finds Nifty 1000 stocks at the accumulation→markup turn using Wyckoff phase analysis on daily &amp; weekly candles — momentum as it ignites.', 'Run Wyckoff', true)}
                 ${card('#screener', '#60a5fa', '📊', 'Stock Screener', 'Scan the Nifty 500 — and the next 501–1000 — for breakouts by P/E, volume spike and RSI.', 'Run a Scan')}
                 ${card('#chartink', '#c084fc', '📋', 'Chartink Comparator', 'Find the stocks that appear in both of your favourite Chartink screeners.', 'Compare')}

@@ -518,7 +518,20 @@ def _bulk_download_ohlc(tickers, period="1y"):
             return []
 
     if len(tickers) == 1:
-        rows = extract(df)
+        # Newer yfinance returns MultiIndex columns even for ONE ticker
+        # ((Ticker, Price) with group_by="ticker"); older versions return flat
+        # columns. Select the ticker level when present so both shapes work.
+        sub = df
+        try:
+            cols = df.columns
+            if getattr(cols, "nlevels", 1) > 1:
+                for lvl in range(cols.nlevels):
+                    if tickers[0] in cols.get_level_values(lvl):
+                        sub = df.xs(tickers[0], axis=1, level=lvl)
+                        break
+        except Exception:
+            sub = df
+        rows = extract(sub)
         if rows:
             out[tickers[0]] = rows
     else:
@@ -1514,9 +1527,12 @@ MB_MIN_TURNOVER = 5e6        # 20-day avg turnover ≥ ₹50 lakh
 MB_MAX_RUN_PCT = 70          # up >70% from 6-month low = already ran → excluded
 
 
-def _mb_price_signals(rows, nifty_closes):
+def _mb_price_signals(rows, nifty_closes, strict=True):
     """Price/volume part of the score. rows = [(date, close, vol, high, low), ...].
-    Returns dict (with 'excluded' reason if it fails a gate) or None if too little data."""
+    strict=True (market scan): returns early with 'excluded' when a gate fails.
+    strict=False (single-stock check): records the failed gate in 'gate' and
+    still computes every signal so the user sees the full picture.
+    Returns None if there is too little price history."""
     if not rows or len(rows) < 130:
         return None
     closes = [r[1] for r in rows]
@@ -1530,15 +1546,15 @@ def _mb_price_signals(rows, nifty_closes):
     # ---- gates ---------------------------------------------------------
     vol20 = sum(vols[-20:]) / 20
     out["turnover_cr"] = round(vol20 * price / 1e7, 2)
-    if price < MB_MIN_PRICE:
-        out["excluded"] = "penny"; return out
-    if vol20 * price < MB_MIN_TURNOVER:
-        out["excluded"] = "illiquid"; return out
     low6m = min(lows[-126:]) if n >= 126 else min(lows)
     ran = (price / low6m - 1) * 100 if low6m > 0 else 0
     out["ran_pct"] = round(ran, 1)
-    if ran > MB_MAX_RUN_PCT:
-        out["excluded"] = "already_ran"; return out
+    gate = ("penny" if price < MB_MIN_PRICE else
+            "illiquid" if vol20 * price < MB_MIN_TURNOVER else
+            "already_ran" if ran > MB_MAX_RUN_PCT else None)
+    out["gate"] = gate
+    if gate and strict:
+        out["excluded"] = gate; return out
 
     pts = {}
     notes = {}
@@ -1639,6 +1655,9 @@ def _mb_parse_screener_html(html):
     import re
     soup = BeautifulSoup(html, "html.parser")
     raw = {}
+    h1 = soup.find("h1")
+    if h1 and h1.get_text(strip=True):
+        raw["name"] = " ".join(h1.get_text(" ", strip=True).split())[:80]
     for li in soup.select("#top-ratios li") or []:
         t = " ".join((li.get_text() or "").split()).lower()
         v = _mb_num(li.select_one(".number").get_text() if li.select_one(".number") else t)
@@ -1933,6 +1952,46 @@ def _mb_score(price_sig, fund_pts):
     return round(min(score, 100), 1), round(coverage * 100), price_only, hits, len(avail)
 
 
+def _mb_result_row(s, rank):
+    """Shape one scored stock into the JSON row the page renders (shared by the
+    market scan and the single-stock check)."""
+    allp = dict(s["pts"]); allp.update(s["fpts"])
+    alln = dict(s["notes"]); alln.update(s["fnotes"])
+    breakdown = []
+    for k, label, w, grp in MB_PARAMS:
+        v = allp.get(k)
+        breakdown.append({"key": k, "label": label, "group": grp, "max": w,
+                          "pts": None if v is None else round(v, 1),
+                          "hit": v is not None and v >= 0.6 * w,
+                          "note": alln.get(k, "n/a")})
+    sc = s["score"]
+    # The thesis is "business change + chart confirmation": a stock can only be
+    # STRONG if profit/EBITDA is actually accelerating, and only BUILDING if
+    # at least one of revenue/EBITDA/PAT is improving.
+    biz_hit = any(b["hit"] for b in breakdown if b["key"] in ("pat_accel", "ebitda_accel"))
+    biz_any = any((b["pts"] or 0) > 0 for b in breakdown
+                  if b["key"] in ("rev_accel", "ebitda_accel", "pat_accel"))
+    tier = ("strong" if sc >= 70 and s["hits"] >= 0.6 * s["n_avail"]
+            and not s["price_only"] and biz_hit
+            else "building" if sc >= 55 and biz_any else "watch")
+    fv = s["fvals"]
+    return {
+        "rank": rank, "ticker": s["sym"], "price": s["price"],
+        "score": sc, "tier": tier, "coverage": s["coverage"],
+        "price_only": s["price_only"], "hits": s["hits"], "n_avail": s["n_avail"],
+        "breakout_state": s["breakout_state"], "base_hi": s["base_hi"],
+        "base_lo": s["base_lo"], "base_range_pct": s["base_range_pct"],
+        "ext_pct": s["ext_pct"], "ran_pct": s["ran_pct"],
+        "vol_ratio": s["vol_ratio"], "rs_6m": s["rs_6m"], "dist_52wh": s["dist_52wh"],
+        "late_penalty": s["late_penalty"],
+        "rev_yoy": fv.get("rev_yoy"), "ebitda_yoy": fv.get("ebitda_yoy"),
+        "pat_yoy": fv.get("pat_yoy"), "roce": fv.get("roce"),
+        "promoter": fv.get("promoter"), "pe": fv.get("pe"), "peg": fv.get("peg"),
+        "mcap": fv.get("mcap"),
+        "breakdown": breakdown,
+    }
+
+
 def run_multibagger_screener():
     """Full-market Early Signal scan → top ranked stocks with a per-signal breakdown."""
     import time
@@ -2017,43 +2076,7 @@ def run_multibagger_screener():
         scored.append(s)
     scored.sort(key=lambda s: (not s["price_only"], s["score"]), reverse=True)
 
-    results = []
-    for i, s in enumerate(scored[:25]):
-        allp = dict(s["pts"]); allp.update(s["fpts"])
-        alln = dict(s["notes"]); alln.update(s["fnotes"])
-        breakdown = []
-        for k, label, w, grp in MB_PARAMS:
-            v = allp.get(k)
-            breakdown.append({"key": k, "label": label, "group": grp, "max": w,
-                              "pts": None if v is None else round(v, 1),
-                              "hit": v is not None and v >= 0.6 * w,
-                              "note": alln.get(k, "n/a")})
-        sc = s["score"]
-        # The thesis is "business change + chart confirmation": a stock can only be
-        # STRONG if profit/EBITDA is actually accelerating, and only BUILDING if
-        # at least one of revenue/EBITDA/PAT is improving.
-        biz_hit = any(b["hit"] for b in breakdown if b["key"] in ("pat_accel", "ebitda_accel"))
-        biz_any = any((b["pts"] or 0) > 0 for b in breakdown
-                      if b["key"] in ("rev_accel", "ebitda_accel", "pat_accel"))
-        tier = ("strong" if sc >= 70 and s["hits"] >= 0.6 * s["n_avail"]
-                and not s["price_only"] and biz_hit
-                else "building" if sc >= 55 and biz_any else "watch")
-        fv = s["fvals"]
-        results.append({
-            "rank": i + 1, "ticker": s["sym"], "price": s["price"],
-            "score": sc, "tier": tier, "coverage": s["coverage"],
-            "price_only": s["price_only"], "hits": s["hits"], "n_avail": s["n_avail"],
-            "breakout_state": s["breakout_state"], "base_hi": s["base_hi"],
-            "base_lo": s["base_lo"], "base_range_pct": s["base_range_pct"],
-            "ext_pct": s["ext_pct"], "ran_pct": s["ran_pct"],
-            "vol_ratio": s["vol_ratio"], "rs_6m": s["rs_6m"], "dist_52wh": s["dist_52wh"],
-            "late_penalty": s["late_penalty"],
-            "rev_yoy": fv.get("rev_yoy"), "ebitda_yoy": fv.get("ebitda_yoy"),
-            "pat_yoy": fv.get("pat_yoy"), "roce": fv.get("roce"),
-            "promoter": fv.get("promoter"), "pe": fv.get("pe"), "peg": fv.get("peg"),
-            "mcap": fv.get("mcap"),
-            "breakdown": breakdown,
-        })
+    results = [_mb_result_row(s, i + 1) for i, s in enumerate(scored[:25])]
 
     elapsed = round(time.time() - start, 1)
     print(f"[Multibagger] Done in {elapsed}s — {len(results)} results, "
@@ -2071,3 +2094,126 @@ def run_multibagger_screener():
         "results": results,
         "scan_time_seconds": elapsed,
     }
+
+
+def analyze_multibagger_stock(symbol):
+    """Single-stock Early Signal check for the user's own idea.
+    Runs every signal the market scan uses — WITHOUT the scan's exclusions — and
+    explains whether the scan would pick it up and what is missing.
+    Returns None if no price data exists for the symbol (unknown ticker)."""
+    sym = (symbol or "").upper().strip().replace(".NS", "").replace(".BO", "")
+    if not sym:
+        return None
+    suffixes = [".BO"] if sym.isdigit() else [".NS", ".BO"]
+    rows, used = None, None
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+        f_nifty = ex.submit(_bulk_download_ohlc, ["^NSEI"], "1y")
+        f_raw = ex.submit(_fetch_screener_deep, sym)
+        for suf in suffixes:
+            t = sym + suf
+            try:
+                d = _bulk_download_ohlc([t], "1y")
+            except Exception:
+                d = {}
+            if d.get(t) and len(d[t]) >= 20:
+                rows, used = d[t], t
+                break
+        try:
+            nifty_rows = (f_nifty.result() or {}).get("^NSEI", [])
+        except Exception:
+            nifty_rows = []
+        try:
+            raw = f_raw.result() or {}
+        except Exception:
+            raw = {}
+    if not rows:
+        return None
+    nifty_closes = [r[1] for r in nifty_rows]
+    sig = _mb_price_signals(rows, nifty_closes, strict=False)
+    if sig is None:
+        return {"ticker": sym, "name": raw.get("name"), "error": "short_history",
+                "message": f"Only {len(rows)} trading days of history — the check needs "
+                           f"about 6 months (130 sessions). Likely a recent listing."}
+
+    sig["sym"] = sym
+    if raw:
+        fp, fn, fv = _mb_fund_signals(raw)
+    else:
+        fp, fn, fv = {}, {}, {}
+    sig.update({"fpts": fp, "fnotes": fn, "fvals": fv, "fund_ok": bool(raw)})
+    score, cov, price_only, hits, n_avail = _mb_score(sig, fp)
+    sig.update({"score": score, "coverage": cov, "price_only": price_only,
+                "hits": hits, "n_avail": n_avail})
+    row = _mb_result_row(sig, None)
+    row["name"] = raw.get("name")
+    row["exchange"] = "NSE" if used.endswith(".NS") else "BSE"
+
+    # ---- would the market scan pick this up? ------------------------------
+    gate = sig.get("gate")
+    trigger = sig["vol_ratio"] >= 1.3 or sig["breakout_state"] in ("breakout", "at_resistance")
+    downtrend_spike = sig["breakout_state"] == "none" and not sig["above_200dma"]
+    mc = fv.get("mcap")
+    small = mc is not None and mc < 300
+    warnings = []
+    if gate == "already_ran":
+        warnings.append(f"Already up {sig['ran_pct']}% from its 6-month low, past the "
+                        f"{MB_MAX_RUN_PCT}% 'still early' limit. The market scan skips it.")
+    elif gate == "penny":
+        warnings.append(f"Price is below ₹{MB_MIN_PRICE}. The market scan skips penny stocks.")
+    elif gate == "illiquid":
+        warnings.append(f"Average daily turnover is only ₹{sig['turnover_cr']} Cr, below the "
+                        f"₹{MB_MIN_TURNOVER / 1e7:g} Cr liquidity floor. The market scan skips it.")
+    if small:
+        warnings.append(f"Market cap ₹{mc:,.0f} Cr is under ₹300 Cr, too thin to trust. "
+                        f"The market scan skips it.")
+    if not raw:
+        warnings.append("Couldn't read quarterly results / shareholding from Screener.in, so "
+                        "business and ownership signals are missing and the score is price-only.")
+    if not trigger:
+        warnings.append("No chart trigger yet: volume is below 1.3× its average and price "
+                        "isn't breaking out or pressing its base high.")
+    elif downtrend_spike:
+        warnings.append("Volume spike while below the 200-day average with no base. The scan "
+                        "ignores spikes inside a downtrend.")
+    eligible = not gate and not small and trigger and not downtrend_spike
+
+    # biggest gaps = available signals with the most points left on the table
+    gaps = sorted([b for b in row["breakdown"] if b["pts"] is not None and b["pts"] < b["max"]],
+                  key=lambda b: b["max"] - b["pts"], reverse=True)[:3]
+    gap_txt = ", ".join(b["label"].split(" · ", 1)[-1] for b in gaps)
+    tier = row["tier"]
+    if gate == "already_ran":
+        head = "⏰ Probably late"
+        detail = ("The stock has already re-rated. Whatever the business looks like, the early "
+                  "window that Wheels at ₹950 offered has likely passed. A fresh base would "
+                  "reset the setup.")
+    elif gate or small:
+        head = "⚠ Outside the scanner's safety limits"
+        detail = "Scores below are shown for information; the market scan would not list it."
+    elif not raw:
+        head = "📉 Chart signals only"
+        detail = ("Screener.in data couldn't be read, so only volume, breakout and trend were "
+                  "scored. Try again in a few minutes for the business and ownership signals.")
+    elif tier == "strong" and trigger:
+        head = "🔥 Matches the early multibagger pattern"
+        detail = ("Accelerating business, a live chart trigger and supportive ownership are all "
+                  "present. That's the combination your three winners showed at the start. "
+                  "Now check the catalysts by hand (orders, capex, approvals).")
+    elif tier == "strong":
+        head = "📈 Strong business, chart not triggered yet"
+        detail = (f"Keep it on the watchlist. The trigger to wait for is a close above "
+                  f"₹{sig['base_hi']:,.0f} (its base high) on at least 2× normal volume.")
+    elif tier == "building":
+        head = "✅ Partly there"
+        detail = f"Several signals are firing. Biggest gaps: {gap_txt}." if gap_txt else "Several signals are firing."
+    else:
+        head = "👀 Not the pattern yet"
+        detail = f"Biggest gaps: {gap_txt}." if gap_txt else "Too few signals are firing."
+    # The tier tag must not contradict the verdict ("Strong early signal" + "late").
+    if gate == "already_ran":
+        row["tier"] = "late"
+    elif gate or small:
+        row["tier"] = "outside"
+    row.update({"warnings": warnings, "eligible": eligible,
+                "verdict": {"head": head, "detail": detail}})
+    return row

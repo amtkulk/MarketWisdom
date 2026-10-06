@@ -325,3 +325,13 @@ footer {
     .brand-text { font-size: 19px; }
     .brand-logo { height: 28px; width: 28px; }
 }
+
+/* ── Multibagger Early Signal page ─────────────────────────── */
+.mb-stats { display:grid; grid-template-columns:repeat(auto-fill,minmax(86px,1fr)); gap:8px 14px; margin-top:12px; padding-left:38px; }
+.mb-sig { display:grid; grid-template-columns:16px minmax(170px,1fr) minmax(0,2fr) 104px; align-items:center; gap:3px 8px; font-size:12px; }
+.mb-sig .mb-note { color:var(--text-secondary); }
+@media (max-width: 600px) {
+    .mb-stats { padding-left:0; grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .mb-sig { grid-template-columns:16px minmax(0,1fr) auto; }
+    .mb-sig .mb-note { grid-column:2 / 4; grid-row:2; }
+}
