@@ -2989,7 +2989,20 @@ def api_screener_results():
 
 
 # ── Corporate Action New Orders (BSE "Award of Order / Receipt of Order") ──
-from orders import get_orders_view, resolve_pdf_url as _orders_pdf_url
+from orders import get_orders_view, get_feed_view, resolve_pdf_url as _orders_pdf_url
+
+
+@app.route("/api/corp")
+def api_corp():
+    """Corporate Actions tabs: feed = orders | meets | press (BSE Company Update
+    sub-categories, Equity segment, last 3 filing days + PDF key points + scores)."""
+    try:
+        feed = (request.args.get("feed") or "orders").lower()
+        return jsonify(get_feed_view(feed, force=request.args.get("refresh") == "1"))
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({"error": f"Corporate actions feed failed: {e}", "days": [], "watch": [], "stats": {}}), 500
 
 
 @app.route("/api/orders")
@@ -3005,6 +3018,7 @@ def api_orders():
 
 
 @app.route("/api/orders/pdf")
+@app.route("/api/corp/pdf")
 def api_orders_pdf():
     """Redirect to the BSE attachment (it moves from AttachLive to AttachHis over time)."""
     from flask import redirect

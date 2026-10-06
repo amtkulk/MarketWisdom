@@ -291,6 +291,14 @@ const api = {
         return res.json();
     },
 
+    async fetchCorp(feed, refresh) {
+        const res = await fetch(`${API_BASE_URL}/corp?feed=${encodeURIComponent(feed)}${refresh ? '&refresh=1' : ''}`);
+        let data;
+        try { data = await res.json(); } catch(e) { throw new Error(`Server error (Status: ${res.status}).`); }
+        if (!res.ok) throw new Error(data.error || 'Failed to load filings');
+        return data;
+    },
+
     async fetchOrders(refresh) {
         const res = await fetch(`${API_BASE_URL}/orders${refresh ? '?refresh=1' : ''}`);
         let data;

@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v41',
+    VERSION: 'v42',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -178,7 +178,7 @@ const app = {
         }
         const label = ({
             global: 'Global Market', 'war-news': 'War News', telegram: 'Telegram Feed',
-            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', wyckoff: 'Wyckoff Momentum', multibagger: 'Multibagger Early Signal', orders: 'Corporate Action New Orders', stock: 'Stock Research',
+            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', wyckoff: 'Wyckoff Momentum', multibagger: 'Multibagger Early Signal', orders: 'Corporate Actions', corp: 'Corporate Actions', stock: 'Stock Research',
             overview: 'Stock Overview', reits: 'REITs & InvITs', action: 'Stock Action', heatmap: 'Indices Heatmap', chartink: 'Chartink Comparator',
             nifty: 'Nifty Analysis', watchlist: 'Watchlist',
         })[attemptedRoute] || 'this page';
@@ -269,8 +269,12 @@ const app = {
             case 'multibagger':
                 this.renderMultibagger(container);
                 break;
-            case 'orders':
+            case 'orders':                       // old link → Corporate Actions, Orders tab
+                this.updateNavState('corp');
                 this.renderOrders(container);
+                break;
+            case 'corp':
+                this.renderCorp(container);
                 break;
             case 'stock':
                 this.renderStock(container);
@@ -1443,74 +1447,127 @@ const app = {
         loadLast();
     },
 
-    renderOrders(container) {
+    renderOrders(container) {           // old #orders links land on the Orders tab
+        return this.renderCorp(container, 'orders');
+    },
+
+    renderCorp(container, initialTab) {
         const esc = (s) => String(s === null || s === undefined ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        const TABS = [
+            { feed: 'orders', icon: '📜', label: 'New Orders', sub: 'Award / receipt of order' },
+            { feed: 'meets',  icon: '🎤', label: 'Analyst / Investor Meet', sub: 'Who is meeting the company' },
+            { feed: 'press',  icon: '📣', label: 'Press Release', sub: 'Capex, approvals, launches' },
+        ];
+        const getLS = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+        const setLS = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+        let tab = initialTab || getLS('mw_corp_tab') || 'orders';
+        if (!TABS.some(t => t.feed === tab)) tab = 'orders';
+        let fnoOnly = getLS('mw_corp_fno') === '1';
+        const cache = {};                     // feed -> last data
+        const filters = {};                   // feed -> filter key
+        const openWhy = {};                   // feed -> Set(code)
+        let pollTimer = null;
+        let loadSeq = 0;
+
         container.innerHTML = `
             <div style="margin-bottom:14px">
-                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">📜 Corporate Action New Orders</h2>
-                <p style="font-size:13px;color:var(--text-secondary)">Order wins filed on BSE (<i>Company Update → Award of Order / Receipt of Order</i>) over the last 3 filing days, latest first. Every company gets a breakout read: order size vs sales, market reaction, chart setup and profit momentum.</p>
+                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">📑 Corporate Actions</h2>
+                <p style="font-size:13px;color:var(--text-secondary)">BSE company filings (Equity segment, F&amp;O stocks badged) from the last 3 filing days, latest first. Every filing's PDF is read for key points, and every company gets a score that combines the news with its chart and profit momentum.</p>
             </div>
-            <div class="card" style="margin-bottom:14px;padding:12px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-                <div id="ord-status" style="font-size:12.5px;color:var(--text-secondary);flex:1;min-width:220px"><span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Fetching the latest orders from BSE…</div>
-                <button id="ord-refresh" class="btn" style="padding:8px 18px;font-size:13px;font-weight:700">↻ Refresh</button>
-            </div>
-            <div id="ord-insight"></div>
-            <div id="ord-watch"></div>
-            <div id="ord-filter" style="display:none;gap:8px;flex-wrap:wrap;margin:18px 0 12px"></div>
-            <div id="ord-days"></div>
-            <div class="card" style="margin-top:18px;border-left:3px solid var(--text-accent)">
-                <div style="font-weight:800;font-size:13px;margin-bottom:6px;color:var(--text-primary)">How the Order Catalyst Score works</div>
-                <div style="font-size:12px;color:var(--text-secondary);line-height:1.8">
-                    <b>Order size vs annual sales</b> 30 · <b>Chart setup</b> 25 · <b>Profit &amp; sales acceleration</b> 20 · <b>Market reaction</b> 15 · <b>Repeat orders (30 days)</b> 10.
-                    Order values are read from the headline, or from the filing PDF when the headline has none. If a value isn't disclosed, the score is capped at 75.
-                    Penalties apply for stocks already up more than 70% from their 6-month low, or thinly traded.<br>
-                    <b>😴 Not priced in yet</b> marks a big order (≥10% of sales) the price hasn't reacted to. That's the classic post-announcement drift setup.
-                    <b>L1 bidder</b> means lowest bid, not a confirmed order yet.
+            <div class="corp-layout">
+                <div class="corp-main" style="min-width:0">
+                    <div class="card" style="margin-bottom:14px;padding:12px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                        <div id="ord-status" style="font-size:12.5px;color:var(--text-secondary);flex:1;min-width:220px"></div>
+                        <button id="ord-refresh" class="btn" style="padding:8px 18px;font-size:13px;font-weight:700">↻ Refresh</button>
+                    </div>
+                    <div id="ord-insight"></div>
+                    <div id="ord-watch"></div>
+                    <div id="ord-filter" style="display:none;gap:8px;flex-wrap:wrap;margin:18px 0 12px"></div>
+                    <div id="ord-days"></div>
+                    <div id="ord-explain"></div>
+                    <div style="text-align:center;margin-top:14px;font-size:11px;color:var(--text-secondary)">Source: BSE corporate announcements. Classification, amounts and key points are read automatically and can be wrong, so open the PDF before acting. Not investment advice.</div>
                 </div>
+                <aside class="corp-tabs" id="corp-tabs"></aside>
             </div>
-            <div style="text-align:center;margin-top:14px;font-size:11px;color:var(--text-secondary)">Source: BSE corporate announcements. Classification and order values are read automatically and can be wrong, so open the PDF before acting. Not investment advice.</div>
         `;
-        let data = null;
-        let filter = 'business';
-        let pollTimer = null;
-        const openWhy = new Set();
         const alive = () => !!document.getElementById('ord-days');
         const fmtCr = (v) => v === null || v === undefined ? '—' : '₹' + (v >= 100 ? Math.round(v).toLocaleString('en-IN') : Number(v.toFixed(2)).toLocaleString('en-IN')) + ' Cr';
         const sgn = (v, s='%') => (v === null || v === undefined) ? '—' : (v > 0 ? '+' : '') + Number(v.toFixed(1)) + s;
         const scoreColor = (v) => v >= 70 ? 'var(--green)' : v >= 50 ? '#a16207' : 'var(--text-secondary)';
-        const CLS = {
-            business:   { label: '🟢 Business order', bg: 'rgba(22,163,74,0.12)', fg: 'var(--green)' },
-            regulatory: { label: '🔴 Tax / regulatory', bg: 'rgba(220,38,38,0.10)', fg: 'var(--red)' },
-            unclear:    { label: '⚪ Unclear', bg: 'rgba(15,23,42,0.06)', fg: 'var(--text-secondary)' },
+        const GREEN = ['rgba(22,163,74,0.12)', 'var(--green)'], RED = ['rgba(220,38,38,0.10)', 'var(--red)'],
+              GREY = ['rgba(15,23,42,0.06)', 'var(--text-secondary)'], BLUE = ['rgba(79,70,229,0.08)', 'var(--text-accent)'];
+        const clsChip = (feed, it) => {
+            if (feed === 'orders') return ({ business: ['🟢 Business order', GREEN], regulatory: ['🔴 Tax / regulatory', RED] })[it.cls] || ['⚪ Unclear', GREY];
+            if (feed === 'meets') return it.cls === 'upcoming' ? ['📅 Upcoming meeting', BLUE] : ['📝 Held · presentation / transcript', GREY];
+            const lab = it.cls_label || '📰 Other';
+            return [lab, it.cls === 'negative' ? RED : (it.groups || []).includes('catalyst') ? GREEN : GREY];
         };
         const STATE = { breakout: '🧱 Fresh breakout', at_resistance: '⏳ At base high', coiling: '🌀 Coiling',
                         extended_breakout: '↗️ Extended', none: '— No setup' };
         const chip = (txt, bg, fg) => '<span style="background:'+bg+';color:'+fg+';font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap">'+txt+'</span>';
         const stat = (label, val, color, wrap) => '<div style="min-width:0"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;white-space:nowrap">'+label+'</div><div style="font-weight:700;'+(wrap ? 'font-size:12.5px;line-height:1.3;' : 'white-space:nowrap;')+(color?'color:'+color:'')+'">'+val+'</div></div>';
-        const pdfLink = (it) => it.attachment ? '<a href="/api/orders/pdf?f='+encodeURIComponent(it.attachment)+'" target="_blank" rel="noopener" style="font-size:11.5px;font-weight:700;color:var(--text-accent);text-decoration:none;white-space:nowrap">PDF ↗</a>' : '';
-        const tvLink = (sym, code) => { const t = (sym && !/^\d+$/.test(sym)) ? 'NSE:'+encodeURIComponent(sym) : 'BSE:'+encodeURIComponent(code); return '<a href="https://www.tradingview.com/chart/?symbol='+t+'" target="_blank" rel="noopener" style="font-size:11.5px;font-weight:700;color:var(--text-accent);text-decoration:none;white-space:nowrap">Chart ↗</a>'; };
-        const checkLink = (sym) => sym ? '<a href="#multibagger" class="ord-check" data-s="'+esc(sym)+'" style="font-size:11.5px;font-weight:700;color:var(--text-accent);text-decoration:none;white-space:nowrap">Check signal →</a>' : '';
+        const linkCss = 'font-size:11.5px;font-weight:700;color:var(--text-accent);text-decoration:none;white-space:nowrap';
+        const pdfLink = (it) => it.attachment ? '<a href="/api/corp/pdf?f='+encodeURIComponent(it.attachment)+'" target="_blank" rel="noopener" style="'+linkCss+'">PDF ↗</a>' : '';
+        const tvLink = (sym, code) => { const t = (sym && !/^\d+$/.test(sym)) ? 'NSE:'+encodeURIComponent(sym) : 'BSE:'+encodeURIComponent(code); return '<a href="https://www.tradingview.com/chart/?symbol='+t+'" target="_blank" rel="noopener" style="'+linkCss+'">Chart ↗</a>'; };
+        const checkLink = (sym) => sym ? '<a href="#multibagger" class="ord-check" data-s="'+esc(sym)+'" style="'+linkCss+'">Check signal →</a>' : '';
+        const fnoBadge = (x) => x ? chip('F&amp;O', 'rgba(234,88,12,0.12)', '#c2410c') : '';
+        const pointsHtml = (pts, isAi, ai) => {
+            if (!pts || !pts.length) return '';
+            let head = isAi ? '<span style="font-size:10px;font-weight:800;letter-spacing:1px;color:var(--text-accent)">AI KEY POINTS</span>' : '<span style="font-size:10px;font-weight:800;letter-spacing:1px;color:var(--text-secondary)">KEY POINTS</span>';
+            if (isAi && ai) {
+                if (ai.impact) head += ' ' + chip('Impact '+ai.impact+'/5', ai.impact >= 4 ? GREEN[0] : GREY[0], ai.impact >= 4 ? GREEN[1] : GREY[1]);
+                if (ai.sentiment === 'negative') head += ' ' + chip('Negative', RED[0], RED[1]);
+                else if (ai.sentiment === 'positive') head += ' ' + chip('Positive', GREEN[0], GREEN[1]);
+            }
+            return '<div style="margin-top:7px;padding:8px 10px;border-radius:8px;background:rgba(79,70,229,0.04);border:1px solid rgba(79,70,229,0.10)">'
+                 + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:4px">'+head+'</div>'
+                 + '<ul style="margin:0;padding-left:18px;font-size:12.5px;color:var(--text-primary);line-height:1.55">'
+                 + pts.slice(0, 4).map(p => '<li>'+esc(p)+'</li>').join('') + '</ul></div>';
+        };
+        const passFno = (x) => !fnoOnly || x.fno;
+
+        const renderTabs = () => {
+            const el = document.getElementById('corp-tabs');
+            if (!el) return;
+            const counts = {};
+            const anyData = cache[tab] || Object.values(cache)[0];
+            ((anyData && anyData.tabs) || []).forEach(t => { counts[t.feed] = t; });
+            el.innerHTML = TABS.map(t => {
+                const c = counts[t.feed];
+                const sub = c ? (c.count + ' filing' + (c.count === 1 ? '' : 's') + ' · ' + c.companies + ' cos') : t.sub;
+                return '<button class="corp-tab'+(t.feed === tab ? ' active' : '')+'" data-f="'+t.feed+'">'
+                     + '<span class="ct-ico">'+t.icon+'</span><span><div class="ct-label">'+esc(t.label)+'</div><div class="ct-sub">'+esc(sub)+'</div></span></button>';
+            }).join('');
+            el.querySelectorAll('.corp-tab').forEach(b => b.addEventListener('click', () => switchTab(b.getAttribute('data-f'))));
+        };
 
         const renderStatus = () => {
             const el = document.getElementById('ord-status');
-            if (!el || !data) return;
+            const data = cache[tab];
+            if (!el) return;
+            if (!data) { el.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Fetching the latest filings from BSE…'; return; }
             let h = '';
             if (data.error) h += '<div style="color:#a16207;font-weight:600;margin-bottom:3px">⚠ '+esc(data.error)+'. Showing the last saved data.</div>';
             h += data.updated_at ? ('🟢 BSE feed · updated <b style="color:var(--text-primary)">'+esc(data.updated_at)+'</b>') : 'Not fetched yet.';
             if (data.enriching) h += ' <span style="margin-left:8px;color:var(--text-accent);font-weight:600"><span class="spinner" style="vertical-align:middle;margin-right:4px;width:12px;height:12px"></span>'+esc(data.stage || 'Analysing')+'…</span>';
+            else if (data.pending_ai && data.ai_enabled) h += ' <span style="margin-left:8px;color:var(--text-secondary)">· '+data.pending_ai+' filings still waiting for AI key points (Refresh later)</span>';
+            if (!data.ai_enabled) h += '<div style="margin-top:3px;font-size:11.5px">AI key points are off on this server (no Gemini key), so rule-based key points are shown.</div>';
             el.innerHTML = h;
         };
 
         const renderInsight = () => {
             const el = document.getElementById('ord-insight');
+            const data = cache[tab];
             const st = data && data.stats;
             if (!el || !st || !st.total) { if (el) el.innerHTML = ''; return; }
-            el.innerHTML = '<div class="card" style="margin-bottom:14px;padding:12px 16px;font-size:12.5px;color:var(--text-secondary);line-height:1.7">'
-                + '<b style="color:var(--text-primary)">'+st.total+' filings</b> from '+st.companies+' companies in the last 3 filing days: '
-                + '<b style="color:var(--green)">'+st.business+' business orders</b>, '
-                + '<b style="color:var(--red)">'+st.regulatory+' tax / court / ROC orders</b>'+(st.unclear ? ', '+st.unclear+' unclear' : '')+'. '
-                + (st.regulatory ? 'Tax and regulatory "orders" sit in the same BSE category but aren\'t business wins, so they\'re hidden by default.' : '')
-                + '</div>';
+            const C = st.counts || {};
+            let txt = '<b style="color:var(--text-primary)">'+st.total+' filings</b> from '+st.companies+' companies in the last 3 filing days';
+            const pl = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+            if (tab === 'orders') txt += ': <b style="color:var(--green)">'+pl(C.business||0, 'business order')+'</b>, <b style="color:var(--red)">'+pl(C.regulatory||0, 'tax / court / ROC order')+'</b>'+(C.unclear ? ', '+C.unclear+' unclear' : '')+'. Tax and regulatory "orders" sit in the same BSE category but aren\'t business wins, so they\'re hidden by default.';
+            else if (tab === 'meets') txt += ': <b style="color:var(--text-accent)">'+pl(C.upcoming||0, 'upcoming meeting')+'</b>, '+(C.held||0)+' already held (presentations, transcripts, recordings). Companies meeting many big funds, or going on overseas roadshows, rank higher. Rising institutional interest often comes before a re-rating.';
+            else txt += ': <b style="color:var(--green)">'+pl(C.catalyst||0, 'catalyst')+'</b> (approvals, capex, orders, launches, deals)'+(C.negative ? ', <b style="color:var(--red)">'+pl(C.negative, 'negative event')+'</b>' : '')+'. Routine results updates and other releases are hidden by default.';
+            if (st.fno) txt += ' <span style="white-space:nowrap">'+fnoBadge(true)+' '+st.fno+' from F&amp;O stocks.</span>';
+            el.innerHTML = '<div class="card" style="margin-bottom:14px;padding:12px 16px;font-size:12.5px;color:var(--text-secondary);line-height:1.7">'+txt+'</div>';
         };
 
         const whyHtml = (c) => {
@@ -1524,83 +1581,103 @@ const app = {
                    + '<span class="mb-note">'+esc(p.note || '')+'</span>'
                    + '<span style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end"><span style="width:44px;height:5px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden;display:inline-block"><span style="display:block;width:'+pct+'%;height:100%;background:'+col+'"></span></span><b style="color:'+col+';font-size:11px">'+(na ? 'n/a' : p.pts+'/'+p.max)+'</b></span></div>';
             });
-            h += '</div>';
-            return h;
+            return h + '</div>';
+        };
+
+        const watchStats = (c) => {
+            const rx = c.pending ? '<span style="color:var(--text-secondary)" title="Filed after market close; reacts next session">next day</span>' : sgn(c.reaction_pct);
+            const rxCol = c.reaction_pct >= 3 ? 'var(--green)' : (c.reaction_pct < 0 ? 'var(--red)' : null);
+            const common = stat('Chart', STATE[c.breakout_state] || '—', null, true)
+                 + stat('Price', c.price ? '₹'+Number(c.price).toLocaleString('en-IN') : '—')
+                 + stat('Mkt cap', c.mcap ? '₹'+Math.round(c.mcap).toLocaleString('en-IN')+' Cr' : '—')
+                 + stat('Early Signal', c.early_score !== null && c.early_score !== undefined ? c.early_score : '—', scoreColor(c.early_score || 0));
+            if (tab === 'orders') return stat('Order value', fmtCr(c.order_cr) + (c.orders_3d > 1 ? ' ('+c.orders_3d+')' : ''))
+                 + stat('% of sales', c.order_pct_sales !== null && c.order_pct_sales !== undefined ? c.order_pct_sales+'%' : '—', c.order_pct_sales >= 10 ? 'var(--green)' : null)
+                 + stat('Since order', rx, rxCol) + stat('Volume', c.vol_x ? c.vol_x+'×' : '—', c.vol_x >= 1.5 ? 'var(--green)' : null) + common;
+            if (tab === 'meets') return stat('Meets · 30d', c.meets_30d || 0, c.meets_30d >= 3 ? 'var(--green)' : null)
+                 + stat('Big investors', (c.funds || []).length || '—', (c.funds || []).length >= 3 ? 'var(--green)' : null)
+                 + stat('Format', esc((c.fmt || '—') + (c.foreign ? ' 🌍' : '')), null, true)
+                 + stat('Since filing', rx, rxCol) + common;
+            return stat('News', esc(c.event_label || '—'), c.event === 'negative' ? 'var(--red)' : null, true)
+                 + stat('Amount', fmtCr(c.value_cr)) + stat('% of sales', c.value_pct_sales !== null && c.value_pct_sales !== undefined ? c.value_pct_sales+'%' : '—', c.value_pct_sales >= 10 ? 'var(--green)' : null)
+                 + stat('Since news', rx, rxCol) + common;
         };
 
         const renderWatch = () => {
             const el = document.getElementById('ord-watch');
+            const data = cache[tab];
             if (!el) return;
-            const W = (data && data.watch) || [];
+            const W = ((data && data.watch) || []).filter(passFno);
             if (!W.length) { el.innerHTML = ''; return; }
-            let h = '<div style="font-family:\'Inter\',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-accent);font-weight:700;margin:4px 0 10px">🎯 Breakout watch: order winners ranked</div><div style="display:grid;gap:10px">';
+            const title = { orders: 'Order winners ranked', meets: 'Rising institutional interest', press: 'News catalysts ranked' }[tab];
+            const scoreName = { orders: 'Catalyst score', meets: 'Interest score', press: 'News score' }[tab];
+            const set = openWhy[tab] = openWhy[tab] || new Set();
+            let h = '<div style="font-family:\'Inter\',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-accent);font-weight:700;margin:4px 0 10px">🎯 '+title+'</div><div style="display:grid;gap:10px">';
             W.forEach((c, i) => {
                 const sc = scoreColor(c.score);
-                const open = openWhy.has(c.code);
-                const tags = (c.signal_tags || []).map(t => chip(esc(t), 'rgba(79,70,229,0.08)', 'var(--text-accent)')).join(' ')
-                           + ' ' + (c.tags || []).map(t => chip(esc(t), 'rgba(15,23,42,0.05)', 'var(--text-secondary)')).join(' ');
-                const rx = c.pending ? '<span style="color:var(--text-secondary)" title="Filed after market close; reacts next session">next day</span>' : sgn(c.reaction_pct);
+                const open = set.has(c.code);
+                const tags = (c.signal_tags || []).map(t => chip(esc(t), BLUE[0], BLUE[1])).join(' ')
+                           + ' ' + (c.tags || []).map(t => chip(esc(t), GREY[0], GREY[1])).join(' ');
                 h += '<div class="card" style="padding:14px 16px">'
                    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">'
                    + '<div style="display:flex;gap:12px;flex:1;min-width:0"><div style="font-size:18px;font-weight:800;color:var(--text-secondary);width:26px;flex-shrink:0">'+(i+1)+'</div><div style="min-width:0">'
-                   + '<div style="font-weight:800;color:var(--text-primary);font-size:15px">'+esc(c.company)+' <span style="font-size:11.5px;font-weight:600;color:var(--text-secondary)">'+esc(c.sym && c.sym !== c.code ? c.sym+' · ' : '')+'BSE '+esc(c.code)+'</span></div>'
+                   + '<div style="font-weight:800;color:var(--text-primary);font-size:15px">'+esc(c.company)+' <span style="font-size:11.5px;font-weight:600;color:var(--text-secondary)">'+esc(c.sym && c.sym !== c.code ? c.sym+' · ' : '')+'BSE '+esc(c.code)+'</span> '+fnoBadge(c.fno)+'</div>'
                    + '<div style="margin-top:4px;display:flex;gap:10px;flex-wrap:wrap">'+tvLink(c.sym, c.code)+checkLink(c.sym)+'</div>'
                    + '<div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">'+tags+'</div>'
                    + '</div></div>'
-                   + '<div style="text-align:right;flex-shrink:0"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;white-space:nowrap">Catalyst score</div><div style="display:flex;align-items:center;gap:6px;justify-content:flex-end"><div style="width:48px;height:6px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(c.score,100)+'%;height:100%;background:'+sc+'"></div></div><b style="color:'+sc+';font-size:19px">'+c.score+'</b></div></div>'
+                   + '<div style="text-align:right;flex-shrink:0"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;white-space:nowrap">'+scoreName+'</div><div style="display:flex;align-items:center;gap:6px;justify-content:flex-end"><div style="width:48px;height:6px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(c.score,100)+'%;height:100%;background:'+sc+'"></div></div><b style="color:'+sc+';font-size:19px">'+c.score+'</b></div></div>'
                    + '</div>'
-                   + '<div class="mb-stats">'
-                   + stat('Order value', fmtCr(c.order_cr) + (c.orders_3d > 1 ? ' ('+c.orders_3d+')' : ''))
-                   + stat('% of sales', c.order_pct_sales !== null && c.order_pct_sales !== undefined ? c.order_pct_sales+'%' : '—', c.order_pct_sales >= 10 ? 'var(--green)' : null)
-                   + stat('Since order', rx, c.reaction_pct >= 3 ? 'var(--green)' : (c.reaction_pct < 0 ? 'var(--red)' : null))
-                   + stat('Volume', c.vol_x ? c.vol_x+'×' : '—', c.vol_x >= 1.5 ? 'var(--green)' : null)
-                   + stat('Chart', STATE[c.breakout_state] || '—', null, true)
-                   + stat('Price', c.price ? '₹'+Number(c.price).toLocaleString('en-IN') : '—')
-                   + stat('Mkt cap', c.mcap ? '₹'+Math.round(c.mcap).toLocaleString('en-IN')+' Cr' : '—')
-                   + stat('Early Signal', c.early_score !== null && c.early_score !== undefined ? c.early_score : '—', scoreColor(c.early_score || 0))
-                   + '</div>'
+                   + '<div class="mb-stats">' + watchStats(c) + '</div>'
+                   + pointsHtml(c.key_points, c.key_src === 'ai', c.key_src === 'ai' ? { impact: c.ai_impact, sentiment: c.ai_sentiment } : null)
                    + '<button class="ord-why" data-c="'+esc(c.code)+'" style="margin-top:10px;background:none;border:none;padding:0;color:var(--text-accent);font-weight:700;font-size:12px;cursor:pointer">'+(open ? 'Hide score breakdown ▴' : 'Why this score ▾')+'</button>'
                    + (open ? whyHtml(c) : '')
                    + '</div>';
             });
-            h += '</div>';
-            el.innerHTML = h;
+            el.innerHTML = h + '</div>';
             el.querySelectorAll('.ord-why').forEach(b => b.addEventListener('click', () => {
-                const k = b.getAttribute('data-c'); if (openWhy.has(k)) openWhy.delete(k); else openWhy.add(k); renderWatch();
+                const k = b.getAttribute('data-c'); if (set.has(k)) set.delete(k); else set.add(k); renderWatch();
             }));
             bindCheckLinks(el);
         };
 
+        const curFilter = () => filters[tab] || ((cache[tab] && cache[tab].default_filter) || 'all');
         const renderFilter = () => {
             const bar = document.getElementById('ord-filter');
+            const data = cache[tab];
             const st = data && data.stats;
             if (!bar || !st || !st.total) { if (bar) bar.style.display = 'none'; return; }
-            const b = (key, label) => '<button data-f="'+key+'" class="ord-chip" style="padding:6px 12px;border-radius:16px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--border-color);background:'+(filter===key?'var(--text-accent)':'var(--bg-card)')+';color:'+(filter===key?'#fff':'var(--text-secondary)')+'">'+label+'</button>';
+            const f = curFilter();
+            const b = (key, label, extra) => '<button data-f="'+key+'" class="ord-chip" '+(extra||'')+' style="padding:6px 12px;border-radius:16px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--border-color);background:'+(f===key?'var(--text-accent)':'var(--bg-card)')+';color:'+(f===key?'#fff':'var(--text-secondary)')+'">'+label+'</button>';
             bar.style.display = 'flex';
-            bar.innerHTML = b('business', '🟢 Business orders ('+st.business+')') + b('regulatory', '🔴 Tax / regulatory ('+st.regulatory+')')
-                          + (st.unclear ? b('unclear', '⚪ Unclear ('+st.unclear+')') : '') + b('all', 'All filings ('+st.total+')');
-            bar.querySelectorAll('.ord-chip').forEach(x => x.addEventListener('click', () => { filter = x.getAttribute('data-f'); renderFilter(); renderDays(); }));
+            bar.innerHTML = (data.classes || []).map(c => b(c.key, esc(c.label)+' ('+c.count+')')).join('') + b('all', 'All filings ('+st.total+')')
+                + '<button id="ord-fno" '+(data.fno_ready ? '' : 'disabled title="NSE F&amp;O list not loaded yet"')+' style="padding:6px 12px;border-radius:16px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid #fdba74;background:'+(fnoOnly?'#ea580c':'var(--bg-card)')+';color:'+(fnoOnly?'#fff':'#c2410c')+'">F&amp;O stocks only'+(st.fno !== undefined ? ' ('+st.fno+')' : '')+'</button>';
+            bar.querySelectorAll('.ord-chip').forEach(x => x.addEventListener('click', () => { filters[tab] = x.getAttribute('data-f'); renderFilter(); renderDays(); }));
+            const fb = document.getElementById('ord-fno');
+            if (fb) fb.addEventListener('click', () => { fnoOnly = !fnoOnly; setLS('mw_corp_fno', fnoOnly ? '1' : '0'); renderFilter(); renderWatch(); renderDays(); });
         };
 
         const itemHtml = (it) => {
-            const cls = CLS[it.cls] || CLS.unclear;
-            const dim = it.cls === 'regulatory';
-            let chips = chip(cls.label, cls.bg, cls.fg);
-            (it.tags || []).forEach(t => { chips += ' ' + chip(esc(t), 'rgba(15,23,42,0.05)', 'var(--text-secondary)'); });
+            const [clsLabel, [cbg, cfg]] = clsChip(tab, it);
+            const dim = (tab === 'orders' && it.cls === 'regulatory') || (tab === 'press' && it.cls === 'other');
+            let chips = chip(clsLabel, cbg, cfg) + ' ' + fnoBadge(it.fno);
+            (it.tags || []).forEach(t => { chips += ' ' + chip(esc(t), GREY[0], GREY[1]); });
             let val = '';
             if (it.value_cr !== null && it.value_cr !== undefined) {
                 val = '<b style="color:var(--text-primary)">'+fmtCr(it.value_cr)+'</b>'
                     + (it.value_pct_sales !== null && it.value_pct_sales !== undefined ? ' · <b style="color:'+(it.value_pct_sales >= 10 ? 'var(--green)' : 'var(--text-primary)')+'">'+it.value_pct_sales+'% of sales</b>' : '')
                     + (it.value_src === 'pdf' ? ' <span style="color:var(--text-secondary)">(read from PDF)</span>' : '');
-            } else if (it.cls === 'business') {
-                val = '<span style="color:var(--text-secondary)">Value not in headline'+(it.attachment ? ', open the PDF' : '')+'</span>';
+            } else if (tab === 'orders' && it.cls === 'business') {
+                val = '<span style="color:var(--text-secondary)">Value not disclosed'+(it.attachment ? ' in the headline or PDF' : '')+'</span>';
             }
             let rx = '';
-            if (it.cls === 'business') {
+            if (it.score !== null && it.score !== undefined) {
                 if (it.pending) rx = '<span style="color:var(--text-secondary)">Reacts next session</span>';
-                else if (it.reaction_pct !== null && it.reaction_pct !== undefined) rx = 'Since order: <b style="color:'+(it.reaction_pct >= 0 ? 'var(--green)' : 'var(--red)')+'">'+sgn(it.reaction_pct)+'</b>' + (it.vol_x ? ' on '+it.vol_x+'× vol' : '');
+                else if (it.reaction_pct !== null && it.reaction_pct !== undefined) rx = 'Since filing: <b style="color:'+(it.reaction_pct >= 0 ? 'var(--green)' : 'var(--red)')+'">'+sgn(it.reaction_pct)+'</b>' + (it.vol_x ? ' on '+it.vol_x+'× vol' : '');
             }
             const score = (it.score !== null && it.score !== undefined) ? '<span style="font-size:11px;font-weight:800;color:'+scoreColor(it.score)+';white-space:nowrap">Score '+it.score+'</span>' : '';
+            const ai = it.ai && it.ai.points && it.ai.points.length;
+            const pts = ai ? pointsHtml(it.ai.points, true, it.ai) : pointsHtml(it.points, false)
+                      || (it.attachment && !it.pdf_read ? '<div style="margin-top:6px;font-size:11.5px;color:var(--text-secondary)"><span class="spinner" style="vertical-align:middle;margin-right:4px;width:10px;height:10px"></span>Reading the PDF…</div>' : '');
             return '<div class="card" style="padding:12px 14px;'+(dim ? 'opacity:0.72;' : '')+'">'
                 + '<div style="display:flex;gap:12px;align-items:flex-start">'
                 + '<div style="font-size:12px;font-weight:800;color:var(--text-secondary);width:42px;flex-shrink:0;padding-top:2px">'+esc(it.time)+'</div>'
@@ -1612,33 +1689,48 @@ const app = {
                 + '<div style="font-size:13px;color:var(--text-primary);margin-top:4px;line-height:1.5">'+esc(it.headline || it.subject)+'</div>'
                 + '<div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap;align-items:center">'+chips+'</div>'
                 + ((val || rx) ? '<div style="margin-top:6px;font-size:12px;display:flex;gap:14px;flex-wrap:wrap">'+(val ? '<span>'+val+'</span>' : '')+(rx ? '<span>'+rx+'</span>' : '')+'</div>' : '')
+                + pts
                 + '<div style="margin-top:7px;display:flex;gap:12px;flex-wrap:wrap">'+pdfLink(it)
-                +   (it.bse_url ? '<a href="'+esc(it.bse_url)+'" target="_blank" rel="noopener" style="font-size:11.5px;font-weight:700;color:var(--text-accent);text-decoration:none">BSE ↗</a>' : '')
-                +   (it.cls !== 'regulatory' ? tvLink(it.sym, it.code) + checkLink(it.sym) : '')
+                +   (it.bse_url ? '<a href="'+esc(it.bse_url)+'" target="_blank" rel="noopener" style="'+linkCss+'">BSE ↗</a>' : '')
+                +   (!dim ? tvLink(it.sym, it.code) + checkLink(it.sym) : '')
                 + '</div>'
                 + '</div></div></div>';
         };
 
         const renderDays = () => {
             const el = document.getElementById('ord-days');
-            if (!el || !data) return;
+            const data = cache[tab];
+            if (!el) return;
+            if (!data) { el.innerHTML = ''; return; }
             if (data.empty || !(data.days || []).length) {
-                el.innerHTML = '<div class="card" style="text-align:center;padding:36px;color:var(--text-secondary)"><div style="font-size:36px;margin-bottom:10px">📜</div>'
-                    + (data.error ? 'Couldn\'t reach BSE yet and nothing is saved. Try Refresh in a minute.' : 'No order announcements found for the last few days.') + '</div>';
+                el.innerHTML = '<div class="card" style="text-align:center;padding:36px;color:var(--text-secondary)"><div style="font-size:36px;margin-bottom:10px">📑</div>'
+                    + (data.error ? 'Couldn\'t reach BSE yet and nothing is saved. Try Refresh in a minute.' : 'No filings of this type in the last few days.') + '</div>';
                 return;
             }
+            const f = curFilter();
+            const match = (it) => (f === 'all' || it.cls === f || (it.groups || []).includes(f)) && passFno(it);
             let h = '';
             data.days.forEach(d => {
-                const items = (d.items || []).filter(it => filter === 'all' || it.cls === filter);
-                const nb = (d.items || []).filter(it => it.cls === 'business').length;
+                const items = (d.items || []).filter(match);
                 h += '<div style="margin:18px 0 8px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">'
                    + '<div style="font-size:15px;font-weight:800;color:var(--text-primary)">'+(d.rel ? esc(d.rel)+' · ' : '')+esc(d.label)+'</div>'
-                   + '<div style="font-size:12px;color:var(--text-secondary)">'+d.items.length+' filing'+(d.items.length === 1 ? '' : 's')+' · '+nb+' business</div></div>';
+                   + '<div style="font-size:12px;color:var(--text-secondary)">'+d.items.length+' filing'+(d.items.length === 1 ? '' : 's')+(items.length !== d.items.length ? ' · '+items.length+' shown' : '')+'</div></div>';
                 if (!items.length) { h += '<div style="font-size:12.5px;color:var(--text-secondary);padding:4px 2px 8px">Nothing in this filter for this day.</div>'; return; }
                 h += '<div style="display:grid;gap:8px">' + items.map(itemHtml).join('') + '</div>';
             });
             el.innerHTML = h;
             bindCheckLinks(el);
+        };
+
+        const renderExplain = () => {
+            const el = document.getElementById('ord-explain');
+            if (!el) return;
+            const body = {
+                orders: '<b>Order size vs annual sales</b> 30 · <b>Chart setup</b> 25 · <b>Profit &amp; sales acceleration</b> 20 · <b>Market reaction</b> 15 · <b>Repeat orders (30 days)</b> 10. Order values come from the headline, or from the PDF when the headline has none. If a value isn\'t disclosed, the score is capped at 75. <b>😴 Not priced in yet</b> = a big order (≥10% of sales) the price hasn\'t reacted to. <b>L1 bidder</b> = lowest bid, not a confirmed order yet.',
+                meets: '<b>Meetings in the last 30 days</b> 20 · <b>Who is meeting</b> 20 (mutual funds, insurers, FIIs and PMS count most; global brokers next) · <b>Format &amp; reach</b> 10 (overseas roadshows and investor days rank above routine earnings calls) · <b>Document read (AI)</b> 15 · <b>Chart setup</b> 20 · <b>Profit &amp; sales acceleration</b> 15. Many meetings with big funds while the chart is basing is classic accumulation before a re-rating.',
+                press: '<b>Type of news</b> 25 (approvals and capex rank highest, then orders, launches and deals; routine results low; negative events score 0) · <b>Size vs annual sales</b> 15 · <b>Document read (AI)</b> 15 · <b>Chart setup</b> 20 · <b>Profit &amp; sales acceleration</b> 15 · <b>Market reaction</b> 10. Negative events are capped at 25.',
+            }[tab];
+            el.innerHTML = '<div class="card" style="margin-top:18px;border-left:3px solid var(--text-accent)"><div style="font-weight:800;font-size:13px;margin-bottom:6px;color:var(--text-primary)">How this tab\'s score works</div><div style="font-size:12px;color:var(--text-secondary);line-height:1.8">'+body+' Penalties apply for stocks already up more than 70% from their 6-month low, or thinly traded.</div></div>';
         };
 
         const bindCheckLinks = (root) => {
@@ -1647,27 +1739,40 @@ const app = {
             }));
         };
 
-        const renderAll = () => { renderStatus(); renderInsight(); renderWatch(); renderFilter(); renderDays(); };
+        const renderAll = () => { renderTabs(); renderStatus(); renderInsight(); renderWatch(); renderFilter(); renderDays(); renderExplain(); };
 
         const load = async (refresh) => {
             if (!alive()) return;
+            const my = ++loadSeq;
+            const feed = tab;
             const btn = document.getElementById('ord-refresh');
             if (btn && refresh) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Refreshing'; }
+            if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
             try {
-                data = await api.fetchOrders(refresh);
-                if (!alive()) return;
+                const data = await api.fetchCorp(feed, refresh);
+                cache[feed] = data;
+                if (!alive() || my !== loadSeq || feed !== tab) return;
                 renderAll();
             } catch (err) {
+                if (my !== loadSeq) return;
                 const el = document.getElementById('ord-status');
-                if (el) el.innerHTML = '<span style="color:var(--red);font-weight:600">'+esc(err.message || 'Could not load orders')+'</span>';
+                if (el) el.innerHTML = '<span style="color:var(--red);font-weight:600">'+esc(err.message || 'Could not load filings')+'</span>';
             } finally {
-                if (btn) { btn.disabled = false; btn.innerHTML = '↻ Refresh'; }
+                if (btn && my === loadSeq) { btn.disabled = false; btn.innerHTML = '↻ Refresh'; }
             }
-            if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
-            if (data && data.enriching && alive()) pollTimer = setTimeout(() => load(false), 6000);
+            const d = cache[feed];
+            if (d && d.enriching && alive() && my === loadSeq) pollTimer = setTimeout(() => load(false), 6000);
+        };
+
+        const switchTab = (f) => {
+            if (f === tab) return;
+            tab = f; setLS('mw_corp_tab', f);
+            renderAll();                       // instant from cache (or a spinner)
+            load(!cache[f]);                   // first open of a tab asks BSE for the latest
         };
 
         document.getElementById('ord-refresh').addEventListener('click', () => load(true));
+        renderAll();
         load(true);              // every visit asks for the latest filings
     },
 
@@ -2032,7 +2137,7 @@ const app = {
                 ${card('#smallmid', '#a78bfa', '💎', 'Small/Mid Master', 'Same 12-factor score, applied to the small &amp; mid-cap universe beyond the Nifty 1000. Higher risk, higher potential.', 'Rank Small/Mid', true)}
                 ${card('#microcap', '#f472b6', '🔬', 'Micro Cap Scanner', 'Micro caps under ₹2,000 Cr trading within 7% of their 52-week high — the tightest momentum coil, ranked by the same 12-factor score.', 'Scan Micro Caps', true)}
                 ${card('#gems', '#16a34a', '💎', 'Hidden Gems', 'The wonder-stock finder: a full-market fusion scan tagging stealth accumulation, turnarounds &amp; breakouts, ranked by Wonder Score with AI deep-dives.', 'Find Gems', true)}
-                ${card('#orders', '#ea580c', '📜', 'Corporate Action New Orders', 'Fresh order wins filed on BSE over the last 3 days. Tax and court orders are filtered out, and each company is ranked by order size vs sales, market reaction and chart setup.', 'See New Orders', true)}
+                ${card('#corp', '#ea580c', '📑', 'Corporate Actions', 'New orders, analyst / investor meets and press releases filed on BSE over the last 3 days. Every PDF is read for key points, and each company is scored on the news plus its chart and profit momentum.', 'Open Corporate Actions', true)}
                 ${card('#multibagger', '#dc2626', '🚀', 'Multibagger Early Signal', "Built from Amit's own winners (Wheels India, Spectrum Electrical, Fermenta): finds stocks with accelerating profits, abnormal volume and a fresh breakout that haven't run yet. Or check any stock you have in mind.", 'Find Early Signals', true)}
                 ${card('#wyckoff', '#0ea5e9', '📐', 'Wyckoff Scanner', 'Finds Nifty 1000 stocks at the accumulation→markup turn using Wyckoff phase analysis on daily &amp; weekly candles — momentum as it ignites.', 'Run Wyckoff', true)}
                 ${card('#screener', '#60a5fa', '📊', 'Stock Screener', 'Scan the Nifty 500 — and the next 501–1000 — for breakouts by P/E, volume spike and RSI.', 'Run a Scan')}
