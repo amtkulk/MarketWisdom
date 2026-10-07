@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v43',
+    VERSION: 'v44',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -1452,6 +1452,130 @@ const app = {
     },
 
     renderCorp(container, initialTab) {
+        // Plain listing: BSE records exactly as bseindia.com shows them — same text,
+        // same order (newest first), last 3 filing days. Nothing added.
+        // (The earlier analysis view is kept below as renderCorpAnalysis.)
+        const esc = (s) => String(s === null || s === undefined ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        const TABS = [
+            { feed: 'orders', icon: '📜', label: 'New Orders' },
+            { feed: 'meets',  icon: '🎤', label: 'Analyst / Investor Meet' },
+            { feed: 'press',  icon: '📣', label: 'Press Release' },
+        ];
+        const getLS = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+        const setLS = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+        let tab = initialTab || getLS('mw_corp_tab') || 'orders';
+        if (!TABS.some(t => t.feed === tab)) tab = 'orders';
+        const cache = {};
+        let pollTimer = null, loadSeq = 0;
+
+        container.innerHTML = `
+            <div style="margin-bottom:14px">
+                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">📑 Corporate Actions</h2>
+                <p id="cr-sub" style="font-size:13px;color:var(--text-secondary)">BSE corporate announcements, listed exactly as on bseindia.com: newest first, last 3 filing days.</p>
+            </div>
+            <div class="corp-layout">
+                <div class="corp-main" style="min-width:0">
+                    <div class="card" style="margin-bottom:14px;padding:12px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                        <div id="cr-status" style="font-size:12.5px;color:var(--text-secondary);flex:1;min-width:220px"></div>
+                        <button id="cr-refresh" class="btn" style="padding:8px 18px;font-size:13px;font-weight:700">↻ Refresh</button>
+                    </div>
+                    <div id="cr-list"></div>
+                </div>
+                <aside class="corp-tabs" id="corp-tabs"></aside>
+            </div>
+        `;
+        const alive = () => !!document.getElementById('cr-list');
+
+        const renderTabs = () => {
+            const el = document.getElementById('corp-tabs');
+            if (!el) return;
+            // a tab shows its count only once it has actually been fetched in this visit
+            const count = (f) => (cache[f] && !cache[f].fetching) ? cache[f].total : undefined;
+            el.innerHTML = TABS.map(t => '<button class="corp-tab'+(t.feed === tab ? ' active' : '')+'" data-f="'+t.feed+'">'
+                + '<span class="ct-ico">'+t.icon+'</span><span><div class="ct-label">'+esc(t.label)+'</div>'
+                + '<div class="ct-sub">'+(count(t.feed) !== undefined ? count(t.feed)+' announcement'+(count(t.feed) === 1 ? '' : 's') : 'BSE · Company Update')+'</div></span></button>').join('');
+            el.querySelectorAll('.corp-tab').forEach(b => b.addEventListener('click', () => switchTab(b.getAttribute('data-f'))));
+        };
+
+        const renderStatus = () => {
+            const el = document.getElementById('cr-status');
+            const sub = document.getElementById('cr-sub');
+            const d = cache[tab];
+            if (!el) return;
+            if (!d) { el.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Fetching from BSE…'; return; }
+            if (sub) sub.innerHTML = 'BSE corporate announcements · Segment: <b>Equity</b> · Category: <b>Company Update</b> · Sub Category: <b>'+esc(d.subcategory)+'</b>. Listed exactly as on bseindia.com: newest first, last 3 filing days.';
+            let h = '';
+            if (d.error) h += '<div style="color:#a16207;font-weight:600;margin-bottom:3px">⚠ '+esc(d.error)+'. Showing the last saved list.</div>';
+            h += 'Total No of Announcements <b style="color:var(--text-primary)">'+(d.total || 0)+'</b>'
+               + (d.updated_at ? ' · updated <b style="color:var(--text-primary)">'+esc(d.updated_at)+'</b>' : '');
+            if (d.fetching) h += ' <span style="margin-left:8px;color:var(--text-accent);font-weight:600"><span class="spinner" style="vertical-align:middle;margin-right:4px;width:12px;height:12px"></span>Fetching…</span>';
+            el.innerHTML = h;
+        };
+
+        const itemHtml = (it) => {
+            const pdf = it.attachment
+                ? '<a href="/api/corp/pdf?f='+encodeURIComponent(it.attachment)+'" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;font-weight:700;color:#dc2626;text-decoration:none;white-space:nowrap">📄 PDF'+(it.size_mb ? ' <span style="color:var(--text-primary);font-weight:600">'+it.size_mb.toFixed(2)+' MB</span>' : '')+'</a>'
+                : '';
+            return '<div class="cr-item">'
+                 + '<div class="cr-head"><div class="cr-subject">'+esc(it.subject)+'</div>'
+                 + '<div class="cr-cat">'+esc(it.category)+'</div><div class="cr-pdf">'+pdf+'</div></div>'
+                 + (it.headline ? '<div class="cr-line">'+esc(it.headline)+'</div>' : '')
+                 + '<div class="cr-line cr-times">'
+                 + (it.recv ? 'Exchange Received Time <b>'+esc(it.recv)+'</b> ' : '')
+                 + 'Exchange Disseminated Time <b>'+esc(it.dissem)+'</b>'
+                 + (it.time_taken ? ' Time Taken <b>'+esc(it.time_taken)+'</b>' : '')
+                 + '</div></div>';
+        };
+
+        const renderList = () => {
+            const el = document.getElementById('cr-list');
+            const d = cache[tab];
+            if (!el) return;
+            if (!d) { el.innerHTML = ''; return; }
+            if (d.empty) {
+                el.innerHTML = '<div class="card" style="text-align:center;padding:36px;color:var(--text-secondary)">'
+                    + (d.error ? 'Couldn\'t reach BSE yet and nothing is saved. Try Refresh in a minute.' : 'No announcements in this sub category in the last few days.') + '</div>';
+                return;
+            }
+            el.innerHTML = (d.days || []).map(day => '<div class="cr-day">'+esc(day.label)+'</div>' + day.items.map(itemHtml).join('')).join('');
+        };
+
+        const renderAll = () => { renderTabs(); renderStatus(); renderList(); };
+
+        const load = async (refresh) => {
+            if (!alive()) return;
+            const my = ++loadSeq, feed = tab;
+            const btn = document.getElementById('cr-refresh');
+            if (btn && refresh) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Refreshing'; }
+            if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+            try {
+                cache[feed] = await api.fetchCorp(feed, refresh);
+                if (!alive() || my !== loadSeq || feed !== tab) return;
+                renderAll();
+            } catch (err) {
+                if (my !== loadSeq) return;
+                const el = document.getElementById('cr-status');
+                if (el) el.innerHTML = '<span style="color:var(--red);font-weight:600">'+esc(err.message || 'Could not load announcements')+'</span>';
+            } finally {
+                if (btn && my === loadSeq) { btn.disabled = false; btn.innerHTML = '↻ Refresh'; }
+            }
+            const d = cache[feed];
+            if (d && d.fetching && alive() && my === loadSeq) pollTimer = setTimeout(() => load(false), 6000);
+        };
+
+        const switchTab = (f) => {
+            if (f === tab) return;
+            tab = f; setLS('mw_corp_tab', f);
+            renderAll();
+            load(true);                        // each tab shows BSE's latest when opened
+        };
+
+        document.getElementById('cr-refresh').addEventListener('click', () => load(true));
+        renderAll();
+        load(true);                            // every visit asks BSE for the latest
+    },
+
+    renderCorpAnalysis(container, initialTab) {   // analysis view (scores, key points) — not routed for now
         const esc = (s) => String(s === null || s === undefined ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
         const TABS = [
             { feed: 'orders', icon: '📜', label: 'New Orders', sub: 'Award / receipt of order' },
@@ -1749,7 +1873,7 @@ const app = {
             if (btn && refresh) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Refreshing'; }
             if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
             try {
-                const data = await api.fetchCorp(feed, refresh);
+                const data = await api.fetchCorp(feed, refresh, 'full');
                 cache[feed] = data;
                 if (!alive() || my !== loadSeq || feed !== tab) return;
                 renderAll();

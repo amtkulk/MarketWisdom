@@ -250,6 +250,8 @@ def normalize(r):
     if m:
         slug = m.group(1).upper()
     size = r.get("Fld_Attachsize")
+    recv = _parse_bse_dt(r.get("News_submission_dt"))
+    fmt = "%d-%m-%Y %H:%M:%S"                                      # BSE's own display format
     return {
         "id": news_id, "code": code, "company": company, "subject": sub,
         "headline": " ".join(str(r.get("HEADLINE") or "").split()),
@@ -257,7 +259,12 @@ def normalize(r):
         "time": when.strftime("%H:%M"),
         "attachment": str(r.get("ATTACHMENTNAME") or "").strip(),
         "size_kb": round(size / 1024) if isinstance(size, (int, float)) and size else None,
+        "size_mb": round(size / 1048576, 2) if isinstance(size, (int, float)) and size else None,
         "bse_url": ns, "bse_slug": slug,
+        # shown exactly as on bseindia.com
+        "recv": recv.strftime(fmt) if recv else None, "dissem": when.strftime(fmt),
+        "time_taken": str(r.get("TimeDiff") or "").strip() or None,
+        "category": (str(r.get("CATEGORYNAME") or "").strip() or CATEGORY),
     }
 
 
@@ -1188,14 +1195,25 @@ def _analyze_pdf(it, text):
     return upd
 
 
-def _merge(rows, feed):
-    """Normalize + first-read new BSE rows into the store (call under lock). Returns #new."""
+_RAW_FIELDS = ("subject", "headline", "recv", "dissem", "time_taken", "category", "size_mb",
+               "attachment", "bse_url", "company", "code")
+
+
+def _merge(rows, feed, record_order=False):
+    """Normalize + first-read new BSE rows into the store (call under lock). Returns #new.
+    record_order=True (the recent-window fetch) also saves BSE's exact listing order."""
     added = 0
     cutoff = (_now_ist() - dt.timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%d")
     news = _S["store"]["news"]
+    ids = []
     for r in rows:
         it = normalize(r)
-        if not it or it["date"] < cutoff or it["id"] in news:
+        if not it or it["date"] < cutoff:
+            continue
+        if it["id"] not in ids:
+            ids.append(it["id"])
+        if it["id"] in news:                               # keep BSE's own fields current
+            news[it["id"]].update({k: it.get(k) for k in _RAW_FIELDS})
             continue
         it["feed"] = feed
         it["subcat"] = str(r.get("SUBCATNAME") or "").strip()
@@ -1206,6 +1224,8 @@ def _merge(rows, feed):
         added += 1
     for k in [k for k, v in news.items() if v.get("date", "") < cutoff]:
         del news[k]
+    if record_order:
+        _S["store"].setdefault("order", {})[feed] = ids
     return added
 
 
@@ -1234,7 +1254,7 @@ def _note_fetch(feed, how):
     _S["last_fetch"][feed] = time.time()
 
 
-def _run_job(fetch_feeds, momentum_feeds, priority):
+def _run_job(fetch_feeds, momentum_feeds, priority, fetch_only=False):
     order = [priority] + [f for f in FEED_ORDER if f != priority]
     try:
         today = _now_ist().date()
@@ -1251,7 +1271,7 @@ def _run_job(fetch_feeds, momentum_feeds, priority):
                             smap = dict(_S["store"]["subcat_map"])
                         rows, sc = fetch_feed(client, feed, today - dt.timedelta(days=7), today, 10, smap)
                         with _lock:
-                            _merge(rows, feed)
+                            _merge(rows, feed, record_order=True)
                             if sc:
                                 _S["store"]["subcat_map"][feed] = sc
                             _note_fetch(feed, client.mode)
@@ -1274,6 +1294,9 @@ def _run_job(fetch_feeds, momentum_feeds, priority):
                         print(f"[Corp] 30-day fetch failed for {feed}: {e}")
             finally:
                 client.close()
+        if fetch_only:                                     # plain listing: nothing else to do
+            _save_store()
+            return
 
         # -- (b) F&O list ----------------------------------------------------
         if time.time() - (_S["store"].get("fno_at") or 0) > FNO_TTL:
@@ -1439,12 +1462,13 @@ def _run_job(fetch_feeds, momentum_feeds, priority):
             _S["job"]["stage"] = ""
 
 
-def _start_job(fetch_feeds, momentum_feeds, priority):
+def _start_job(fetch_feeds, momentum_feeds, priority, fetch_only=False):
     with _lock:
         if _S["job"]["running"]:
             return False
         _S["job"].update({"running": True, "started": time.time(), "error": None, "stage": "Starting"})
-    threading.Thread(target=_run_job, args=(list(fetch_feeds), list(momentum_feeds), priority), daemon=True).start()
+    threading.Thread(target=_run_job, args=(list(fetch_feeds), list(momentum_feeds), priority, fetch_only),
+                     daemon=True).start()
     return True
 
 
@@ -1638,7 +1662,7 @@ def get_feed_view(feed="orders", force=False):
         try:
             rows, sc = fetch_feed(client, feed, today - dt.timedelta(days=7), today, 10, smap)
             with _lock:
-                _merge(rows, feed)
+                _merge(rows, feed, record_order=True)
                 if sc:
                     _S["store"]["subcat_map"][feed] = sc
                 _note_fetch(feed, "direct")
@@ -1693,3 +1717,79 @@ def resolve_pdf_url(attachment):
     except Exception:
         pass
     return BSE_PDF_BASES[1] + attachment
+
+
+# ══════════════════════════════════════════════════════════════
+#  7. PLAIN LISTING — BSE records exactly as bseindia.com shows them
+#     (same fields, same order, newest first; no analysis added)
+# ══════════════════════════════════════════════════════════════
+
+def build_raw_view(feed):
+    with _lock:
+        st = json.loads(json.dumps(_S["store"]))
+        job = dict(_S["job"])
+    news = st["news"]
+    dates = set(_window_dates(news, feed))
+    items = {k: v for k, v in news.items() if v.get("feed") == feed and v["date"] in dates}
+    bse_order = [i for i in (st.get("order") or {}).get(feed, []) if i in items]
+    rest = sorted((v for k, v in items.items() if k not in set(bse_order)), key=lambda v: v["dt"], reverse=True)
+    ordered = [items[i] for i in bse_order] + rest
+    days, cur = [], None
+    for v in ordered:
+        if cur is None or cur["date"] != v["date"]:
+            cur = {"date": v["date"], "label": dt.datetime.strptime(v["date"], "%Y-%m-%d").strftime("%d %b %Y"), "items": []}
+            days.append(cur)
+        cur["items"].append({
+            "id": v["id"], "company": v.get("company"), "code": v.get("code"),
+            "subject": v.get("subject") or f"{v.get('company')} - {v.get('code')}",
+            "category": v.get("category") or CATEGORY, "headline": v.get("headline"),
+            "recv": v.get("recv"),
+            "dissem": v.get("dissem") or dt.datetime.strptime(v["dt"], "%Y-%m-%dT%H:%M:%S").strftime("%d-%m-%Y %H:%M:%S"),
+            "time_taken": v.get("time_taken"), "attachment": v.get("attachment"),
+            "size_mb": v.get("size_mb") if v.get("size_mb") is not None else
+                       (round(v["size_kb"] / 1024, 2) if v.get("size_kb") else None),
+            "bse_url": v.get("bse_url"),
+        })
+    tabs = [{"feed": f, "label": FEEDS[f]["label"], "icon": FEEDS[f]["icon"],
+             "count": len(_window_items(news, f))} for f in FEED_ORDER]
+    return {"feed": feed, "label": FEEDS[feed]["label"], "icon": FEEDS[feed]["icon"],
+            "subcategory": (st.get("subcat_map") or {}).get(feed) or FEEDS[feed]["subcats"][0],
+            "days": days, "total": len(ordered), "tabs": tabs,
+            "updated_at": (st.get("updated_at") or {}).get(feed), "error": (st.get("last_error") or {}).get(feed),
+            "fetching": job["running"], "empty": not ordered}
+
+
+def get_raw_view(feed="orders", force=False):
+    """Plain listing for the page: pull the latest from BSE (inline, a few
+    seconds), fall back to the headless browser in the background if BSE
+    refuses, and never start the PDF / AI / price analysis."""
+    feed = feed if feed in FEEDS else "orders"
+    now = time.time()
+    with _lock:
+        _load_store()
+        last = max(_S["last_fetch"].get(feed, 0), _S["last_try"].get(feed, 0))
+        need_fetch = now - last > (REFRESH_FLOOR if force else REFRESH_TTL)
+        smap = dict(_S["store"]["subcat_map"])
+    if need_fetch:
+        today = _now_ist().date()
+        client = BseClient(allow_browser=False)
+        with _lock:
+            _S["last_try"][feed] = now
+        try:
+            rows, sc = fetch_feed(client, feed, today - dt.timedelta(days=7), today, 10, smap)
+            with _lock:
+                _merge(rows, feed, record_order=True)
+                if sc:
+                    _S["store"]["subcat_map"][feed] = sc
+                _note_fetch(feed, "direct")
+            need_fetch = False
+            threading.Thread(target=_save_store, daemon=True).start()
+        except Exception as e:
+            with _lock:
+                _S["store"]["last_error"][feed] = f"BSE did not respond: {e}"
+        finally:
+            client.close()
+    view = build_raw_view(feed)
+    if need_fetch and _start_job([feed], [], feed, fetch_only=True):
+        view["fetching"] = True
+    return view

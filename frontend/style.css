@@ -362,3 +362,15 @@ footer {
     .mb2-score { flex:1 1 100%; padding-left:38px; }
     .mb2-score > div:first-child { justify-content:flex-start !important; }
 }
+
+/* ── Corporate Actions: plain BSE listing ─────────────────────── */
+.cr-day { background:#1e2a5a; color:#fff; font-weight:700; font-size:14px; padding:9px 14px; border-radius:8px 8px 0 0; margin-top:16px; }
+.cr-item { background:var(--bg-card); border:1px solid var(--border-color); border-top:none; }
+.cr-head { display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap; background:rgba(15,23,42,0.05); padding:9px 14px; }
+.cr-subject { flex:1 1 320px; min-width:0; font-weight:700; font-size:13.5px; color:var(--text-primary); line-height:1.45; word-break:break-word; }
+.cr-cat { flex:0 0 auto; font-weight:700; font-size:13px; color:var(--text-primary); }
+.cr-pdf { flex:0 0 auto; font-size:12.5px; }
+.cr-line { padding:7px 14px; font-size:13px; color:var(--text-primary); border-top:1px solid rgba(15,23,42,0.06); line-height:1.5; word-break:break-word; }
+.cr-times { font-size:12px; color:var(--text-secondary); }
+.cr-times b { color:var(--text-primary); }
+@media (max-width: 600px) { .cr-subject { flex-basis:100%; } }

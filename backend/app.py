@@ -2989,7 +2989,7 @@ def api_screener_results():
 
 
 # ── Corporate Action New Orders (BSE "Award of Order / Receipt of Order") ──
-from orders import get_orders_view, get_feed_view, resolve_pdf_url as _orders_pdf_url
+from orders import get_orders_view, get_feed_view, get_raw_view, resolve_pdf_url as _orders_pdf_url
 
 
 @app.route("/api/corp")
@@ -2998,7 +2998,10 @@ def api_corp():
     sub-categories, Equity segment, last 3 filing days + PDF key points + scores)."""
     try:
         feed = (request.args.get("feed") or "orders").lower()
-        return jsonify(get_feed_view(feed, force=request.args.get("refresh") == "1"))
+        force = request.args.get("refresh") == "1"
+        if (request.args.get("mode") or "raw").lower() == "full":     # analysis view (kept for later)
+            return jsonify(get_feed_view(feed, force=force))
+        return jsonify(get_raw_view(feed, force=force))               # BSE records as listed on bseindia.com
     except Exception as e:
         import traceback
         print(traceback.format_exc())
