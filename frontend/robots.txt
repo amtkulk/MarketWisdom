@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+
+User-agent: Mediapartners-Google
+Allow: /
+
+Sitemap: https://marketwisdom.co.in/sitemap.xml
