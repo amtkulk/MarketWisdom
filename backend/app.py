@@ -5,6 +5,7 @@ from datetime import datetime, date, timedelta
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from database import init_db, add_or_update_stock, delete_stock, get_all_stocks, upsert_user, save_chartink_scanner, get_chartink_scanners, delete_chartink_scanner
+from database import set_consent, get_consent, list_user_consents
 from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
 
@@ -38,7 +39,9 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 30      # 30 days
 
 # Comma-separated list of admin emails (case-insensitive).
 # Set on Azure as an env var: ADMIN_EMAILS=login4amit@gmail.com,other@gmail.com
-ADMIN_EMAILS = {
+# Built-in admins (always), plus any extra emails from the ADMIN_EMAILS env var.
+DEFAULT_ADMINS = {"login4amit@gmail.com", "amtkulk@gmail.com"}
+ADMIN_EMAILS = DEFAULT_ADMINS | {
     e.strip().lower()
     for e in (os.environ.get("ADMIN_EMAILS", "") or "").split(",")
     if e.strip()
@@ -79,6 +82,9 @@ def api_auth_google():
             upsert_user(user["email"], user["name"], user["picture"], payload.get("sub", ""))
         except Exception as e:
             print(f"[Auth] upsert_user failed: {e}")
+        if not _has_consent(user["email"]):
+            # No session until the disclaimer is accepted.
+            return jsonify(_consent_challenge(user))
         token = _auth_serializer.dumps(user)
         return jsonify({"token": token, "user": user})
     except Exception as e:
@@ -86,20 +92,119 @@ def api_auth_google():
         return jsonify({"error": "Google sign-in verification failed"}), 401
 
 
-def current_user():
-    """Return the signed-in user dict from the Authorization header, or None."""
+# ── Disclaimer consent ──────────────────────────────────────────
+CONSENT_VERSION = "2026-10-11"
+DISCLAIMER_TEXT = ("Market Wisdom is an informational website created only for information and learning purposes. "
+                   "We do not recommend any stock and have no intention of doing so. Nothing on this site is "
+                   "investment advice. Before taking any investment decision, please consult your financial advisor.")
+_consent_serializer = URLSafeTimedSerializer(APP_SECRET, salt="mw-consent-v1")
+CONSENT_TOKEN_MAX_AGE = 15 * 60            # the accept / decline step must happen within 15 min
+_consent_cache = {}                        # email -> (accepted: bool, checked_at)
+
+
+def _has_consent(email):
+    """True only if this user has ACCEPTED the disclaimer (cached for 5 min)."""
+    email = (email or "").strip().lower()
+    if not email:
+        return False
+    now = time.time()
+    hit = _consent_cache.get(email)
+    if hit and now - hit[1] < 300:
+        return hit[0]
+    try:
+        c = get_consent(email)
+        ok = bool(c and c.get("status") == "accepted")
+    except Exception as e:
+        print(f"[Consent] lookup failed for {email}: {e}")
+        return hit[0] if hit else False
+    _consent_cache[email] = (ok, now)
+    return ok
+
+
+def _consent_challenge(user):
+    """Response for a verified Google user who hasn't accepted yet: no session
+    token, just a short-lived consent token for the accept/decline step."""
+    return {"consent_required": True, "consent_token": _consent_serializer.dumps(user),
+            "user": {"email": user["email"], "name": user.get("name", "")},
+            "disclaimer": DISCLAIMER_TEXT, "version": CONSENT_VERSION}
+
+
+def _session_user():
+    """The user in a valid session token, consent NOT checked."""
     try:
         h = request.headers.get("Authorization", "")
         if not h.startswith("Bearer "):
             return None
         u = _auth_serializer.loads(h[7:], max_age=SESSION_MAX_AGE)
-        # Re-evaluate admin status from the current env, in case ADMIN_EMAILS
-        # was updated after the token was issued.
+        # Re-evaluate admin status in case ADMIN_EMAILS changed after sign-in.
         if u and u.get("email"):
             u["is_admin"] = _is_admin_email(u["email"])
         return u
     except (BadSignature, SignatureExpired, Exception):
         return None
+
+
+def current_user():
+    """The signed-in user, or None. A session only counts once the user has
+    accepted the disclaimer — otherwise they're treated as logged out."""
+    u = _session_user()
+    if u and _has_consent(u.get("email")):
+        return u
+    return None
+
+
+@app.route("/api/auth/consent", methods=["POST"])
+def api_auth_consent():
+    """Accept or decline the disclaimer. Accept → session token. Decline →
+    recorded, and the user stays logged out."""
+    body = request.get_json() or {}
+    decision = (body.get("decision") or "").lower()
+    if decision not in ("accept", "decline"):
+        return jsonify({"error": "decision must be accept or decline"}), 400
+    user = None
+    if body.get("consent_token"):
+        try:
+            user = _consent_serializer.loads(body["consent_token"], max_age=CONSENT_TOKEN_MAX_AGE)
+        except (BadSignature, SignatureExpired):
+            return jsonify({"error": "This sign-in has expired. Please sign in with Google again."}), 401
+    else:
+        user = _session_user()                         # older session that predates the consent step
+    if not user or not user.get("email"):
+        return jsonify({"error": "Please sign in with Google first."}), 401
+    status = "accepted" if decision == "accept" else "declined"
+    try:
+        set_consent(user["email"], status, CONSENT_VERSION)
+    except Exception as e:
+        print(f"[Consent] save failed: {e}")
+        return jsonify({"error": "Could not record your choice. Please try again."}), 500
+    _consent_cache[user["email"].strip().lower()] = (status == "accepted", time.time())
+    if status != "accepted":
+        return jsonify({"ok": True, "accepted": False})
+    user["is_admin"] = _is_admin_email(user["email"])
+    return jsonify({"ok": True, "accepted": True, "token": _auth_serializer.dumps(user), "user": user})
+
+
+@app.route("/api/auth/me")
+def api_auth_me():
+    """Validate the stored session on page load. Sessions issued before the
+    consent step get a consent challenge instead of access."""
+    u = _session_user()
+    if not u:
+        return jsonify({"error": "Not signed in"}), 401
+    if not _has_consent(u.get("email")):
+        return jsonify(_consent_challenge(u))
+    return jsonify({"user": u})
+
+
+@app.route("/api/admin/consents")
+def api_admin_consents():
+    """Admin-only: every user's email and whether they accepted the disclaimer."""
+    _, err = _require_admin()
+    if err: return err
+    try:
+        return jsonify({"users": list_user_consents(), "version": CONSENT_VERSION})
+    except Exception as e:
+        return jsonify({"error": f"Could not load consents: {e}"}), 500
 
 
 def _user_scope():

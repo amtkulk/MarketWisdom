@@ -374,3 +374,5 @@ footer {
 .cr-times { font-size:12px; color:var(--text-secondary); }
 .cr-times b { color:var(--text-primary); }
 @media (max-width: 600px) { .cr-subject { flex-basis:100%; } }
+
+@media (max-width: 768px) { #site-disclaimer { margin-left: 0 !important; } }

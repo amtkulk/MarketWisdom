@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v45',
+    VERSION: 'v46',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -178,7 +178,7 @@ const app = {
         }
         const label = ({
             global: 'Global Market', 'war-news': 'War News', telegram: 'Telegram Feed',
-            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', wyckoff: 'Wyckoff Momentum', multibagger: 'Multibagger Early Signal', orders: 'Corporate Actions', corp: 'Corporate Actions', stock: 'Stock Research',
+            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', wyckoff: 'Wyckoff Momentum', multibagger: 'Multibagger Early Signal', orders: 'Corporate Actions', corp: 'Corporate Actions', 'admin-users': 'User Consents', stock: 'Stock Research',
             overview: 'Stock Overview', reits: 'REITs & InvITs', action: 'Stock Action', heatmap: 'Indices Heatmap', chartink: 'Chartink Comparator',
             nifty: 'Nifty Analysis', watchlist: 'Watchlist',
         })[attemptedRoute] || 'this page';
@@ -276,6 +276,9 @@ const app = {
             case 'corp':
                 this.renderCorp(container);
                 break;
+            case 'admin-users':
+                this.renderAdminUsers(container);
+                break;
             case 'stock':
                 this.renderStock(container);
                 break;
@@ -336,6 +339,7 @@ const app = {
                 <p style="margin-top:6px"><b>Based in:</b> Mumbai, Maharashtra, India</p>
                 <p style="margin-top:14px">We read every message and typically reply within a few business days. For account or data-deletion requests, please write from the email address you signed in with so we can verify it's you.</p>`),
             disclaimer: wrap('Disclaimer', `
+                <p style="padding:12px 14px;background:rgba(234,179,8,0.10);border:1px solid rgba(234,179,8,0.35);border-radius:10px;margin-bottom:14px"><b>Market Wisdom is an informational website created only for information and learning purposes.</b> We do not recommend any stock and have no intention of doing so. Before taking any investment decision, please consult your financial advisor.</p>
                 <p><b>Not investment advice.</b> Everything on Market Wisdom — scores, screeners, charts, AI-generated notes, news summaries and any other content — is provided for general information and educational purposes only. It is <b>not</b> investment, financial, legal or tax advice, and must not be treated as a recommendation to buy, sell or hold any security.</p>
                 <p style="margin-top:12px"><b>Do your own research.</b> Markets carry risk; you can lose money. Always do your own due diligence and consult a SEBI-registered investment adviser before making any investment decision. Past performance and any screening score are not indicators of future results.</p>
                 <p style="margin-top:12px"><b>Data accuracy.</b> Data is sourced from third parties (NSE India, Yahoo Finance, Screener.in, Chartink, Google News and others) and may be delayed, incomplete or inaccurate. We make no warranty as to its accuracy and accept no liability for any loss arising from its use.</p>
@@ -1445,6 +1449,46 @@ const app = {
         });
 
         loadLast();
+    },
+
+    renderAdminUsers(container) {
+        // Admin-only. The menu link is hidden for everyone else, and the server
+        // refuses the data to non-admins even if this page is opened directly.
+        const u = (typeof Auth !== 'undefined' && Auth.user) ? Auth.user() : null;
+        if (!u || !u.is_admin) {
+            container.innerHTML = '<div class="card" style="max-width:520px;margin:60px auto;text-align:center;padding:36px;color:var(--text-secondary)">This page is not available.</div>';
+            return;
+        }
+        const esc = (t) => String(t === null || t === undefined ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        container.innerHTML = `
+            <div style="max-width:760px">
+                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🔐 User Consents</h2>
+                <p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px">Everyone who has signed in, and whether they accepted the disclaimer. Visible to admins only.</p>
+                <div id="adm-body" class="card" style="padding:0;overflow:hidden"><div style="padding:24px;text-align:center"><span class="spinner"></span></div></div>
+            </div>`;
+        (async () => {
+            const el = document.getElementById('adm-body');
+            try {
+                const res = await fetch(`${API_BASE_URL}/admin/consents`, { headers: Auth.headers() });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Could not load users');
+                if (!el) return;
+                const rows = data.users || [];
+                const label = (r) => r.status === 'accepted' ? '<b style="color:var(--green)">✓ Accepted</b>'
+                                   : r.status === 'declined' ? '<b style="color:var(--red)">✗ Declined</b>'
+                                   : '<span style="color:var(--text-secondary)">Not yet</span>';
+                el.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:14px">'
+                    + '<thead><tr style="background:rgba(15,23,42,0.05);text-align:left"><th style="padding:10px 14px">Email</th><th style="padding:10px 14px">Consent accepted</th></tr></thead><tbody>'
+                    + (rows.length ? rows.map(r => '<tr style="border-top:1px solid var(--border-color)"><td style="padding:10px 14px;word-break:break-all">'+esc(r.email)+'</td>'
+                        + '<td style="padding:10px 14px">'+label(r)+(r.decided_at ? '<div style="font-size:11.5px;color:var(--text-secondary)">'+esc(r.decided_at)+'</div>' : '')+'</td></tr>').join('')
+                      : '<tr><td colspan="2" style="padding:20px;text-align:center;color:var(--text-secondary)">No users yet.</td></tr>')
+                    + '</tbody></table>'
+                    + '<div style="padding:10px 14px;font-size:12px;color:var(--text-secondary);border-top:1px solid var(--border-color)">'
+                    + rows.length+' users · '+rows.filter(r => r.status === 'accepted').length+' accepted · '+rows.filter(r => r.status === 'declined').length+' declined</div>';
+            } catch (e) {
+                if (el) el.innerHTML = '<div style="padding:20px;color:var(--red)">'+esc(e.message)+'</div>';
+            }
+        })();
     },
 
     renderOrders(container) {           // old #orders links land on the Orders tab

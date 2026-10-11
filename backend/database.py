@@ -80,6 +80,15 @@ def init_db():
                 name TEXT, picture TEXT, google_sub TEXT, last_login TEXT
             )
         ''')
+        # disclaimer consent: one row per user (accepted / declined)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS consents (
+                email TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                version TEXT,
+                decided_at TEXT
+            )
+        ''')
         # NOTE: the old shared 'watchlist' table is intentionally NOT migrated into
         # any user's list. Ratings are now per-user only — new users start empty.
         # Legacy rows stay in the old table for safekeeping; if you later decide
@@ -169,6 +178,55 @@ def upsert_user(email, name="", picture="", google_sub=""):
         ''', (email, name, picture, google_sub, last_login))
         conn.commit()
         conn.close()
+
+
+def set_consent(email, status, version):
+    """Record a user's disclaimer decision ('accepted' or 'declined')."""
+    email = (email or "").strip().lower()
+    decided_at = datetime.now().strftime("%d %b %Y  %H:%M")
+    if USE_MONGO:
+        db.get_collection("consents").update_one(
+            {"email": email}, {"$set": {"status": status, "version": version, "decided_at": decided_at}}, upsert=True)
+    else:
+        conn = get_db_connection()
+        conn.execute('''
+            INSERT INTO consents (email, status, version, decided_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT(email) DO UPDATE SET status=excluded.status, version=excluded.version,
+                decided_at=excluded.decided_at
+        ''', (email, status, version, decided_at))
+        conn.commit()
+        conn.close()
+
+
+def get_consent(email):
+    """{'status', 'version', 'decided_at'} or None if the user hasn't decided yet."""
+    email = (email or "").strip().lower()
+    if USE_MONGO:
+        return db.get_collection("consents").find_one({"email": email}, {"_id": 0})
+    conn = get_db_connection()
+    row = conn.execute("SELECT status, version, decided_at FROM consents WHERE email = ?", (email,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def list_user_consents():
+    """Every signed-in user (and anyone who decided), with their consent status."""
+    if USE_MONGO:
+        users = {(u.get("email") or "").lower(): u for u in db.get_collection("users").find({}, {"_id": 0})}
+        cons = {(c.get("email") or "").lower(): c for c in db.get_collection("consents").find({}, {"_id": 0})}
+    else:
+        conn = get_db_connection()
+        users = {(r["email"] or "").lower(): dict(r) for r in conn.execute("SELECT email, last_login FROM users").fetchall()}
+        cons = {(r["email"] or "").lower(): dict(r) for r in conn.execute("SELECT email, status, decided_at FROM consents").fetchall()}
+        conn.close()
+    out = []
+    for email in sorted(set(users) | set(cons)):
+        if not email:
+            continue
+        c = cons.get(email) or {}
+        out.append({"email": email, "status": c.get("status") or "pending", "decided_at": c.get("decided_at"),
+                    "last_login": (users.get(email) or {}).get("last_login")})
+    return out
 
 
 def save_screener_results(market, data):
