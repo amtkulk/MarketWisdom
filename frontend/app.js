@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v46',
+    VERSION: 'v47',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -178,7 +178,7 @@ const app = {
         }
         const label = ({
             global: 'Global Market', 'war-news': 'War News', telegram: 'Telegram Feed',
-            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', wyckoff: 'Wyckoff Momentum', multibagger: 'Multibagger Early Signal', orders: 'Corporate Actions', corp: 'Corporate Actions', 'admin-users': 'User Consents', stock: 'Stock Research',
+            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', wyckoff: 'Wyckoff Momentum', multibagger: 'Multibagger Early Signal', orders: 'Corporate Actions', corp: 'Corporate Actions', 'admin-users': 'User Consents', results: 'Nifty50 Result Analyzer', stock: 'Stock Research',
             overview: 'Stock Overview', reits: 'REITs & InvITs', action: 'Stock Action', heatmap: 'Indices Heatmap', chartink: 'Chartink Comparator',
             nifty: 'Nifty Analysis', watchlist: 'Watchlist',
         })[attemptedRoute] || 'this page';
@@ -278,6 +278,9 @@ const app = {
                 break;
             case 'admin-users':
                 this.renderAdminUsers(container);
+                break;
+            case 'results':
+                this.renderResults(container);
                 break;
             case 'stock':
                 this.renderStock(container);
@@ -1493,6 +1496,273 @@ const app = {
 
     renderOrders(container) {           // old #orders links land on the Orders tab
         return this.renderCorp(container, 'orders');
+    },
+
+    renderResults(container) {
+        // Nifty50 Result Analyzer: last 4 quarters per company, side by side.
+        const esc = (s) => String(s === null || s === undefined ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        const getLS = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+        const setLS = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+        const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        const pd = (iso) => { if (!iso) return null; const p = iso.split('-').map(Number); return new Date(p[0], p[1]-1, p[2]); };
+        const dShort = (iso) => { const d = pd(iso); return d ? d.getDate()+' '+MON[d.getMonth()] : ''; };
+        const dLong = (iso) => { const d = pd(iso); return d ? DOW[d.getDay()]+', '+d.getDate()+' '+MON[d.getMonth()]+' '+d.getFullYear() : ''; };
+        const fmtNum = (v, unit) => {
+            if (v === null || v === undefined) return '—';
+            if (unit === 'pct') return v.toFixed(2).replace(/\.?0+$/, '') + '%';
+            if (unit === 'rs') return '₹' + v.toFixed(2);
+            const a = Math.abs(v);
+            return (v < 0 ? '−' : '') + a.toLocaleString('en-IN', { maximumFractionDigits: a < 100 ? 1 : 0 });
+        };
+        // change vs a base: % for money, percentage points for ratios
+        const change = (v, b, unit, lowerBetter) => {
+            if (v === null || v === undefined || b === null || b === undefined) return null;
+            let txt, good;
+            if (unit === 'pct') {
+                const d = v - b;
+                txt = (d >= 0 ? '+' : '−') + Math.abs(d).toFixed(Math.abs(d) < 1 ? 2 : 1) + ' pp';
+                good = lowerBetter ? d < 0 : d > 0;
+                if (Math.abs(d) < 0.005) { txt = 'flat'; good = null; }
+            } else {
+                if (b === 0) return null;
+                if (b < 0 && v >= 0) return { txt: 'turned +', good: true };
+                if (b < 0) return null;
+                const p = (v / b - 1) * 100;
+                txt = (p >= 0 ? '+' : '−') + Math.abs(p).toFixed(Math.abs(p) < 10 ? 1 : 0) + '%';
+                good = p > 0;
+                if (Math.abs(p) < 0.05) { txt = 'flat'; good = null; }
+            }
+            return { txt, good };
+        };
+        const chg = (c, lbl) => c ? '<span class="rs-chg '+(c.good === null ? '' : (c.good ? 'up' : 'dn'))+'">'+lbl+' '+esc(c.txt)+'</span>' : '';
+
+        let data = null, sel = getLS('mw_res_sym'), filter = getLS('mw_res_filter') || 'all', q = '';
+        let pollTimer = null, loadSeq = 0, updating = false;
+
+        container.innerHTML = `
+            <div style="margin-bottom:14px">
+                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">📊 Nifty50 Result Analyzer</h2>
+                <p id="rs-sub" style="font-size:13px;color:var(--text-secondary)">Quarterly results of every Nifty 50 company, last 4 quarters side by side.</p>
+            </div>
+            <div class="card" style="margin-bottom:14px;padding:12px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                <div id="rs-status" style="font-size:12.5px;color:var(--text-secondary);flex:1;min-width:220px"></div>
+                <button id="rs-refresh" class="btn" style="padding:8px 18px;font-size:13px;font-weight:700">↻ Refresh</button>
+            </div>
+            <div id="rs-detail"></div>
+            <div class="card" style="padding:14px 16px">
+                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+                    <div style="font-weight:800;color:var(--text-primary);font-size:15px;flex:1;min-width:160px">Results season tracker</div>
+                    <input id="rs-q" type="search" placeholder="Search company…" autocomplete="off"
+                        style="padding:8px 12px;border:1px solid var(--border-color);border-radius:8px;font-size:13px;min-width:0;width:180px;max-width:100%;background:var(--bg-card);color:var(--text-primary)">
+                </div>
+                <div id="rs-filters" class="rs-filters"></div>
+                <div id="rs-grid" class="rs-grid"></div>
+            </div>
+        `;
+        const alive = () => !!document.getElementById('rs-grid');
+
+        const byStatus = () => {
+            const comps = (data && data.companies) || [];
+            const ann = comps.filter(c => c.status && c.status.announced);
+            const wait = comps.filter(c => !(c.status && c.status.announced));
+            return { comps, ann, wait };
+        };
+
+        const renderStatus = () => {
+            const el = document.getElementById('rs-status');
+            const sub = document.getElementById('rs-sub');
+            if (!el) return;
+            if (!data) { el.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Loading results…'; return; }
+            const { comps, ann } = byStatus();
+            if (sub) sub.innerHTML = 'Quarterly results of every Nifty 50 company, last 4 quarters side by side · ₹ crore · Season: <b>'
+                + esc(data.season)+' ('+esc(data.season_fy)+')</b>. SEBI deadline for this quarter: <b>'+esc(dLong(data.deadline))+'</b>.';
+            let h = '';
+            if (data.error) h += '<div style="color:#a16207;font-weight:600;margin-bottom:3px">⚠ '+esc(data.error)+'</div>';
+            h += '<b style="color:var(--text-primary)">'+ann.length+'</b> of '+(comps.length + ((data.pending || []).length))
+               + ' companies have announced '+esc(data.season_fy)
+               + (data.updated_at ? ' · updated <b style="color:var(--text-primary)">'+esc(data.updated_at)+'</b>' : '');
+            if (data.fetching) {
+                const p = data.progress || {};
+                h += ' <span style="margin-left:8px;color:var(--text-accent);font-weight:600"><span class="spinner" style="vertical-align:middle;margin-right:4px;width:12px;height:12px"></span>Updating'
+                   + (p.total ? ' '+(p.done || 0)+'/'+p.total : '')+'…</span>';
+            }
+            if (data.calendar_ok === false) h += '<div style="margin-top:3px">BSE result calendar unreachable right now; showing SEBI deadlines instead of meeting dates.</div>';
+            el.innerHTML = h;
+        };
+
+        const chipSub = (c) => {
+            const s = c.status || {};
+            if (s.announced) return '<span class="rs-ok">✓ '+(s.announced_on ? esc(dShort(s.announced_on)) : 'Out')+'</span>';
+            if (s.out_pending) return '<span class="rs-ok">✓ '+esc(dShort(s.expected_on))+' · updating</span>';
+            if (s.expected_on) return '<span class="rs-wait">⏳ '+esc(dShort(s.expected_on))+'</span>';
+            return '<span class="rs-tba">Date TBA</span>';
+        };
+
+        const renderGrid = () => {
+            const grid = document.getElementById('rs-grid');
+            const fl = document.getElementById('rs-filters');
+            if (!grid || !fl) return;
+            const { comps, ann, wait } = byStatus();
+            const F = [['all', 'All', comps.length], ['ann', 'Announced', ann.length], ['wait', 'Awaiting', wait.length]];
+            fl.innerHTML = F.map(f => '<button class="rs-pill'+(filter === f[0] ? ' active' : '')+'" data-f="'+f[0]+'">'+f[1]+' <b>'+f[2]+'</b></button>').join('');
+            fl.querySelectorAll('.rs-pill').forEach(b => b.addEventListener('click', () => { filter = b.getAttribute('data-f'); setLS('mw_res_filter', filter); renderGrid(); }));
+            let list = filter === 'ann' ? ann.slice().sort((a, b) => (b.status.announced_on || '').localeCompare(a.status.announced_on || '') || a.sym.localeCompare(b.sym))
+                     : filter === 'wait' ? wait.slice().sort((a, b) => (a.status.expected_on || '9999').localeCompare(b.status.expected_on || '9999') || a.sym.localeCompare(b.sym))
+                     : comps.slice().sort((a, b) => a.sym.localeCompare(b.sym));
+            const qq = q.trim().toLowerCase();
+            if (qq) list = list.filter(c => c.sym.toLowerCase().includes(qq) || (c.name || '').toLowerCase().includes(qq));
+            let h = list.map(c => '<button class="rs-chip'+(c.sym === sel ? ' active' : '')+'" data-s="'+esc(c.sym)+'" title="'+esc(c.name)+'">'
+                + '<div class="rs-chip-sym">'+esc(c.sym)+'</div><div class="rs-chip-sub">'+chipSub(c)+'</div></button>').join('');
+            if (filter === 'all' && !qq) h += ((data && data.pending) || []).map(m => '<div class="rs-chip rs-chip-pending"><div class="rs-chip-sym">'+esc(m.sym)+'</div><div class="rs-chip-sub">loading…</div></div>').join('');
+            grid.innerHTML = h || '<div style="color:var(--text-secondary);font-size:13px;padding:10px 2px">'+(data && data.fetching && !comps.length ? 'Collecting results for the first time; companies appear here as they load…' : 'No companies match.')+'</div>';
+            grid.querySelectorAll('button.rs-chip').forEach(b => b.addEventListener('click', () => {
+                sel = b.getAttribute('data-s'); setLS('mw_res_sym', sel);
+                renderGrid(); renderDetail();
+                const d = document.getElementById('rs-detail');
+                if (d && d.scrollIntoView) d.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }));
+        };
+
+        const renderDetail = () => {
+            const el = document.getElementById('rs-detail');
+            if (!el) return;
+            const comps = (data && data.companies) || [];
+            let c = comps.find(x => x.sym === sel);
+            if (!c && comps.length) {
+                const ann = comps.filter(x => x.status && x.status.announced && x.status.announced_on)
+                                 .sort((a, b) => b.status.announced_on.localeCompare(a.status.announced_on));
+                c = ann[0] || comps.find(x => x.sym === 'TCS') || comps[0];
+                sel = c.sym;
+            }
+            if (!c) { el.innerHTML = ''; return; }
+            const cols = data.cols || [];
+            const n = cols.length, last = n - 1;
+            const s = c.status || {};
+            const blankLatest = !s.announced;
+            const yoyCol = blankLatest ? last - 1 : last;        // YoY shown on the latest reported quarter
+            const metrics = c.metrics || [];
+            let pill;
+            if (s.announced) pill = '<span class="rs-badge ok">✓ '+esc(cols[last].fy)+' announced'+(s.announced_on ? ' on '+esc(dLong(s.announced_on)) : '')+'</span>';
+            else if (s.out_pending) pill = '<span class="rs-badge ok">✓ Results out on '+esc(dLong(s.expected_on))+' · figures updating</span>';
+            else if (s.expected_on) pill = '<span class="rs-badge wait">⏳ '+esc(cols[last].fy)+' results expected '+esc(dLong(s.expected_on))+'</span>';
+            else pill = '<span class="rs-badge tba">'+esc(cols[last].fy)+' date not announced yet · due by '+esc(dLong(s.deadline || data.deadline))+'</span>';
+
+            let th = '<tr><th class="rs-mcol">₹ crore</th>' + cols.map((k, i) => '<th'+(i === last ? ' class="rs-latest"' : '')+'><div>'+esc(k.label)+'</div><div class="rs-fy">'+esc(k.fy)+(i === last ? ' · latest' : '')+'</div></th>').join('') + '</tr>';
+            let body = '';
+            metrics.forEach((m, mi) => {
+                const lowerBetter = m.key === 'gnpa' || m.key === 'nnpa';
+                let tr = '<tr><td class="rs-mcol">'+esc(m.label)+'</td>';
+                for (let i = 0; i < n; i++) {
+                    if (i === last && blankLatest) {
+                        if (mi === 0) {
+                            let msg;
+                            if (s.out_pending) msg = '<div class="rs-blank-t">Results out</div><div>'+esc(dLong(s.expected_on))+'</div><div class="rs-blank-n">Numbers will appear after the next update.</div>';
+                            else if (s.expected_on) msg = '<div class="rs-blank-t">Results expected</div><div class="rs-blank-d">'+esc(dLong(s.expected_on))+'</div><div class="rs-blank-n">Board meeting date filed on BSE</div>';
+                            else msg = '<div class="rs-blank-t">Date not announced</div><div class="rs-blank-n">SEBI deadline</div><div class="rs-blank-d">'+esc(dLong(s.deadline || data.deadline))+'</div>';
+                            tr += '<td class="rs-blank" rowspan="'+(metrics.length + 1)+'">'+msg+'</td>';
+                        }
+                        continue;
+                    }
+                    const v = m.vals[i];
+                    if (m.unit === 'div') {
+                        const items = (m.items && m.items[i]) || [];
+                        tr += '<td'+(i === last ? ' class="rs-latest"' : '')+'>' + (items.length
+                            ? items.map(d => '<div class="rs-val">'+(d.amount !== null && d.amount !== undefined ? '₹'+(+d.amount).toFixed(2).replace(/\.00$/, '') : '—')+(d.kind ? ' <span class="rs-kind">'+esc(d.kind)+'</span>' : '')+'</div><div class="rs-sub2">ex '+esc(dShort(d.ex_date))+'</div>').join('')
+                            : '<span class="rs-none">—</span>') + '</td>';
+                        continue;
+                    }
+                    const has = v !== null && v !== undefined;
+                    const qoq = has ? change(v, m.qoq_base ? m.qoq_base[i] : null, m.unit, lowerBetter) : null;
+                    const yoy = has && i === yoyCol ? change(v, m.yoy_base ? m.yoy_base[i] : null, m.unit, lowerBetter) : null;
+                    tr += '<td'+(i === last ? ' class="rs-latest"' : '')+'><div class="rs-val">'+esc(fmtNum(v, m.unit))+'</div>'
+                        + (qoq || yoy ? '<div class="rs-sub2">'+chg(qoq, 'QoQ')+(yoy ? ' '+chg(yoy, 'YoY') : '')+'</div>' : '')
+                        + '</td>';
+                }
+                body += tr + '</tr>';
+            });
+            // result PDF row
+            let pdfRow = '<tr><td class="rs-mcol">Result document</td>';
+            for (let i = 0; i < n; i++) {
+                if (i === last && blankLatest) continue;
+                const href = (c.pdf || [])[i];
+                pdfRow += '<td'+(i === last ? ' class="rs-latest"' : '')+'>'+(href ? '<a href="'+esc(href)+'" target="_blank" rel="noopener" class="rs-pdf">📄 PDF</a>' : '<span class="rs-none">—</span>')+'</td>';
+            }
+            body += pdfRow + '</tr>';
+
+            const notes = [];
+            notes.push((c.basis || 'Consolidated')+' figures from Screener.in, ₹ crore (EPS and dividend in ₹ per share). QoQ = vs previous quarter'+(blankLatest ? '; YoY = vs same quarter last year (latest reported quarter).' : '; YoY = vs same quarter last year.'));
+            if (c.lender) notes.push('This is a lender, so EBITDA and EBIT don\'t apply (interest is its raw material). Net Interest Income, operating (financing) profit and NPA are shown instead. Gross/Net NPA: lower is better.');
+            else notes.push('EBITDA = operating profit before other income, depreciation, interest and tax. EBIT = profit before tax + interest.');
+            notes.push('Dividends are matched to the quarter whose results they came with, using the ex-date (BSE / Yahoo Finance).');
+
+            el.innerHTML = '<div class="card" style="margin-bottom:14px;padding:16px">'
+                + '<div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px">'
+                +   '<div style="flex:1;min-width:200px"><div style="font-size:18px;font-weight:800;color:var(--text-primary)">'+esc(c.name)+'</div>'
+                +   '<div style="font-size:12.5px;color:var(--text-secondary);margin-top:2px">NSE: <b>'+esc(c.sym)+'</b>'+(c.bse_code ? ' · BSE: '+esc(c.bse_code) : '')+(c.industry ? ' · '+esc(c.industry) : '')+(c.basis ? ' · '+esc(c.basis) : '')+'</div>'
+                +   '<div style="margin-top:8px">'+pill+'</div></div>'
+                +   '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select id="rs-pick" class="rs-pick" aria-label="Choose company">'
+                +     comps.slice().sort((a, b) => a.sym.localeCompare(b.sym)).map(x => '<option value="'+esc(x.sym)+'"'+(x.sym === c.sym ? ' selected' : '')+'>'+esc(x.sym)+'</option>').join('')
+                +   '</select>'
+                +   '<button id="rs-upd" class="btn" style="padding:7px 14px;font-size:12.5px;font-weight:700;background:var(--bg-card);color:var(--text-accent);border:1px solid var(--text-accent)" title="Fetch this company\'s latest numbers now">↻ Update '+esc(c.sym)+'</button></div>'
+                + '</div>'
+                + (c.ok === false ? '<div style="color:#a16207;font-size:13px;font-weight:600;margin-bottom:8px">⚠ Couldn\'t read this company\'s results last time. Try Update.</div>' : '')
+                + '<div class="rs-swipe">← swipe for older quarters</div><div class="rs-wrap"><table class="rs-table"><thead>'+th+'</thead><tbody>'+body+'</tbody></table></div>'
+                + '<div class="rs-notes">'+notes.map(t => '<div>• '+esc(t)+'</div>').join('')+(c.fetched_at ? '<div>• Fetched '+esc(c.fetched_at)+'.</div>' : '')+'</div>'
+                + '</div>';
+            const ub = document.getElementById('rs-upd');
+            if (ub) ub.addEventListener('click', () => updateOne(c.sym));
+            const pk = document.getElementById('rs-pick');
+            if (pk) pk.addEventListener('change', () => { sel = pk.value; setLS('mw_res_sym', sel); renderDetail(); renderGrid(); });
+            const wrap = el.querySelector('.rs-wrap');                 // phones: open on the latest quarters
+            if (wrap && wrap.scrollWidth > wrap.clientWidth) wrap.scrollLeft = wrap.scrollWidth;
+        };
+
+        const renderAll = () => { renderStatus(); renderDetail(); renderGrid(); };
+
+        const updateOne = async (sym) => {
+            if (updating) return;
+            updating = true;
+            const b = document.getElementById('rs-upd');
+            if (b) { b.disabled = true; b.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px;width:12px;height:12px"></span> Updating'; }
+            try {
+                const rec = await api.fetchResultCompany(sym);
+                if (!alive() || !data) return;
+                const i = data.companies.findIndex(x => x.sym === sym);
+                if (i >= 0) data.companies[i] = rec; else data.companies.push(rec);
+                renderAll();
+            } catch (err) {
+                if (b) { b.disabled = false; b.innerHTML = '↻ Update '+esc(sym); }
+                const el = document.getElementById('rs-status');
+                if (el) el.innerHTML = '<span style="color:var(--red);font-weight:600">'+esc(err.message || 'Update failed')+'</span>';
+            } finally { updating = false; }
+        };
+
+        const load = async (refresh) => {
+            if (!alive()) return;
+            const my = ++loadSeq;
+            const btn = document.getElementById('rs-refresh');
+            if (btn && refresh) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Refreshing'; }
+            if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+            try {
+                const d = await api.fetchResults(refresh);
+                if (!alive() || my !== loadSeq) return;
+                data = d;
+                renderAll();
+            } catch (err) {
+                if (my !== loadSeq) return;
+                const el = document.getElementById('rs-status');
+                if (el) el.innerHTML = '<span style="color:var(--red);font-weight:600">'+esc(err.message || 'Could not load results')+'</span>';
+            } finally {
+                if (btn && my === loadSeq) { btn.disabled = false; btn.innerHTML = '↻ Refresh'; }
+            }
+            if (data && data.fetching && alive() && my === loadSeq) pollTimer = setTimeout(() => load(false), 8000);
+        };
+
+        document.getElementById('rs-refresh').addEventListener('click', () => load(true));
+        document.getElementById('rs-q').addEventListener('input', (e) => { q = e.target.value || ''; renderGrid(); });
+        renderAll();
+        load(false);
     },
 
     renderCorp(container, initialTab) {
