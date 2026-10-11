@@ -299,6 +299,22 @@ const api = {
         return data;
     },
 
+    async fetchResults(refresh) {
+        const res = await fetch(`${API_BASE_URL}/results/nifty50${refresh ? '?refresh=1' : ''}`, { cache: 'no-store' });
+        let data;
+        try { data = await res.json(); } catch(e) { throw new Error(`Server error (Status: ${res.status}).`); }
+        if (!res.ok) throw new Error(data.error || 'Failed to load results');
+        return data;
+    },
+
+    async fetchResultCompany(sym) {
+        const res = await fetch(`${API_BASE_URL}/results/company?sym=${encodeURIComponent(sym)}`, { cache: 'no-store' });
+        let data;
+        try { data = await res.json(); } catch(e) { throw new Error(`Server error (Status: ${res.status}).`); }
+        if (!res.ok) throw new Error(data.error || 'Failed to update company');
+        return data;
+    },
+
     async fetchOrders(refresh) {
         const res = await fetch(`${API_BASE_URL}/orders${refresh ? '?refresh=1' : ''}`);
         let data;

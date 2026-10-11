@@ -3136,6 +3136,35 @@ def api_orders_pdf():
     return redirect(url, code=302)
 
 
+@app.route("/api/results/nifty50")
+def api_results_nifty50():
+    """Nifty50 Result Analyzer: last 4 quarters for every Nifty 50 company.
+    Answers from the saved copy at once; refreshes in the background when stale."""
+    try:
+        from results import get_view as _results_view
+        return jsonify(_results_view(force=request.args.get("refresh") == "1"))
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({"error": f"Results page failed: {e}", "companies": [], "cols": []}), 500
+
+
+@app.route("/api/results/company")
+def api_results_company():
+    """Re-fetch one Nifty 50 company now (e.g. it announced results an hour ago)."""
+    import re as _re
+    sym = (request.args.get("sym") or "").upper().strip()
+    if not _re.fullmatch(r"[A-Z0-9&\-]{1,20}", sym):
+        return jsonify({"error": "Invalid symbol."}), 400
+    try:
+        from results import refresh_company as _results_refresh
+        return jsonify(_results_refresh(sym))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
 @cached(900)                 # 15 min per symbol — results only change after new data
 def _mb_check_symbol(symbol):
     from multibagger import analyze_stock_v2          # 115-point model, same engine as the scan
