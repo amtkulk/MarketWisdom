@@ -6,6 +6,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from database import init_db, add_or_update_stock, delete_stock, get_all_stocks, upsert_user, save_chartink_scanner, get_chartink_scanners, delete_chartink_scanner
 from database import set_consent, get_consent, list_user_consents
+from database import get_chartink_scanners_by_users, delete_chartink_scanner_for_users
 from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
 
@@ -2876,10 +2877,20 @@ def api_chartink_saved():
     user = current_user()
     if not user:
         return jsonify({"error": "Please sign in first."}), 401
+    # "shared": scanners saved by the admins, visible to every signed-in user.
+    # "scanners": this user's own saved scanners (minus any already in the shared list).
+    is_admin = _is_admin_email(user["email"])
     try:
-        return jsonify({"scanners": get_chartink_scanners(user["email"])})
+        shared = get_chartink_scanners_by_users(ADMIN_EMAILS)
     except Exception as e:
-        return jsonify({"scanners": [], "error": str(e)})
+        print(f"[Chartink] shared scanners failed: {e}")
+        shared = []
+    try:
+        shared_urls = {s["url"] for s in shared}
+        own = [s for s in get_chartink_scanners(user["email"]) if s.get("url") not in shared_urls]
+        return jsonify({"shared": shared, "scanners": own, "is_admin": is_admin})
+    except Exception as e:
+        return jsonify({"shared": shared, "scanners": [], "is_admin": is_admin, "error": str(e)})
 
 
 @app.route("/api/chartink/saved/delete", methods=["POST"])
@@ -2888,8 +2899,18 @@ def api_chartink_saved_delete():
     if not user:
         return jsonify({"error": "Please sign in first."}), 401
     url = ((request.get_json() or {}).get("url") or "").strip()
-    if url:
-        delete_chartink_scanner(user["email"], url)
+    if not url:
+        return jsonify({"ok": True})
+    try:
+        shared_urls = {s["url"] for s in get_chartink_scanners_by_users(ADMIN_EMAILS)}
+    except Exception:
+        shared_urls = set()
+    if url in shared_urls:
+        if not _is_admin_email(user["email"]):
+            return jsonify({"error": "This is a shared Market Wisdom scanner; only an admin can remove it."}), 403
+        delete_chartink_scanner_for_users(ADMIN_EMAILS, url)     # removes it for everyone
+        return jsonify({"ok": True, "removed_shared": True})
+    delete_chartink_scanner(user["email"], url)
     return jsonify({"ok": True})
 
 

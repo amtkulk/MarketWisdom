@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v47',
+    VERSION: 'v48',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -3415,12 +3415,12 @@ const app = {
 
             <div style="margin-top:36px;margin-bottom:14px">
                 <h3 style="font-size:18px;font-weight:800;color:var(--text-primary);margin-bottom:2px">🔎 Run a Single Scanner</h3>
-                <p style="font-size:12px;color:var(--text-secondary)">Paste any Chartink screener link — or pick one of your saved scanners. Every scanner you run is saved to your account automatically.</p>
+                <p style="font-size:12px;color:var(--text-secondary)">Paste any Chartink screener link, or pick one from the list: <b>⭐ Market Wisdom scanners</b> are shared with every signed-in user, and every scanner you run is also saved to <b>My saved scanners</b>.</p>
             </div>
             <div class="card">
                 <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
                     <select id="saved-scanners" style="flex:1;min-width:200px;padding:12px 14px;border-radius:10px;border:1px solid rgba(79,70,229,0.3);background:#fff;color:var(--text-primary);font-size:14px;font-family:inherit">
-                        <option value="">— My saved scanners —</option>
+                        <option value="">— Pick a scanner —</option>
                     </select>
                     <button id="btn-del-saved" title="Remove selected from saved" style="background:none;border:1px solid rgba(220,38,38,0.35);color:var(--red);border-radius:10px;padding:11px 14px;cursor:pointer;font-size:13px">🗑</button>
                 </div>
@@ -3562,19 +3562,30 @@ const app = {
             } catch (e) {}
         };
 
+        let savedInfo = { shared: new Set(), isAdmin: false };
         const loadSaved = async () => {
             try {
                 const data = await api.chartinkSaved();
                 const sel = document.getElementById('saved-scanners');
                 if (!sel) return;
                 const cur = sel.value;
-                sel.innerHTML = '<option value="">— My saved scanners —</option>';
-                (data.scanners || []).forEach(s => {
-                    const o = document.createElement('option');
-                    o.value = s.url;
-                    o.textContent = `${s.name || 'Scanner'}  ·  ${s.url.replace('https://chartink.com/screener/','')}`;
-                    sel.appendChild(o);
-                });
+                savedInfo = { shared: new Set((data.shared || []).map(s => s.url)), isAdmin: !!data.is_admin };
+                sel.innerHTML = '<option value="">— Pick a scanner —</option>';
+                const addGroup = (label, list) => {
+                    if (!list.length) return;
+                    const g = document.createElement('optgroup');
+                    g.label = label;
+                    list.forEach(s => {
+                        const o = document.createElement('option');
+                        o.value = s.url;
+                        o.textContent = `${s.name || 'Scanner'}  ·  ${s.url.replace('https://chartink.com/screener/','')}`;
+                        g.appendChild(o);
+                    });
+                    sel.appendChild(g);
+                };
+                const byName = (a, b) => (a.name || '').localeCompare(b.name || '');
+                addGroup('⭐ Market Wisdom scanners (shared with all users)', (data.shared || []).slice().sort(byName));
+                addGroup('My saved scanners', data.scanners || []);
                 if (cur) sel.value = cur;
             } catch (e) {}
         };
@@ -3609,8 +3620,14 @@ const app = {
         document.getElementById('btn-del-saved').addEventListener('click', async () => {
             const sel = document.getElementById('saved-scanners');
             if (!sel.value) return alert('Pick a saved scanner from the dropdown first');
-            if (!confirm('Remove this scanner from your saved list?')) return;
-            try { await api.chartinkDeleteSaved(sel.value); sel.value=''; loadSaved(); } catch (e) {}
+            const isShared = savedInfo.shared.has(sel.value);
+            if (isShared && !savedInfo.isAdmin) return alert('This is a shared Market Wisdom scanner, so it can\'t be removed from your list.');
+            if (!confirm(isShared ? 'Remove this shared scanner for ALL users?' : 'Remove this scanner from your saved list?')) return;
+            try {
+                const r = await api.chartinkDeleteSaved(sel.value);
+                if (r && r.error) return alert(r.error);
+                sel.value = ''; loadSaved();
+            } catch (e) {}
         });
 
         document.getElementById('single-url').addEventListener('keydown', (e) => {

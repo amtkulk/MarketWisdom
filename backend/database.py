@@ -310,6 +310,45 @@ def get_chartink_scanners(user_id):
     return rows
 
 
+def get_chartink_scanners_by_users(user_ids):
+    """Scanners saved by any of these users (e.g. the admins), one row per URL, newest first."""
+    ids = sorted({u for u in (user_ids or []) if u})
+    if not ids:
+        return []
+    if USE_MONGO:
+        rows = list(db.get_collection("chartink_scanners")
+                    .find({"user_id": {"$in": ids}}, {"_id": 0, "user_id": 0})
+                    .sort("added_at", -1))
+    else:
+        conn = get_db_connection()
+        cur = conn.execute(
+            "SELECT url, name, added_at FROM chartink_scanners WHERE user_id IN (%s) ORDER BY added_at DESC"
+            % ",".join("?" * len(ids)), ids)
+        rows = [dict(r) for r in cur.fetchall()]
+        conn.close()
+    seen, out = set(), []
+    for r in rows:
+        if r.get("url") and r["url"] not in seen:
+            seen.add(r["url"])
+            out.append(r)
+    return out
+
+
+def delete_chartink_scanner_for_users(user_ids, url):
+    """Remove a URL from every listed user's saved scanners (admin removing a shared scanner)."""
+    ids = sorted({u for u in (user_ids or []) if u})
+    if not ids:
+        return
+    if USE_MONGO:
+        db.get_collection("chartink_scanners").delete_many({"user_id": {"$in": ids}, "url": url})
+    else:
+        conn = get_db_connection()
+        conn.execute("DELETE FROM chartink_scanners WHERE url = ? AND user_id IN (%s)"
+                     % ",".join("?" * len(ids)), [url] + ids)
+        conn.commit()
+        conn.close()
+
+
 def delete_chartink_scanner(user_id, url):
     if USE_MONGO:
         db.get_collection("chartink_scanners").delete_one({"user_id": user_id, "url": url})
