@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v48',
+    VERSION: 'v49',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -1538,7 +1538,9 @@ const app = {
         const chg = (c, lbl) => c ? '<span class="rs-chg '+(c.good === null ? '' : (c.good ? 'up' : 'dn'))+'">'+lbl+' '+esc(c.txt)+'</span>' : '';
 
         let data = null, sel = getLS('mw_res_sym'), filter = getLS('mw_res_filter') || 'all', q = '';
-        let pollTimer = null, loadSeq = 0, updating = false;
+        let pollTimer = null, loadSeq = 0, updating = false, searching = false;
+        const lookups = {};                                   // any-company searches (sym → record)
+        let recent = []; try { recent = JSON.parse(getLS('mw_res_recent') || '[]').slice(0, 6); } catch (e) { recent = []; }
 
         container.innerHTML = `
             <div style="margin-bottom:14px">
@@ -1548,6 +1550,16 @@ const app = {
             <div class="card" style="margin-bottom:14px;padding:12px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
                 <div id="rs-status" style="font-size:12.5px;color:var(--text-secondary);flex:1;min-width:220px"></div>
                 <button id="rs-refresh" class="btn" style="padding:8px 18px;font-size:13px;font-weight:700">↻ Refresh</button>
+            </div>
+            <div class="card" style="margin-bottom:14px;padding:12px 16px">
+                <div style="font-weight:800;color:var(--text-primary);font-size:14px;margin-bottom:8px">🔎 Check any company <span style="font-weight:600;color:var(--text-secondary);font-size:12px">(not only Nifty 50)</span></div>
+                <form id="rs-find" style="display:flex;gap:8px;flex-wrap:wrap">
+                    <input id="rs-find-q" type="search" placeholder="Company name or NSE symbol, e.g. Dixon, WHEELS" autocomplete="off" maxlength="60"
+                        style="flex:1;min-width:0;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;font-size:14px;background:var(--bg-card);color:var(--text-primary)">
+                    <button id="rs-find-btn" class="btn" type="submit" style="padding:9px 18px;font-size:13px;font-weight:700">Show results</button>
+                </form>
+                <div id="rs-find-msg" style="font-size:12.5px;margin-top:6px"></div>
+                <div id="rs-recent" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
             </div>
             <div id="rs-detail"></div>
             <div class="card" style="padding:14px 16px">
@@ -1628,7 +1640,7 @@ const app = {
             const el = document.getElementById('rs-detail');
             if (!el) return;
             const comps = (data && data.companies) || [];
-            let c = comps.find(x => x.sym === sel);
+            let c = comps.find(x => x.sym === sel) || lookups[sel];
             if (!c && comps.length) {
                 const ann = comps.filter(x => x.status && x.status.announced && x.status.announced_on)
                                  .sort((a, b) => b.status.announced_on.localeCompare(a.status.announced_on));
@@ -1636,7 +1648,8 @@ const app = {
                 sel = c.sym;
             }
             if (!c) { el.innerHTML = ''; return; }
-            const cols = data.cols || [];
+            const cols = (data && data.cols && data.cols.length ? data.cols : c.cols) || [];
+            const isLookup = !comps.some(x => x.sym === c.sym);
             const n = cols.length, last = n - 1;
             const s = c.status || {};
             const blankLatest = !s.announced;
@@ -1700,8 +1713,10 @@ const app = {
                 + '<div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px">'
                 +   '<div style="flex:1;min-width:200px"><div style="font-size:18px;font-weight:800;color:var(--text-primary)">'+esc(c.name)+'</div>'
                 +   '<div style="font-size:12.5px;color:var(--text-secondary);margin-top:2px">NSE: <b>'+esc(c.sym)+'</b>'+(c.bse_code ? ' · BSE: '+esc(c.bse_code) : '')+(c.industry ? ' · '+esc(c.industry) : '')+(c.basis ? ' · '+esc(c.basis) : '')+'</div>'
+                +   (isLookup ? '<div style="margin-top:6px"><span class="rs-badge '+(c.in_nifty50 ? 'ok' : 'tba')+'">'+(c.in_nifty50 ? 'Nifty 50 company' : '🔎 Your search · not in Nifty 50')+'</span></div>' : '')
                 +   '<div style="margin-top:8px">'+pill+'</div></div>'
                 +   '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select id="rs-pick" class="rs-pick" aria-label="Choose company">'
+                +     (isLookup ? '<option value="'+esc(c.sym)+'" selected>'+esc(c.sym)+' (search)</option>' : '')
                 +     comps.slice().sort((a, b) => a.sym.localeCompare(b.sym)).map(x => '<option value="'+esc(x.sym)+'"'+(x.sym === c.sym ? ' selected' : '')+'>'+esc(x.sym)+'</option>').join('')
                 +   '</select>'
                 +   '<button id="rs-upd" class="btn" style="padding:7px 14px;font-size:12.5px;font-weight:700;background:var(--bg-card);color:var(--text-accent);border:1px solid var(--text-accent)" title="Fetch this company\'s latest numbers now">↻ Update '+esc(c.sym)+'</button></div>'
@@ -1711,14 +1726,59 @@ const app = {
                 + '<div class="rs-notes">'+notes.map(t => '<div>• '+esc(t)+'</div>').join('')+(c.fetched_at ? '<div>• Fetched '+esc(c.fetched_at)+'.</div>' : '')+'</div>'
                 + '</div>';
             const ub = document.getElementById('rs-upd');
-            if (ub) ub.addEventListener('click', () => updateOne(c.sym));
+            if (ub) ub.addEventListener('click', () => isLookup ? findCompany(c.sym, true) : updateOne(c.sym));
             const pk = document.getElementById('rs-pick');
-            if (pk) pk.addEventListener('change', () => { sel = pk.value; setLS('mw_res_sym', sel); renderDetail(); renderGrid(); });
+            if (pk) pk.addEventListener('change', () => { sel = pk.value; if (!lookups[sel]) setLS('mw_res_sym', sel); renderDetail(); renderGrid(); });
             const wrap = el.querySelector('.rs-wrap');                 // phones: open on the latest quarters
             if (wrap && wrap.scrollWidth > wrap.clientWidth) wrap.scrollLeft = wrap.scrollWidth;
         };
 
-        const renderAll = () => { renderStatus(); renderDetail(); renderGrid(); };
+        const renderRecent = () => {
+            const el = document.getElementById('rs-recent');
+            if (!el) return;
+            el.innerHTML = recent.length ? '<span style="font-size:12px;color:var(--text-secondary);align-self:center">Recent:</span>'
+                + recent.map(r => '<button class="rs-pill" data-q="'+esc(r.sym)+'" title="'+esc(r.name)+'">'+esc(r.sym)+'</button>').join('') : '';
+            el.querySelectorAll('button[data-q]').forEach(b => b.addEventListener('click', () => findCompany(b.getAttribute('data-q'))));
+        };
+
+        const findCompany = async (query, refresh) => {
+            query = (query || '').trim();
+            const msg = document.getElementById('rs-find-msg');
+            if (!query) { if (msg) msg.innerHTML = '<span style="color:var(--red)">Type a company name or NSE symbol.</span>'; return; }
+            const nifty = ((data && data.companies) || []).find(x => x.sym === query.toUpperCase());
+            if (nifty && !refresh) {                          // already on the page: just show it
+                sel = nifty.sym; setLS('mw_res_sym', sel); if (msg) msg.innerHTML = '';
+                renderDetail(); renderGrid(); return;
+            }
+            if (searching) return;
+            searching = true;
+            const btn = document.getElementById('rs-find-btn');
+            const ub = document.getElementById('rs-upd');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px;width:12px;height:12px"></span> Fetching'; }
+            if (ub && refresh) { ub.disabled = true; ub.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px;width:12px;height:12px"></span> Updating'; }
+            if (msg) msg.innerHTML = '<span style="color:var(--text-secondary)">Reading quarterly results for “'+esc(query)+'”… (takes a few seconds)</span>';
+            try {
+                const rec = await api.fetchResultLookup(query, refresh);
+                if (!alive()) return;
+                lookups[rec.sym] = rec;
+                sel = rec.sym;
+                recent = [{ sym: rec.sym, name: rec.name }].concat(recent.filter(r => r.sym !== rec.sym)).slice(0, 6);
+                setLS('mw_res_recent', JSON.stringify(recent));
+                if (msg) msg.innerHTML = '';
+                renderRecent(); renderDetail(); renderGrid();
+                const d = document.getElementById('rs-detail');
+                if (d && d.scrollIntoView) d.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (err) {
+                if (msg) msg.innerHTML = '<span style="color:var(--red);font-weight:600">'+esc(err.message || 'Lookup failed')+'</span>';
+                if (ub && refresh) { ub.disabled = false; ub.innerHTML = '↻ Update '+esc(query); }
+            } finally {
+                searching = false;
+                const b2 = document.getElementById('rs-find-btn');
+                if (b2) { b2.disabled = false; b2.innerHTML = 'Show results'; }
+            }
+        };
+
+        const renderAll = () => { renderStatus(); renderDetail(); renderGrid(); renderRecent(); };
 
         const updateOne = async (sym) => {
             if (updating) return;
@@ -1760,6 +1820,7 @@ const app = {
         };
 
         document.getElementById('rs-refresh').addEventListener('click', () => load(true));
+        document.getElementById('rs-find').addEventListener('submit', (e) => { e.preventDefault(); findCompany(document.getElementById('rs-find-q').value); });
         document.getElementById('rs-q').addEventListener('input', (e) => { q = e.target.value || ''; renderGrid(); });
         renderAll();
         load(false);

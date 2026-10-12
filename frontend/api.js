@@ -307,6 +307,14 @@ const api = {
         return data;
     },
 
+    async fetchResultLookup(q, refresh) {
+        const res = await fetch(`${API_BASE_URL}/results/lookup?q=${encodeURIComponent(q)}${refresh ? '&refresh=1' : ''}`, { cache: 'no-store' });
+        let data;
+        try { data = await res.json(); } catch(e) { throw new Error(`Server error (Status: ${res.status}).`); }
+        if (!res.ok) throw new Error(data.error || 'Lookup failed');
+        return data;
+    },
+
     async fetchResultCompany(sym) {
         const res = await fetch(`${API_BASE_URL}/results/company?sym=${encodeURIComponent(sym)}`, { cache: 'no-store' });
         let data;

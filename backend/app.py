@@ -3186,6 +3186,43 @@ def api_results_company():
         return jsonify({"error": str(e)}), 502
 
 
+@app.route("/api/results/lookup")
+def api_results_lookup():
+    """Result Analyzer search box: any company by name, NSE symbol or BSE code."""
+    import re as _re
+    q = (request.args.get("q") or "").strip()
+    refresh = request.args.get("refresh") == "1"
+    if not q:
+        return jsonify({"error": "Type a company name or NSE symbol."}), 400
+    if len(q) > 60:
+        return jsonify({"error": "That name is too long."}), 400
+    try:
+        from results import lookup_company as _results_lookup
+        tried = []
+        qu = q.upper().replace(".NS", "").replace(".BO", "").strip()
+        if _re.fullmatch(r"[A-Z0-9&\-]{1,20}", qu):          # looks like a symbol: try it directly
+            tried.append(qu)
+            rec = _results_lookup(qu, refresh)
+            if rec:
+                return jsonify(rec)
+        for resolver in (resolve_ticker_screener, resolve_ticker_gemini):
+            try:
+                sym = (resolver(q) or "").upper().strip()
+            except Exception:
+                sym = ""
+            if sym and sym not in tried and _re.fullmatch(r"[A-Z0-9&\-]{1,20}", sym):
+                tried.append(sym)
+                rec = _results_lookup(sym, refresh)
+                if rec:
+                    return jsonify(rec)
+        return jsonify({"error": f"Couldn't find quarterly results for '{q}'. Try the exact NSE symbol "
+                                 f"(e.g. DIXON, WHEELS) or the full company name."}), 404
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({"error": f"Lookup failed: {e}"}), 500
+
+
 @cached(900)                 # 15 min per symbol — results only change after new data
 def _mb_check_symbol(symbol):
     from multibagger import analyze_stock_v2          # 115-point model, same engine as the scan

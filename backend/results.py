@@ -398,7 +398,7 @@ def fetch_dividend_history(sym):
     """[{ex_date, amount}] from Yahoo Finance (last ~18 months)."""
     try:
         import yfinance as yf
-        s = yf.Ticker(f"{sym}.NS").dividends
+        s = yf.Ticker(f"{sym}.BO" if sym.isdigit() else f"{sym}.NS").dividends
     except Exception as e:
         print(f"[Results] dividends {sym} failed: {e}")
         return []
@@ -742,4 +742,57 @@ def refresh_company(sym):
         if store.get("season") == q_label(cols[-1]):
             store.setdefault("companies", {})[sym] = rec
             _save(store)
+    return rec
+
+
+# ══════════════════════════════════════════════════════════════
+#  Any company (search box) — same table, not limited to Nifty 50
+# ══════════════════════════════════════════════════════════════
+
+AUX_TTL = 30 * 60                # BSE calendar / corporate actions reused for 30 min
+LOOKUP_TTL = 30 * 60             # one company's comparison reused for 30 min
+_aux = {}
+_lookups = {}
+
+
+def _aux_get(key, fn):
+    now = _now_ts()
+    with _lock:
+        hit = _aux.get(key)
+        if hit and now - hit[0] < AUX_TTL:
+            return hit[1]
+    val = fn()
+    if val is not None:
+        with _lock:
+            _aux[key] = (now, val)
+    return val
+
+
+def lookup_company(sym, refresh=False):
+    """4-quarter comparison for any listed company (NSE symbol or BSE code as used
+    by Screener.in). Returns the company record, or None if Screener has no results."""
+    sym = (sym or "").upper().strip()
+    now = _now_ts()
+    with _lock:
+        hit = _lookups.get(sym)
+    if hit and not refresh and now - hit[0] < LOOKUP_TTL:
+        return hit[1]
+    today = _today()
+    cols = season_quarters(today)
+    cal = _aux_get(("cal", cols[-1].isoformat()), lambda: fetch_result_calendar(cols[-1], today))
+    actions = _aux_get(("act", today.isoformat()), fetch_upcoming_actions)
+    store = _load()
+    nifty = {m["sym"] for m in (store.get("universe") or [])}
+    meta = next((m for m in (store.get("universe") or []) if m["sym"] == sym), None) \
+        or {"sym": sym, "name": sym, "industry": ""}
+    rec = _process_one(meta, cols, today, cal, actions)
+    if not rec.get("ok"):
+        return None
+    rec["in_nifty50"] = sym in nifty
+    rec["cols"] = _cols_meta(cols)
+    with _lock:
+        _lookups[sym] = (now, rec)
+        if len(_lookups) > 300:                     # keep memory bounded
+            for k, _ in sorted(_lookups.items(), key=lambda kv: kv[1][0])[:100]:
+                _lookups.pop(k, None)
     return rec
