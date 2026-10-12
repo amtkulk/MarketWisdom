@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v49',
+    VERSION: 'v50',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -3931,39 +3931,117 @@ const app = {
                 }
 
                 // ── Gann Square of 9 — angle levels (45°–360°) at the bottom ──
-                // Classic sqrt-angle method: level = (√price ± angle/360)². Each 45°
-                // step = 0.125 on the square root. 90/180/270/360 are the stronger
-                // "cardinal" angles. Anchored to the current Nifty price.
-                if (data.chart && data.chart.current_price) {
-                    const base = data.chart.current_price;
-                    const root = Math.sqrt(base);
-                    const angles = [45, 90, 135, 180, 225, 270, 315, 360];
-                    const rows = angles.map(a => ({
-                        angle: a,
-                        resistance: Math.round(Math.pow(root + a / 360, 2)),
-                        support:    Math.round(Math.pow(root - a / 360, 2)),
-                        cardinal:   (a % 90 === 0),
-                    }));
-                    html += '<div class="card" style="border-top:3px solid #0ea5e9;margin-top:4px">';
+                // Anchored to the PREVIOUS SESSION'S CLOSE (not the live price): the levels are
+                // known before the open and stay fixed all session, so they can be planned and
+                // traded against. After 3:30 pm IST the next session's levels (from today's
+                // close) can be viewed too. level = (√anchor ± angle/360)²; 90/180/270/360 are
+                // the stronger cardinal angles.
+                if (data.chart && data.chart.ohlcv && data.chart.ohlcv.length >= 2) {
+                    const esc = (x) => String(x == null ? '' : x).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+                    const bars = data.chart.ohlcv;
+                    const last = bars[bars.length - 1], prev = bars[bars.length - 2];
+                    let todayIST = '', hmIST = '';
+                    try {
+                        todayIST = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+                        hmIST = new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+                    } catch (e) {}
+                    const fmtD = (iso) => { const p = String(iso || '').split('-').map(Number); return p.length === 3 ? new Date(p[0], p[1]-1, p[2]).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }) : iso; };
+                    const liveToday = last.date === todayIST;          // today's candle exists → session today
+                    const closedToday = liveToday && hmIST >= '15:30';
+                    // Views: 'today' = this session (anchor = previous close), 'next' = next session (anchor = latest close)
+                    const views = {};
+                    if (liveToday) {
+                        views.today = { anchor: prev.close, anchorDate: prev.date, label: 'Today’s session', hi: last.high, lo: last.low, now: data.chart.current_price, live: true };
+                        if (closedToday) views.next = { anchor: last.close, anchorDate: last.date, label: 'Next session', now: last.close, live: false };
+                    } else {
+                        views.next = { anchor: last.close, anchorDate: last.date, label: 'Next session', now: last.close, live: false };
+                    }
+                    const order = ['today', 'next'].filter(k => views[k]);
+                    let gView = null;
+                    try { gView = localStorage.getItem('mw_gann_view'); } catch (e) {}
+                    if (!views[gView]) gView = order[0];
+
+                    const ladderHtml = (v) => {
+                        const root = Math.sqrt(v.anchor);
+                        const angles = [45, 90, 135, 180, 225, 270, 315, 360];
+                        const rows = [];
+                        angles.forEach(a => {
+                            rows.push({ side: 'R', angle: a, px: Math.round(Math.pow(root + a / 360, 2)), cardinal: a % 90 === 0 });
+                            rows.push({ side: 'S', angle: a, px: Math.round(Math.pow(root - a / 360, 2)), cardinal: a % 90 === 0 });
+                        });
+                        rows.push({ side: 'A', px: v.anchor });
+                        rows.sort((x, y) => y.px - x.px);
+                        const now = Number(v.now);
+                        // where price sits now: nearest resistance above / support below
+                        // nearest level above / below price (a crossed resistance becomes support, and vice versa)
+                        const r1 = rows.filter(r => r.side !== 'A' && r.px > now).sort((x, y) => x.px - y.px)[0];
+                        const s1 = rows.filter(r => r.side !== 'A' && r.px <= now).sort((x, y) => y.px - x.px)[0];
+                        const nm = (r) => r.side + ' ' + r.angle + '°';
+                        let h = '';
+                        if (v.live && now) {
+                            const chg = now - v.anchor, col = chg >= 0 ? 'var(--green)' : 'var(--red)', sg = chg >= 0 ? '+' : '';
+                            h += '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:12px;font-size:12.5px">'
+                               + '<span style="color:var(--text-secondary)">Prev close: <b style="color:var(--text-primary)">'+Number(v.anchor).toLocaleString('en-IN')+'</b></span>'
+                               + '<span style="color:var(--text-secondary)">Now: <b style="color:var(--text-primary)">'+now.toLocaleString('en-IN')+'</b> <span style="color:'+col+';font-weight:700">('+sg+Math.round(chg)+')</span></span>'
+                               + (r1 && s1 ? '<span style="color:var(--text-secondary)">Between <b style="color:var(--green)">'+s1.px.toLocaleString('en-IN')+'</b> ('+nm(s1)+') and <b style="color:var(--red)">'+r1.px.toLocaleString('en-IN')+'</b> ('+nm(r1)+')</span>' : '')
+                               + '</div>';
+                        }
+                        h += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:left">'
+                           + '<th style="padding:8px 12px;color:var(--text-secondary)">Level</th>'
+                           + '<th style="padding:8px 12px;text-align:right;color:var(--text-secondary)">Price</th>'
+                           + '<th style="padding:8px 12px;text-align:right;color:var(--text-secondary)">'+(v.live ? 'From now' : 'From close')+'</th></tr></thead><tbody>';
+                        let nowShown = !(v.live && now);
+                        rows.forEach(r => {
+                            if (!nowShown && now >= r.px) {
+                                nowShown = true;
+                                h += '<tr style="background:rgba(79,70,229,0.08)"><td colspan="3" style="padding:7px 12px;font-weight:800;color:var(--text-accent)">▶ Nifty now '+now.toLocaleString('en-IN')+'</td></tr>';
+                            }
+                            if (r.side === 'A') {
+                                h += '<tr style="border-top:1px solid rgba(15,23,42,0.06);background:rgba(14,165,233,0.10)"><td style="padding:10px 12px;font-weight:800;color:#0284c7">● '+(v.live ? 'Previous close' : 'Close')+' · '+esc(fmtD(v.anchorDate))+' (base)</td>'
+                                   + '<td style="padding:10px 12px;text-align:right;font-weight:800;color:#0284c7">'+Number(r.px).toLocaleString('en-IN')+'</td>'
+                                   + '<td style="padding:10px 12px;text-align:right;color:var(--text-secondary)">'+(v.live && now ? (r.px - now >= 0 ? '+' : '')+Math.round(r.px - now) : '0')+'</td></tr>';
+                                return;
+                            }
+                            const isR = r.side === 'R';
+                            const hit = v.live && (isR ? v.hi >= r.px : v.lo <= r.px);
+                            const ref = v.live && now ? now : v.anchor;
+                            const d = Math.round(r.px - ref);
+                            const wt = r.cardinal ? '800' : '600';
+                            const bg = r.cardinal ? 'background:rgba(14,165,233,0.05);' : '';
+                            h += '<tr style="border-top:1px solid rgba(15,23,42,0.06);'+bg+'">'
+                               + '<td style="padding:9px 12px;font-weight:'+wt+';color:'+(isR ? 'var(--red)' : 'var(--green)')+'">'+(isR ? 'R' : 'S')+' '+r.angle+'°'+(r.cardinal ? ' <span title="cardinal / stronger level" style="font-size:10px">★</span>' : '')+'</td>'
+                               + '<td style="padding:9px 12px;text-align:right;font-weight:'+wt+';color:var(--text-primary);white-space:nowrap">'+r.px.toLocaleString('en-IN')+(hit ? ' <span title="touched today (day high/low)" style="font-size:10px;color:var(--text-accent)">✓</span>' : '')+'</td>'
+                               + '<td style="padding:9px 12px;text-align:right;color:'+(d >= 0 ? 'var(--red)' : 'var(--green)')+'">'+(d >= 0 ? '+' : '')+d+'</td></tr>';
+                        });
+                        if (!nowShown) h += '<tr style="background:rgba(79,70,229,0.08)"><td colspan="3" style="padding:7px 12px;font-weight:800;color:var(--text-accent)">▶ Nifty now '+now.toLocaleString('en-IN')+' (below S 360°)</td></tr>';
+                        h += '</tbody></table></div>';
+                        return h;
+                    };
+
+                    html += '<div class="card" style="border-top:3px solid #0ea5e9;margin-top:4px" id="gann-card">';
                     html += '<div class="section-title" style="color:#0ea5e9">📐 Gann Square of 9 — Angle Levels</div>';
-                    html += '<div style="font-size:12px;color:var(--text-secondary);margin:-6px 0 12px">Support &amp; resistance from the Gann Square-of-9 <b>angle method</b> — <code>level = (√price ± angle/360)²</code> — anchored to the current Nifty <b style="color:var(--text-primary)">'+Number(base).toLocaleString('en-IN')+'</b>. The <b>90°, 180°, 270°, 360°</b> (cardinal) angles are treated as the stronger levels.</div>';
-                    html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">';
-                    html += '<thead><tr style="text-align:left">'
-                         + '<th style="padding:8px 12px;color:var(--text-secondary)">Angle</th>'
-                         + '<th style="padding:8px 12px;text-align:right;color:var(--text-secondary)">Resistance</th>'
-                         + '<th style="padding:8px 12px;text-align:right;color:var(--text-secondary)">Support</th></tr></thead><tbody>';
-                    rows.forEach(r => {
-                        const bg = r.cardinal ? 'background:rgba(14,165,233,0.07);' : '';
-                        const star = r.cardinal ? ' <span title="cardinal / stronger level" style="font-size:10px">★</span>' : '';
-                        const wt = r.cardinal ? '800' : '600';
-                        html += '<tr style="border-top:1px solid rgba(15,23,42,0.06);'+bg+'">'
-                             + '<td style="padding:9px 12px;font-weight:'+wt+';color:var(--text-primary)">'+r.angle+'°'+star+'</td>'
-                             + '<td style="padding:9px 12px;text-align:right;font-weight:'+wt+';color:var(--red)">'+r.resistance.toLocaleString('en-IN')+'</td>'
-                             + '<td style="padding:9px 12px;text-align:right;font-weight:'+wt+';color:var(--green)">'+r.support.toLocaleString('en-IN')+'</td></tr>';
-                    });
-                    html += '</tbody></table></div>';
-                    html += '<div style="font-size:10.5px;color:var(--text-secondary);margin-top:10px;font-style:italic">★ = cardinal (stronger) angle. These are mathematical Gann reference levels — best combined with price action, VWAP, OI &amp; volume. Not investment advice.</div>';
+                    html += '<div style="font-size:12px;color:var(--text-secondary);margin:-6px 0 10px">Square-of-9 angle levels, <code>level = (√base ± angle/360)²</code>, built from the <b>previous session’s close</b>, so they are known before the open and <b>stay fixed all day</b>. The <b>90°, 180°, 270°, 360°</b> (cardinal ★) angles are the stronger levels; a ✓ means the level was touched today (day high/low).</div>';
+                    if (order.length > 1) {
+                        html += '<div id="gann-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">' + order.map(k =>
+                            '<button class="rs-pill'+(k === gView ? ' active' : '')+'" data-g="'+k+'">'+esc(views[k].label)+' · base '+Number(views[k].anchor).toLocaleString('en-IN')+'</button>').join('') + '</div>';
+                    } else if (gView === 'next') {
+                        html += '<div style="font-size:12px;font-weight:700;color:#0284c7;margin-bottom:10px">Levels for the next session, from the last close ('+esc(fmtD(views.next.anchorDate))+').</div>';
+                    }
+                    html += '<div id="gann-body">'+ladderHtml(views[gView])+'</div>';
+                    html += '<div style="font-size:10.5px;color:var(--text-secondary);margin-top:10px;font-style:italic">How traders use it: a sustained move (e.g. a 15-min close) above a resistance often extends to the next one; failure at a cardinal level is a common reversal spot. Best combined with price action, VWAP, OI &amp; volume. Mathematical reference levels — not investment advice.</div>';
                     html += '</div>';
+                    // tab switching (bound after render)
+                    setTimeout(() => {
+                        const tabs = document.getElementById('gann-tabs');
+                        if (!tabs) return;
+                        tabs.querySelectorAll('button[data-g]').forEach(btn => btn.addEventListener('click', () => {
+                            const k = btn.getAttribute('data-g');
+                            try { localStorage.setItem('mw_gann_view', k); } catch (e) {}
+                            tabs.querySelectorAll('button').forEach(x => x.classList.toggle('active', x === btn));
+                            const body = document.getElementById('gann-body');
+                            if (body) body.innerHTML = ladderHtml(views[k]);
+                        }));
+                    }, 0);
                 }
 
                 res.innerHTML = html;
