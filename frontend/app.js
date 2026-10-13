@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v51',
+    VERSION: 'v52',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -609,15 +609,18 @@ const app = {
                     const sign = (ix.pct !== null && ix.pct > 0) ? '+' : '';
                     const pctTxt = (ix.pct === null || ix.pct === undefined) ? '—' : `${sign}${ix.pct.toFixed(2)}%`;
                     const lastTxt = (ix.last === null || ix.last === undefined) ? '' : Number(ix.last).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
-                    html += `<div title="${ix.name}" style="background:${bg};color:${fg};border-radius:10px;padding:11px 12px;overflow:hidden">
+                    // Yahoo fallback: no price for today's session yet → say so instead of a fake 0.00%
+                    const note = ix.stale ? ' · no live price yet' : ((ix.as_of && !/^\d\d:\d\d$/.test(ix.as_of)) ? ' · ' + esc(ix.as_of) + ' close' : '');
+                    const tip = ix.stale ? `${ix.name}: Yahoo has no price for today yet (last ${lastTxt}${ix.as_of ? ' on ' + ix.as_of : ''})` : ix.name;
+                    html += `<div title="${esc(tip)}" style="background:${bg};color:${fg};border-radius:10px;padding:11px 12px;overflow:hidden">
                         <div style="font-size:11.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.95">${ix.name}</div>
                         <div style="font-size:18px;font-weight:800;margin-top:4px;line-height:1">${pctTxt}</div>
-                        <div style="font-size:10.5px;margin-top:3px;opacity:.85">${lastTxt}</div>
+                        <div style="font-size:10.5px;margin-top:3px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${lastTxt}${note}</div>
                     </div>`;
                 });
                 html += `</div></div>`;
             });
-            html += `<div style="text-align:right;font-size:11px;color:var(--text-secondary);font-style:italic;margin-top:4px">${data.source === 'yfinance' ? 'Yahoo Finance (NSE feed unavailable — major indices only, no breadth) · ' : 'NSE · '}as of ${esc(data.timestamp || '')}</div>`;
+            html += `<div style="text-align:right;font-size:11px;color:var(--text-secondary);font-style:italic;margin-top:4px">${data.source === 'yfinance' ? 'Yahoo Finance (NSE feeds unavailable — major indices only, no breadth; “—” = no live price yet) · ' : data.source === 'niftyindices' ? 'NSE Indices (niftyindices.com live feed) · ' : 'NSE · '}as of ${esc(data.timestamp || '')} IST</div>`;
             body.innerHTML = html;
         };
         const esc = (s) => String(s||'').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));

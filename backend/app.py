@@ -1929,11 +1929,16 @@ def fetch_indices_heatmap():
     data = get_nse_data("/api/allIndices")
     if not data or "data" not in data:
         # NSE blocked the server (common on cloud hosts) or is down.
-        # Fall back to yfinance so the heatmap still shows the major indices,
-        # using the last two daily closes (works when the market is closed too).
-        fb = _heatmap_from_yfinance()
-        if fb and fb.get("groups"):
-            return fb
+        # 1st fallback: niftyindices.com live feed (NSE Indices Ltd, every Nifty index).
+        # 2nd fallback: Yahoo Finance (major indices only).
+        for fb_fn in (_heatmap_from_niftyindices, _heatmap_from_yfinance):
+            try:
+                fb = fb_fn()
+            except Exception as e:
+                print(f"[Heatmap] {fb_fn.__name__} failed: {e}")
+                fb = None
+            if fb and fb.get("groups"):
+                return fb
         return {"ok": False, "error": "Could not reach NSE allIndices feed", "groups": []}
 
     def _num(v):
@@ -1972,9 +1977,88 @@ def fetch_indices_heatmap():
             r.pop("_order", None)
         groups.append({"group": group, "indices": rows})
 
-    ts = data.get("timestamp") or datetime.now().strftime("%d-%b-%Y %H:%M:%S")
+    ts = data.get("timestamp") or _ist_now().strftime("%d-%b-%Y %H:%M:%S")
     total = sum(len(g["indices"]) for g in groups)
     return {"ok": True, "groups": groups, "timestamp": ts, "count": total}
+
+
+def _ist_now():
+    from datetime import timezone
+    return datetime.now(timezone(timedelta(hours=5, minutes=30)))
+
+
+def _heatmap_num(v):
+    try:
+        if isinstance(v, str):
+            v = v.replace(",", "").replace("%", "").strip()
+        f = float(v)
+        return round(f, 2) if f == f else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _heatmap_from_niftyindices():
+    """Live values for every Nifty index from NSE Indices Ltd's public feed
+    (the file niftyindices.com's own 'live indices' widget reads). Field names are
+    matched loosely; % change is computed from last vs previous close if absent."""
+    import re as _re
+    r = cffi_requests.get("https://iislliveblob.niftyindices.com/jsonfiles/LiveIndicesWatch.json",
+                          headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0",
+                                   "Referer": "https://www.niftyindices.com/",
+                                   "Accept": "application/json, text/plain, */*"},
+                          impersonate="chrome120", timeout=8)
+    if r.status_code != 200:
+        return None
+    payload = r.json()
+    rows = payload.get("data") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        return None
+
+    def key(d, *pats):
+        for p in pats:
+            for k in d.keys():
+                if _re.fullmatch(p, k, _re.I):
+                    return d[k]
+        return None
+
+    buckets, stamp = {}, None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(key(row, r"index_?name", r"indexsymbol", r"index", r"name") or "").strip().upper()
+        if not name:
+            continue
+        group, order = _classify_index(name)
+        if group == "Other":
+            continue
+        last = _heatmap_num(key(row, r"last", r"last_?price", r"current_?value", r"ltp"))
+        prev = _heatmap_num(key(row, r"previous_?close", r"prev_?close", r"previousclose"))
+        pct = _heatmap_num(key(row, r"perc_?change", r"percent_?change", r"p_?change", r"pchange"))
+        chg = _heatmap_num(key(row, r"change", r"variation", r"net_?change"))
+        if pct is None and last is not None and prev:
+            pct = round((last - prev) / prev * 100, 2)
+        if chg is None and last is not None and prev:
+            chg = round(last - prev, 2)
+        if last is None:
+            continue
+        stamp = stamp or key(row, r"time_?val", r"time", r"timestamp", r"last_?updated")
+        buckets.setdefault(group, []).append({"name": name, "last": last, "pct": pct, "change": chg,
+                                             "advances": None, "declines": None, "unchanged": None,
+                                             "_order": order})
+    groups = []
+    for group, _members in _HEATMAP_GROUPS:
+        rs = buckets.get(group, [])
+        if not rs:
+            continue
+        rs.sort(key=lambda x: (x["_order"], x["name"]))
+        for x in rs:
+            x.pop("_order", None)
+        groups.append({"group": group, "indices": rs})
+    total = sum(len(g["indices"]) for g in groups)
+    if total < 10:                       # not the payload we expect → let Yahoo try
+        return None
+    return {"ok": True, "groups": groups, "count": total, "source": "niftyindices",
+            "timestamp": str(stamp) if stamp else _ist_now().strftime("%d-%b-%Y %H:%M:%S")}
 
 
 # Yahoo Finance tickers for the NSE indices that have them. Used only as a
@@ -2008,46 +2092,71 @@ _YF_INDEX_MAP = [
 
 
 def _heatmap_from_yfinance():
-    """Fallback index data via yfinance. Uses the last two daily closes so it
-    works outside market hours and on days the market is shut (shows the most
-    recent session's move). No breadth (advances/declines) from this source."""
+    """Last-resort fallback via Yahoo Finance (major indices only, no breadth).
+    Today's move = latest price vs the previous SESSION's close, with Yahoo's
+    daily rows de-duplicated by date (during market hours Yahoo often returns
+    today twice, which used to give a false 0.00%). An index with no price for
+    today's session is flagged stale and shows '—' instead of 0.00%."""
     try:
         import yfinance as yf
-        from datetime import datetime
         symbols = [t for _n, _g, t in _YF_INDEX_MAP]
-        try:
-            df = yf.download(symbols, period="5d", interval="1d", group_by="ticker",
-                             threads=True, progress=False, auto_adjust=False)
-        except Exception:
-            df = None
+        now = _ist_now()
+        today = now.date()
+        in_session = now.weekday() < 5 and (9, 15) <= (now.hour, now.minute) <= (15, 30)
 
-        def _num(v):
+        def dl(**kw):
             try:
-                return round(float(v), 2)
-            except (TypeError, ValueError):
-                return None
-
-        def last_two(sym):
-            try:
-                sub = df[sym]
-                closes = [float(x) for x in sub["Close"].tolist() if x == x]
-                if closes:
-                    return closes[-1], (closes[-2] if len(closes) > 1 else closes[-1])
+                return yf.download(symbols, group_by="ticker", threads=True, progress=False,
+                                   auto_adjust=False, **kw)
             except Exception:
-                pass
-            return None, None
+                return None
+        daily = dl(period="10d", interval="1d")
+        intra = dl(period="1d", interval="5m")
+
+        def series(df, sym):
+            """[(ist_datetime, close)] with NaNs dropped, oldest → newest."""
+            out = []
+            try:
+                sub = df[sym]["Close"]
+            except Exception:
+                return out
+            for ts, v in sub.items():
+                try:
+                    f = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if f != f:
+                    continue
+                try:
+                    t = ts.tz_convert("Asia/Kolkata") if getattr(ts, "tzinfo", None) else ts
+                except Exception:
+                    t = ts
+                out.append((t, f))
+            return out
 
         buckets = {}
         for name, group, sym in _YF_INDEX_MAP:
-            curr, prev = last_two(sym)
-            if curr is None:
+            by_date = {}
+            for t, c in series(daily, sym):
+                by_date[t.date()] = c                     # keep the last row per date (dedupe)
+            intr = series(intra, sym)
+            live = [(t, c) for t, c in intr if t.date() == today]
+            if live:
+                curr, cdate, as_of = live[-1][1], today, live[-1][0].strftime("%H:%M")
+            elif by_date:
+                cdate = max(by_date)
+                curr, as_of = by_date[cdate], cdate.strftime("%d %b")
+            else:
                 continue
-            change = curr - prev
-            pct = (change / prev * 100) if prev else 0
+            prev_dates = [d for d in by_date if d < cdate]
+            prev = by_date[max(prev_dates)] if prev_dates else None
+            stale = in_session and cdate < today              # no price yet for today's session
+            pct = round((curr - prev) / prev * 100, 2) if (prev and not stale) else None
             buckets.setdefault(group, []).append({
-                "name": name, "last": _num(curr), "pct": _num(pct),
-                "change": _num(change), "advances": None, "declines": None,
-                "unchanged": None,
+                "name": name, "last": _heatmap_num(curr), "pct": pct,
+                "change": _heatmap_num(curr - prev) if (prev and not stale) else None,
+                "advances": None, "declines": None, "unchanged": None,
+                "stale": stale, "as_of": as_of,
             })
 
         groups = []
@@ -2057,14 +2166,13 @@ def _heatmap_from_yfinance():
                 continue
             rows.sort(key=lambda r: r["name"])
             groups.append({"group": group, "indices": rows})
-
         if not groups:
             return None
         total = sum(len(g["indices"]) for g in groups)
         return {"ok": True, "groups": groups, "count": total,
-                "timestamp": datetime.now().strftime("%d-%b-%Y %H:%M:%S"),
-                "source": "yfinance"}
-    except Exception:
+                "timestamp": now.strftime("%d-%b-%Y %H:%M:%S"), "source": "yfinance"}
+    except Exception as e:
+        print(f"[Heatmap] yfinance fallback failed: {e}")
         return None
 
 
