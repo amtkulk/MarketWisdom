@@ -1374,6 +1374,110 @@ def _wyckoff_analyze(bars, base_len, min_bars):
     return detail
 
 
+WY_PHASE_LABEL = {"markup": "🚀 Early Markup", "spring": "🪤 Spring", "accumulation": "🏗️ Accumulation"}
+WY_PHASE_RANK = {"markup": 3, "spring": 2, "accumulation": 1}
+
+
+def _wyckoff_diag(bars, base_len, min_bars):
+    """Base metrics for ONE timeframe, plus plain-English reasons why no Wyckoff
+    setup fires (same thresholds as _wyckoff_analyze). None if too little data."""
+    n = len(bars)
+    if n < max(min_bars, base_len + 6):
+        return None
+    closes = [b[1] for b in bars]; vols = [b[2] for b in bars]
+    highs = [b[3] for b in bars]; lows = [b[4] for b in bars]
+    base = slice(n - base_len - 3, n - 3)
+    base_hi, base_lo = max(highs[base]), min(lows[base])
+    if base_hi <= 0 or base_lo <= 0:
+        return None
+    rng_pct = (base_hi - base_lo) / base_lo * 100
+    pre_ok = (n - base_len - 23) >= 0
+    pre = slice(max(0, n - base_len - 23), n - base_len - 3)
+    base_closes = closes[base]
+    pre_closes = closes[pre] if pre_ok else base_closes
+    prior_move = base_closes[0] - (pre_closes[0] if pre_closes else base_closes[0])
+    base_avg_v = sum(vols[base]) / len(vols[base])
+    pre_vols = vols[pre] if pre_ok else vols[base]
+    pre_avg_v = sum(pre_vols) / len(pre_vols) if pre_vols else base_avg_v
+    vol_dryup = (base_avg_v < pre_avg_v) if pre_avg_v else False
+    last_close, last_vol, last_high, last_low = closes[-1], vols[-1], highs[-1], lows[-1]
+    vol20 = sum(vols[-20:]) / min(20, n)
+    close_pos = (last_close - last_low) / ((last_high - last_low) or 1e-9)
+    pos_in_base = (last_close - base_lo) / ((base_hi - base_lo) or 1e-9)
+    vr = (last_vol / vol20) if vol20 else None
+    why = []
+    tight = rng_pct <= 22
+    if not tight:
+        why.append(f"No clean base: the last {base_len} bars swing {rng_pct:.0f}% (a Wyckoff base should be within ~22%)")
+    if last_close > base_hi:
+        ext = (last_close - base_hi) / base_hi * 100
+        if ext > 12:
+            why.append(f"Already {ext:.0f}% above its base high: the markup is under way, too late for an early entry")
+        elif vr is not None and vr < 1.5:
+            why.append(f"Above the base but on light volume ({vr:.1f}× average; a real breakout needs ≥1.5×)")
+        elif close_pos < 0.55:
+            why.append("Broke above the base but closed weak in the bar's range (supply still present)")
+    elif last_close < base_lo:
+        why.append("Trading below its base low and hasn't reclaimed it (no spring yet)")
+    else:
+        if not vol_dryup:
+            why.append("Volume hasn't dried up inside the base (supply not yet absorbed)")
+        if prior_move > 0:
+            why.append("The base formed after a rise, not after a decline (not a classic accumulation)")
+        if pos_in_base < 0.35:
+            why.append(f"Sitting in the lower part of the base ({pos_in_base*100:.0f}% of the range)")
+    return {"base_len": base_len, "range_pct": round(rng_pct, 1), "base_hi": round(base_hi, 2),
+            "base_lo": round(base_lo, 2), "vol_vs_avg": round(vr, 2) if vr is not None else None,
+            "vol_dryup": vol_dryup, "pos_in_base": round(pos_in_base, 2), "close": round(last_close, 2),
+            "why": why or ["Conditions are close but no phase rule is fully met yet"]}
+
+
+def wyckoff_for_stock(rows):
+    """Wyckoff read for ONE stock, using the exact rules of the Wyckoff scanner.
+    rows: [(date, close, vol, high, low)] oldest → newest (≥ ~6 months of daily bars).
+    Always returns a result: the phase/score if a setup fires, otherwise the base
+    metrics and why no setup fires."""
+    if not rows or len(rows) < 60:
+        return {"ok": False, "message": "Not enough price history for a Wyckoff read (needs about 6 months)."}
+    rows = rows[-520:]                                    # ~2 years, same as the scanner
+    weekly_bars = _weekly_from_daily(rows)
+    out = {"ok": True, "tf": {}}
+    for tf, bars, base_len, min_bars in (("daily", rows, 30, 90), ("weekly", weekly_bars, 12, 30)):
+        hit = _wyckoff_analyze(bars, base_len=base_len, min_bars=min_bars)
+        diag = _wyckoff_diag(bars, base_len, min_bars)
+        if hit:
+            d = dict(diag or {}, **hit)
+            d["phase_label"] = WY_PHASE_LABEL[hit["phase"]]
+            d.pop("why", None)
+        elif diag:
+            d = dict(diag, phase=None, phase_label="No setup", score=None)
+        else:
+            d = {"phase": None, "phase_label": "Not enough data", "score": None,
+                 "why": [f"Needs at least {min_bars} {tf} bars"]}
+        d["timeframe"] = tf
+        out["tf"][tf] = d
+    fired = [d for d in out["tf"].values() if d.get("phase")]
+    if fired:
+        head = max(fired, key=lambda d: (WY_PHASE_RANK[d["phase"]], d["score"]))
+        combo = head["score"]
+        both = len(fired) == 2
+        if both:
+            combo += 10                                   # multi-timeframe confluence
+            if fired[0]["phase"] == fired[1]["phase"]:
+                combo += 6
+        out.update({"phase": head["phase"], "phase_label": WY_PHASE_LABEL[head["phase"]],
+                    "score": round(min(combo, 100), 1), "timeframes": "+".join(d["timeframe"] for d in fired),
+                    "confluence": both})
+    else:
+        out.update({"phase": None, "phase_label": "No Wyckoff setup right now", "score": None,
+                    "timeframes": "", "confluence": False})
+    closes = [r[1] for r in rows]
+    vol20 = sum(r[2] for r in rows[-20:]) / min(20, len(rows))
+    out["turnover_cr"] = round(vol20 * closes[-1] / 1e7, 2)
+    out["liquid"] = vol20 * closes[-1] >= 1e7             # scanner's ₹1 Cr/day floor
+    return out
+
+
 def run_wyckoff_screener():
     """Wyckoff momentum scan over Nifty 1000 on daily + weekly timeframes."""
     import time

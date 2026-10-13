@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v54',
+    VERSION: 'v55',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -2554,63 +2554,11 @@ const app = {
         load(true);              // every visit asks for the latest filings
     },
 
-    renderMultibagger(container) {
-        const MKT = 'india_multibagger';
+    // Multibagger Signal (115-point model) card pieces — shared by the Multibagger page
+    // and the Stock Overview page so both always show the same thing.
+    _mbKit() {
+        if (this.__mbKit) return this.__mbKit;
         const esc = (s) => String(s === null || s === undefined ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-        container.innerHTML = `
-            <div style="margin-bottom:16px">
-                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🚀 Multibagger Early Signal</h2>
-                <p style="font-size:13px;color:var(--text-secondary)">Amit's 115-point model, built from Wheels India, Spectrum Electrical, Fermenta, Indo Amines, Sterlite Technologies and Mukand. It looks for companies where <b>something is changing that will make the market revise its estimate of future earnings</b>, and shows how far the market has already discovered it.</p>
-            </div>
-            <div class="card" style="margin-bottom:16px;border-top:3px solid #dc2626">
-                <div style="font-weight:800;font-size:15px;color:var(--text-primary);margin-bottom:4px">🔎 Check any stock</div>
-                <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:10px">Type an NSE symbol or company name. You get its three scores, its stage, any red flags, its recent order / capex / approval filings, and whether the market scan would pick it up.</div>
-                <form id="mb-check-form" style="display:flex;gap:8px;flex-wrap:wrap" autocomplete="off">
-                    <input id="mb-check-input" type="text" maxlength="60" placeholder="e.g. STLTECH or Sterlite Technologies" style="flex:1 1 220px;min-width:0;padding:10px 14px;border:1px solid var(--border-color);border-radius:10px;font-size:14px;background:var(--bg-card);color:var(--text-primary)">
-                    <button id="mb-check-btn" type="submit" class="btn" style="padding:10px 22px;font-size:14px;font-weight:700">Check stock</button>
-                </form>
-                <div id="mb-check-recent" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px"></div>
-                <div id="mb-check-result" style="margin-top:4px"></div>
-            </div>
-            <div style="font-family:'Inter',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-accent);font-weight:700;margin:22px 0 10px">📡 Market-wide scan</div>
-            <div class="two-col" style="align-items:start;margin-bottom:16px">
-                <div class="card" style="border-top:3px solid #16a34a">
-                    <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:var(--text-primary)">Three scores, 115 points</div>
-                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.85">
-                        <b>A · Business Change /50</b>: revenue, EBITDA and PAT acceleration, margin expansion, ROCE, cash flow, debt.<br>
-                        <b>B · Future Growth /35</b>: order inflow vs sales, book-to-bill / orders vs market cap, large orders, structural theme (AI, defence, power, EV, railways…), new product / approval, capacity expansion.<br>
-                        <b>C · Market Recognition /30</b>: volume, breakout, relative strength, FII/DII/MF buying, promoter, QIP / preferential.<br>
-                        <b>Valuation</b> is shown separately (PEG). <b>Red flags override any score.</b>
-                    </div>
-                </div>
-                <div class="card" style="border-top:3px solid #4f46e5">
-                    <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:var(--text-primary)">Stages: how discovered is it?</div>
-                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.85">
-                        <b>🟢 Stage 1 · Hidden</b>: Recognition &lt; 15. The best hunting zone (your bar: Business ≥ 35, Future ≥ 20).<br>
-                        <b>🟢 Stage 2 · Discovery</b>: Recognition 15–22. STL at ₹180 (bar: Business ≥ 35, Future ≥ 25).<br>
-                        <b>🟡 Stage 3 · Momentum</b>: Recognition ≥ 23. Strong, but don't chase (bar: Business ≥ 40, Future ≥ 30).<br>
-                        <b>⚪ Not yet</b>: Business Change &lt; 25. <b>🚨 Red flag</b>: fire / EHS, regulatory action, fraud, big tax demand, promoter exit, or 4+ balance-sheet warnings.
-                    </div>
-                </div>
-            </div>
-            <div class="card" style="margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
-                <div style="font-size:12px;color:var(--text-secondary);flex:1 1 300px">Scans the <b style="color:var(--text-primary)">full market</b> plus <b style="color:var(--text-primary)">90 days of BSE filings</b>. It deep-checks ~230 candidates found three ways: chart moves, filing catalysts (orders, capex, approvals, meets) and quiet-quality charts, the last of which is how Stage-1 names get found. Takes <b style="color:var(--text-primary)">5–10 minutes</b> (faster within 6 hours of the last scan). You can navigate away; results are saved.</div>
-                <button id="btn-scan-mb" class="btn" style="padding:10px 24px;font-size:14px;font-weight:700">🚀 Run Early Signal Scan</button>
-            </div>
-            <div id="mb-filter" style="display:none;gap:8px;flex-wrap:wrap;margin-bottom:14px"></div>
-            <div id="mb-status" style="display:none"></div>
-            <div id="mb-result"><div style="text-align:center;padding:30px;color:var(--text-secondary)"><div class="spinner"></div></div></div>
-            <div class="card" style="margin-top:16px;border-left:3px solid var(--yellow)">
-                <div style="font-weight:800;font-size:13px;margin-bottom:6px;color:var(--text-primary)">✋ Check these by hand before acting (no free data source has them)</div>
-                <div style="font-size:12px;color:var(--text-secondary);line-height:1.8">Auditor qualification · Promoter pledge % · Related-party transactions · Full order book where the company doesn't publish it (the scanner uses disclosed order wins plus order-book figures from results press releases) · Management guidance in investor presentations.</div>
-                <div style="font-size:11.5px;color:var(--text-secondary);margin-top:6px">Tip: each stock's <b>Screener ↗</b> link opens its annual report, credit ratings and announcements.</div>
-            </div>
-            <div style="text-align:center;margin-top:16px;font-size:11px;color:var(--text-secondary)">A pattern-matching aid built from past winners. It is not a prediction or investment advice. Most stocks with early signals do <b>not</b> become multibaggers. Size positions accordingly and do your own research.</div>
-        `;
-        let pollTimer = null;
-        let lastData = null;
-        let activeFilter = 'all';
-        const open = new Set();
         const fmt = (v, s='', d=1) => (v === null || v === undefined) ? '—' : (typeof v === 'number' ? Number(v.toFixed(d)) : v) + s;
         const sgn = (v, s='%') => (v === null || v === undefined) ? '—' : (v > 0 ? '+' : '') + Number(v.toFixed(1)) + s;
         const fmtCr = (v) => v === null || v === undefined ? '—' : '₹' + (v >= 100 ? Math.round(v).toLocaleString('en-IN') : Number(v.toFixed(1)).toLocaleString('en-IN')) + ' Cr';
@@ -2718,6 +2666,80 @@ const app = {
             h += '</div>';
             return h;
         };
+
+        const verdictHtml = (d) => {
+            const v = d.verdict || {};
+            const st = STAGE[d.stage] || STAGE.weak;
+            let h = '<div style="margin-top:12px;padding:12px 14px;border-radius:10px;background:'+st.bg+';border:1px solid rgba(79,70,229,0.12)">'
+                  + '<div style="font-weight:800;font-size:15px;color:'+st.fg+'">'+esc(v.head || '')+'</div>'
+                  + '<div style="font-size:12.5px;color:var(--text-primary);margin-top:3px;line-height:1.6">'+esc(v.detail || '')+'</div>'
+                  + '<div style="font-size:12px;font-weight:700;margin-top:8px;color:'+(d.eligible ? 'var(--green)' : 'var(--text-secondary)')+'">'
+                  + (d.eligible ? '✓ Eligible for the market scan' : '✗ The market scan would not list it') + '</div>';
+            if (d.warnings && d.warnings.length) h += '<ul style="margin:8px 0 0;padding-left:18px;font-size:12px;color:#a16207;line-height:1.6">' + d.warnings.map(w => '<li>'+esc(w)+'</li>').join('') + '</ul>';
+            return h + '</div>';
+        };
+        this.__mbKit = { fmt, sgn, fmtCr, STAGE, VAL, CAT_ICON, chip, stat, bar, isV2, partsHtml, riskHtml, catalystsHtml, cardHtml, verdictHtml };
+        return this.__mbKit;
+    },
+
+    renderMultibagger(container) {
+        const MKT = 'india_multibagger';
+        const esc = (s) => String(s === null || s === undefined ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        container.innerHTML = `
+            <div style="margin-bottom:16px">
+                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🚀 Multibagger Early Signal</h2>
+                <p style="font-size:13px;color:var(--text-secondary)">Amit's 115-point model, built from Wheels India, Spectrum Electrical, Fermenta, Indo Amines, Sterlite Technologies and Mukand. It looks for companies where <b>something is changing that will make the market revise its estimate of future earnings</b>, and shows how far the market has already discovered it.</p>
+            </div>
+            <div class="card" style="margin-bottom:16px;border-top:3px solid #dc2626">
+                <div style="font-weight:800;font-size:15px;color:var(--text-primary);margin-bottom:4px">🔎 Check any stock</div>
+                <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:10px">Type an NSE symbol or company name. You get its three scores, its stage, any red flags, its recent order / capex / approval filings, and whether the market scan would pick it up.</div>
+                <form id="mb-check-form" style="display:flex;gap:8px;flex-wrap:wrap" autocomplete="off">
+                    <input id="mb-check-input" type="text" maxlength="60" placeholder="e.g. STLTECH or Sterlite Technologies" style="flex:1 1 220px;min-width:0;padding:10px 14px;border:1px solid var(--border-color);border-radius:10px;font-size:14px;background:var(--bg-card);color:var(--text-primary)">
+                    <button id="mb-check-btn" type="submit" class="btn" style="padding:10px 22px;font-size:14px;font-weight:700">Check stock</button>
+                </form>
+                <div id="mb-check-recent" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px"></div>
+                <div id="mb-check-result" style="margin-top:4px"></div>
+            </div>
+            <div style="font-family:'Inter',sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-accent);font-weight:700;margin:22px 0 10px">📡 Market-wide scan</div>
+            <div class="two-col" style="align-items:start;margin-bottom:16px">
+                <div class="card" style="border-top:3px solid #16a34a">
+                    <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:var(--text-primary)">Three scores, 115 points</div>
+                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.85">
+                        <b>A · Business Change /50</b>: revenue, EBITDA and PAT acceleration, margin expansion, ROCE, cash flow, debt.<br>
+                        <b>B · Future Growth /35</b>: order inflow vs sales, book-to-bill / orders vs market cap, large orders, structural theme (AI, defence, power, EV, railways…), new product / approval, capacity expansion.<br>
+                        <b>C · Market Recognition /30</b>: volume, breakout, relative strength, FII/DII/MF buying, promoter, QIP / preferential.<br>
+                        <b>Valuation</b> is shown separately (PEG). <b>Red flags override any score.</b>
+                    </div>
+                </div>
+                <div class="card" style="border-top:3px solid #4f46e5">
+                    <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:var(--text-primary)">Stages: how discovered is it?</div>
+                    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.85">
+                        <b>🟢 Stage 1 · Hidden</b>: Recognition &lt; 15. The best hunting zone (your bar: Business ≥ 35, Future ≥ 20).<br>
+                        <b>🟢 Stage 2 · Discovery</b>: Recognition 15–22. STL at ₹180 (bar: Business ≥ 35, Future ≥ 25).<br>
+                        <b>🟡 Stage 3 · Momentum</b>: Recognition ≥ 23. Strong, but don't chase (bar: Business ≥ 40, Future ≥ 30).<br>
+                        <b>⚪ Not yet</b>: Business Change &lt; 25. <b>🚨 Red flag</b>: fire / EHS, regulatory action, fraud, big tax demand, promoter exit, or 4+ balance-sheet warnings.
+                    </div>
+                </div>
+            </div>
+            <div class="card" style="margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+                <div style="font-size:12px;color:var(--text-secondary);flex:1 1 300px">Scans the <b style="color:var(--text-primary)">full market</b> plus <b style="color:var(--text-primary)">90 days of BSE filings</b>. It deep-checks ~230 candidates found three ways: chart moves, filing catalysts (orders, capex, approvals, meets) and quiet-quality charts, the last of which is how Stage-1 names get found. Takes <b style="color:var(--text-primary)">5–10 minutes</b> (faster within 6 hours of the last scan). You can navigate away; results are saved.</div>
+                <button id="btn-scan-mb" class="btn" style="padding:10px 24px;font-size:14px;font-weight:700">🚀 Run Early Signal Scan</button>
+            </div>
+            <div id="mb-filter" style="display:none;gap:8px;flex-wrap:wrap;margin-bottom:14px"></div>
+            <div id="mb-status" style="display:none"></div>
+            <div id="mb-result"><div style="text-align:center;padding:30px;color:var(--text-secondary)"><div class="spinner"></div></div></div>
+            <div class="card" style="margin-top:16px;border-left:3px solid var(--yellow)">
+                <div style="font-weight:800;font-size:13px;margin-bottom:6px;color:var(--text-primary)">✋ Check these by hand before acting (no free data source has them)</div>
+                <div style="font-size:12px;color:var(--text-secondary);line-height:1.8">Auditor qualification · Promoter pledge % · Related-party transactions · Full order book where the company doesn't publish it (the scanner uses disclosed order wins plus order-book figures from results press releases) · Management guidance in investor presentations.</div>
+                <div style="font-size:11.5px;color:var(--text-secondary);margin-top:6px">Tip: each stock's <b>Screener ↗</b> link opens its annual report, credit ratings and announcements.</div>
+            </div>
+            <div style="text-align:center;margin-top:16px;font-size:11px;color:var(--text-secondary)">A pattern-matching aid built from past winners. It is not a prediction or investment advice. Most stocks with early signals do <b>not</b> become multibaggers. Size positions accordingly and do your own research.</div>
+        `;
+        let pollTimer = null;
+        let lastData = null;
+        let activeFilter = 'all';
+        const open = new Set();
+        const { fmt, sgn, fmtCr, STAGE, VAL, CAT_ICON, chip, stat, bar, isV2, partsHtml, riskHtml, catalystsHtml, cardHtml, verdictHtml } = this._mbKit();
 
         const renderFilter = () => {
             const bar_ = document.getElementById('mb-filter');
@@ -2830,15 +2852,7 @@ const app = {
             if (!el || !checkData) return;
             const d = checkData;
             if (!isV2(d)) { el.innerHTML = '<div class="card" style="margin-top:12px;padding:12px 14px;color:var(--text-secondary)">This result came from the previous model; check the stock again.</div>'; return; }
-            const v = d.verdict || {};
-            const st = STAGE[d.stage] || STAGE.weak;
-            let h = '<div style="margin-top:12px;padding:12px 14px;border-radius:10px;background:'+st.bg+';border:1px solid rgba(79,70,229,0.12)">'
-                  + '<div style="font-weight:800;font-size:15px;color:'+st.fg+'">'+esc(v.head || '')+'</div>'
-                  + '<div style="font-size:12.5px;color:var(--text-primary);margin-top:3px;line-height:1.6">'+esc(v.detail || '')+'</div>'
-                  + '<div style="font-size:12px;font-weight:700;margin-top:8px;color:'+(d.eligible ? 'var(--green)' : 'var(--text-secondary)')+'">'
-                  + (d.eligible ? '✓ Eligible for the market scan' : '✗ The market scan would not list it') + '</div>';
-            if (d.warnings && d.warnings.length) h += '<ul style="margin:8px 0 0;padding-left:18px;font-size:12px;color:#a16207;line-height:1.6">' + d.warnings.map(w => '<li>'+esc(w)+'</li>').join('') + '</ul>';
-            h += '</div>';
+            let h = verdictHtml(d);
             h += '<div style="margin-top:10px">' + cardHtml(d, checkOpen, 'check') + '</div>';
             el.innerHTML = h;
             el.querySelectorAll('.mb-toggle').forEach(b => b.addEventListener('click', () => { checkOpen = !checkOpen; renderCheck(); }));
@@ -3042,7 +3056,7 @@ const app = {
                     <div style="flex:1;min-width:240px">
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
                             <span style="font-size:20px;font-weight:800">${d.company_name || ''}</span>
-                            <span class="badge badge-blue">${d.ticker || ''}</span>
+                            <span class="badge badge-blue">${d.ticker || ''}</span>${app.stockLinks(d.ticker)}
                             <span style="font-size:11px;color:var(--text-secondary)">${d.sector || ''}</span>
                         </div>
                         <p style="font-size:13px;color:var(--text-secondary);line-height:1.7;max-width:520px;margin-bottom:12px">${d.description || ''}</p>
@@ -3084,6 +3098,12 @@ const app = {
             html += Components.CheckRow('Volume spurt detected', ca.volume_spurt, '', ca.volume_note);
             html += `</div>`;
         }
+
+        // Wyckoff (same rules as the Wyckoff scanner) + Multibagger Signal (loads separately)
+        html += this.overviewWyckoffHtml(d.wyckoff);
+        const mbId = 'ov-mb-' + String(d.ticker || '').replace(/[^A-Za-z0-9]/g, '_');
+        html += '<div id="'+mbId+'" class="card" style="border-top:3px solid #16a34a"><div class="section-title">🚀 Multibagger Signal <span style="font-size:11px;font-weight:500;color:var(--text-secondary)">· 115-point model, same as the Multibagger page</span></div>'
+              + '<div style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-secondary)"><span class="spinner"></span> Checking financials, shareholding and BSE filings (15–30 s)…</div></div>';
 
         // Fundamentals (Screener.in)
         if (d.fundamental_checks) {
@@ -3169,10 +3189,89 @@ const app = {
 
         // Sources footer
         html += `<div style="font-size:11px;color:var(--text-secondary);text-align:center;margin:8px 0 24px">
-            Sources: Price &amp; 52W — NSE / yfinance · Fundamentals &amp; shareholding — Screener.in · RSI / EMA / CAGR — computed · Description — Gemini · News — Google News
+            Sources: Price &amp; 52W — NSE / yfinance · Fundamentals &amp; shareholding — Screener.in · RSI / EMA / CAGR / Wyckoff — computed · Multibagger Signal — Screener.in, BSE filings &amp; prices · Description — Gemini · News — Google News
         </div>`;
 
         container.innerHTML = html;
+        if (d.ticker) this.loadOverviewMultibagger(mbId, d.ticker);
+    },
+
+    // Wyckoff card for Stock Overview: score + phase, or why no setup is firing, per timeframe.
+    overviewWyckoffHtml(w) {
+        const esc = (t) => String(t === null || t === undefined ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        let h = '<div class="card" style="border-top:3px solid #7c3aed"><div class="section-title">📐 Wyckoff Analysis <span style="font-size:11px;font-weight:500;color:var(--text-secondary)">· same rules as the Wyckoff scanner, daily + weekly candles</span></div>';
+        if (!w || !w.ok) {
+            return h + '<div style="font-size:13px;color:var(--text-secondary)">' + esc((w && w.message) || 'Wyckoff read unavailable for this stock.') + '</div></div>';
+        }
+        const fired = !!w.phase;
+        const PH = { markup: ['rgba(22,163,74,0.12)', 'var(--green)'], spring: ['rgba(14,165,233,0.12)', '#0369a1'], accumulation: ['rgba(124,58,237,0.10)', '#6d28d9'] };
+        const col = fired ? PH[w.phase] : ['rgba(15,23,42,0.05)', 'var(--text-secondary)'];
+        const MEANING = {
+            markup: 'Price is breaking out of a tight base on strong volume and is still close to the breakout: the start of a markup.',
+            spring: 'Price dipped below its base low and quickly reclaimed it: a shakeout of weak holders that often comes just before a markup.',
+            accumulation: 'Price is coiling in a tight base on drying-up volume after a decline: big buyers may be quietly absorbing supply.',
+        };
+        h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:12px 14px;border-radius:10px;background:' + col[0] + '">'
+           + '<div style="min-width:0;flex:1 1 260px"><div style="font-size:16px;font-weight:800;color:' + col[1] + '">' + esc(w.phase_label) + '</div>'
+           + '<div style="font-size:12.5px;color:var(--text-primary);margin-top:4px;line-height:1.6">'
+           + (fired ? esc(MEANING[w.phase]) + (w.confluence ? ' <b>Daily and weekly agree (confluence).</b>' : ' Seen on the <b>' + esc(w.timeframes) + '</b> chart.')
+                    : 'None of the three Wyckoff phases (Accumulation, Spring, Early Markup) is firing on either timeframe. The reasons are listed below.')
+           + '</div>'
+           + (w.liquid === false ? '<div style="font-size:12px;color:#a16207;margin-top:6px">⚠ Low liquidity (₹' + esc(w.turnover_cr) + ' Cr/day traded): the Wyckoff scanner skips stocks under ₹1 Cr/day.</div>' : '')
+           + '</div><div style="text-align:right;flex-shrink:0"><div style="font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;font-weight:700">Wyckoff score</div>'
+           + '<div style="font-size:26px;font-weight:800;color:' + col[1] + '">' + (fired ? Math.round(w.score) : '—') + '<span style="font-size:12px;color:var(--text-secondary);font-weight:600">/100</span></div></div></div>';
+        const tfCard = (d) => {
+            if (!d) return '';
+            const on = !!d.phase;
+            const row = (k, v) => '<div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:3px 0"><span style="color:var(--text-secondary)">' + k + '</span><b style="color:var(--text-primary);text-align:right">' + v + '</b></div>';
+            let t = '<div style="border:1px solid var(--border-color);border-radius:10px;padding:10px 12px;min-width:0">'
+                  + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px"><b style="text-transform:capitalize">' + esc(d.timeframe) + '</b>'
+                  + '<span style="font-size:12px;font-weight:700;color:' + (on ? (PH[d.phase] || col)[1] : 'var(--text-secondary)') + '">' + esc(d.phase_label) + (on ? ' · ' + Math.round(d.score) : '') + '</span></div>';
+            if (d.base_hi !== undefined) {
+                const unit = d.timeframe === 'weekly' ? 'weeks' : 'days';
+                t += row('Base (' + esc(d.base_len) + ' ' + unit + ')', '₹' + Number(d.base_lo).toLocaleString('en-IN') + ' – ₹' + Number(d.base_hi).toLocaleString('en-IN'));
+                t += row('Base width', esc(d.range_pct) + '%' + (d.range_pct <= 22 ? ' ✓' : ' (wide)'));
+                t += row('Volume dry-up in base', d.vol_dryup ? 'Yes ✓' : 'No');
+                if (d.vol_vs_avg !== null && d.vol_vs_avg !== undefined) t += row('Last bar volume', esc(d.vol_vs_avg) + '× average');
+                if (d.pos_in_base !== null && d.pos_in_base !== undefined)
+                    t += row('Price vs base', d.pos_in_base > 1 ? 'Above the base' : d.pos_in_base < 0 ? 'Below the base' : Math.round(d.pos_in_base * 100) + '% up the range');
+                if (d.breakout_ext_pct !== undefined) t += row('Past breakout', '+' + esc(d.breakout_ext_pct) + '%');
+                if (d.spring_undercut_pct !== undefined) t += row('Spring undercut', esc(d.spring_undercut_pct) + '%');
+            }
+            if (!on && d.why && d.why.length) t += '<ul style="margin:8px 0 0;padding-left:18px;font-size:12px;color:var(--text-secondary);line-height:1.55">' + d.why.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>';
+            return t + '</div>';
+        };
+        h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:12px">' + tfCard((w.tf || {}).daily) + tfCard((w.tf || {}).weekly) + '</div>';
+        return h + '</div>';
+    },
+
+    // Multibagger Signal card for Stock Overview (same engine + card as the Multibagger page).
+    async loadOverviewMultibagger(elId, ticker) {
+        const esc = (t) => String(t === null || t === undefined ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        const head = '<div class="section-title">🚀 Multibagger Signal <span style="font-size:11px;font-weight:500;color:var(--text-secondary)">· 115-point model, same as the Multibagger page</span></div>';
+        let open = true;
+        const paint = (d) => {
+            const el = document.getElementById(elId);
+            if (!el) return;
+            const K = this._mbKit();
+            el.innerHTML = head + K.verdictHtml(d) + '<div style="margin-top:10px">' + K.cardHtml(d, open, 'check') + '</div>'
+                + '<div style="font-size:11px;color:var(--text-secondary);margin-top:8px">A pattern-matching aid built from past winners, not a prediction. <a href="#multibagger" style="color:var(--text-accent);font-weight:600;text-decoration:none">Open the Multibagger page ↗</a></div>';
+            el.querySelectorAll('.mb-toggle').forEach(b => b.addEventListener('click', () => { open = !open; paint(d); }));
+        };
+        try {
+            const d = await api.multibaggerCheck(ticker);
+            const el = document.getElementById(elId);
+            if (!el) return;                                       // user moved on
+            if (d.error === 'short_history') {
+                el.innerHTML = head + '<div style="font-size:13px;color:#a16207">' + esc(d.message || 'Not enough price history for this model.') + '</div>';
+                return;
+            }
+            if (!this._mbKit().isV2(d)) { el.innerHTML = head + '<div style="font-size:13px;color:var(--text-secondary)">Multibagger Signal unavailable for this stock.</div>'; return; }
+            paint(d);
+        } catch (err) {
+            const el = document.getElementById(elId);
+            if (el) el.innerHTML = head + '<div style="font-size:13px;color:var(--red)">' + esc(err.message || 'Multibagger check failed') + '</div>';
+        }
     },
 
     renderStock(container) {

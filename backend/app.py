@@ -39,7 +39,7 @@ _auth_serializer = URLSafeTimedSerializer(APP_SECRET, salt="mw-auth-v1")
 SESSION_MAX_AGE = 60 * 60 * 24 * 30      # 30 days
 
 # Comma-separated list of admin emails (case-insensitive).
-APP_VERSION = "v54"      # keep in step with frontend app.js VERSION (shown in the page footer)
+APP_VERSION = "v55"      # keep in step with frontend app.js VERSION (shown in the page footer)
 
 # Set on Azure as an env var: ADMIN_EMAILS=login4amit@gmail.com,other@gmail.com
 # Built-in admins (always), plus any extra emails from the ADMIN_EMAILS env var.
@@ -2664,6 +2664,19 @@ def _build_overview(ticker, company):
         data["ohlcv"] = chart
     if news:
         data["news"] = news
+    # Wyckoff read with the Wyckoff scanner's own rules (daily + weekly), from the history above
+    try:
+        import screener as _S
+        rows = []
+        for h in history[-520:]:
+            try:
+                rows.append((datetime.strptime(h["date"], "%Y-%m-%d").date(), float(h["close"]),
+                             float(h.get("volume") or 0), float(h["high"]), float(h["low"])))
+            except Exception:
+                continue
+        data["wyckoff"] = _S.wyckoff_for_stock(rows)
+    except Exception as e:
+        print(f"[Overview] wyckoff failed for {ticker}: {e}")
     return data
 
 @app.route("/api/stock_overview", methods=["POST"])
