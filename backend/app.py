@@ -208,6 +208,53 @@ def api_admin_consents():
         return jsonify({"error": f"Could not load consents: {e}"}), 500
 
 
+@app.route("/api/track", methods=["POST"])
+def api_track():
+    """Count a page view for the admin Site Usage page. Signed-in users are counted
+    by email, others by a random browser ID. Bots are ignored. Always 204."""
+    try:
+        import usage as _usage
+        if _usage.is_bot(request.headers.get("User-Agent", "")):
+            return ("", 204)
+        body = request.get_json(silent=True) or {}
+        vid = str(body.get("vid") or "").strip().lower()
+        page = str(body.get("page") or "").strip().lower()
+        if not _usage.VID_RE.match(vid) or not _usage.PAGE_RE.match(page):
+            return ("", 204)
+        u = current_user()
+        email = (u.get("email") or "").strip().lower() if u else ""
+        now = _usage.now_ist()
+        from database import record_visit
+        record_visit(now.date().isoformat(), email or ("anon:" + vid), vid, bool(email), page,
+                     now.strftime("%Y-%m-%d %H:%M"))
+    except Exception as e:
+        print(f"[Usage] track failed: {e}")
+    return ("", 204)
+
+
+@app.route("/api/admin/usage")
+def api_admin_usage():
+    """Admin-only: daily / weekly unique visitors, top pages, most active users."""
+    _, err = _require_admin()
+    if err: return err
+    try:
+        import usage as _usage
+        from database import get_usage_rows
+        days = max(7, min(int(request.args.get("days") or 30), 90))
+        weeks = 12
+        today = _usage.now_ist().date()
+        since = min(today - timedelta(days=days - 1), _usage.week_start(today) - timedelta(weeks=weeks - 1))
+        rows, pages = get_usage_rows(since.isoformat())
+        exclude = ADMIN_EMAILS if request.args.get("exclude_admins", "1") == "1" else ()
+        out = _usage.compute(rows, pages, today, days=days, weeks=weeks, exclude=exclude)
+        out["excluding_admins"] = bool(exclude)
+        return jsonify(out)
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({"error": f"Could not load usage: {e}"}), 500
+
+
 def _user_scope():
     u = current_user()
     return u["email"] if u and u.get("email") else "public"

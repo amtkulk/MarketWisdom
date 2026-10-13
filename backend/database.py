@@ -89,6 +89,26 @@ def init_db():
                 decided_at TEXT
             )
         ''')
+        # site usage: one row per visitor per day (visitor = email, or "anon:<browser id>")
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS usage_daily (
+                day TEXT NOT NULL,
+                visitor TEXT NOT NULL,
+                vid TEXT,
+                signed_in INTEGER DEFAULT 0,
+                views INTEGER DEFAULT 0,
+                last_seen TEXT,
+                PRIMARY KEY (day, visitor)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS usage_pages (
+                day TEXT NOT NULL,
+                page TEXT NOT NULL,
+                views INTEGER DEFAULT 0,
+                PRIMARY KEY (day, page)
+            )
+        ''')
         # NOTE: the old shared 'watchlist' table is intentionally NOT migrated into
         # any user's list. Ratings are now per-user only — new users start empty.
         # Legacy rows stay in the old table for safekeeping; if you later decide
@@ -392,3 +412,46 @@ def get_alert_actions(user_id):
     out = {r["alert_id"]: dict(r) for r in cur.fetchall()}
     conn.close()
     return out
+
+
+# ══════════════════════════════════════════════════════════════
+#  SITE USAGE (admin Site Usage page)
+# ══════════════════════════════════════════════════════════════
+
+def record_visit(day, visitor, vid, signed_in, page, seen_at):
+    """Count one page view: per-visitor-per-day row + per-page-per-day row."""
+    if USE_MONGO:
+        db.get_collection("usage_daily").update_one(
+            {"day": day, "visitor": visitor},
+            {"$inc": {"views": 1}, "$set": {"last_seen": seen_at, "vid": vid},
+             "$max": {"signed_in": 1 if signed_in else 0}},
+            upsert=True)
+        db.get_collection("usage_pages").update_one(
+            {"day": day, "page": page}, {"$inc": {"views": 1}}, upsert=True)
+        return
+    conn = get_db_connection()
+    conn.execute("""
+        INSERT INTO usage_daily (day, visitor, vid, signed_in, views, last_seen) VALUES (?, ?, ?, ?, 1, ?)
+        ON CONFLICT(day, visitor) DO UPDATE SET views = views + 1, last_seen = excluded.last_seen,
+            vid = excluded.vid, signed_in = MAX(signed_in, excluded.signed_in)
+    """, (day, visitor, vid, 1 if signed_in else 0, seen_at))
+    conn.execute("""
+        INSERT INTO usage_pages (day, page, views) VALUES (?, ?, 1)
+        ON CONFLICT(day, page) DO UPDATE SET views = views + 1
+    """, (day, page))
+    conn.commit()
+    conn.close()
+
+
+def get_usage_rows(since_day):
+    """(visitor rows, page rows) with day >= since_day ('YYYY-MM-DD')."""
+    if USE_MONGO:
+        v = list(db.get_collection("usage_daily").find({"day": {"$gte": since_day}}, {"_id": 0}))
+        p = list(db.get_collection("usage_pages").find({"day": {"$gte": since_day}}, {"_id": 0}))
+        return v, p
+    conn = get_db_connection()
+    v = [dict(r) for r in conn.execute(
+        "SELECT day, visitor, vid, signed_in, views, last_seen FROM usage_daily WHERE day >= ?", (since_day,))]
+    p = [dict(r) for r in conn.execute("SELECT day, page, views FROM usage_pages WHERE day >= ?", (since_day,))]
+    conn.close()
+    return v, p

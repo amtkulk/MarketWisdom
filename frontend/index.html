@@ -21,7 +21,7 @@
             crossorigin="anonymous"></script>
 
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=50">
+    <link rel="stylesheet" href="style.css?v=51">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -54,7 +54,6 @@
         <a href="#multibagger" class="nav-btn" data-target="multibagger">🚀 Multibagger Signal</a>
         <a href="#corp" class="nav-btn" data-target="corp">📑 Corporate Actions</a>
         <a href="#results" class="nav-btn" data-target="results">📊 Nifty50 Result Analyzer</a>
-        <a href="#admin-users" class="nav-btn" data-target="admin-users" id="nav-admin" style="display:none">🔐 User Consents</a>
         <a href="#wyckoff" class="nav-btn" data-target="wyckoff">📐 Wyckoff</a>
         <a href="#overview" class="nav-btn" data-target="overview">🧭 Stock Overview</a>
         <!-- Stock Research hidden from UI (page code kept; restore by uncommenting)
@@ -63,6 +62,15 @@
         <a href="#action" class="nav-btn" data-target="action">⚡ Stock Action</a> -->
         <a href="#chartink" class="nav-btn" data-target="chartink">📋 Chartink Comparator</a>
         <a href="#watchlist" class="nav-btn" data-target="watchlist">⭐ Watchlist</a>
+        <div class="nav-group" id="nav-admin" style="display:none">
+            <button type="button" class="nav-group-toggle" id="nav-admin-toggle" aria-expanded="false" aria-controls="nav-admin-items">
+                <span>🛡️ Admin</span><span class="nav-group-caret" aria-hidden="true">▸</span>
+            </button>
+            <div class="nav-group-items" id="nav-admin-items" hidden>
+                <a href="#admin-usage" class="nav-btn" data-target="admin-usage">📊 Site Usage</a>
+                <a href="#admin-users" class="nav-btn" data-target="admin-users">🔐 User Consents</a>
+            </div>
+        </div>
         </div>
     </nav>
     <div id="nav-overlay"></div>
@@ -97,10 +105,10 @@
     </footer>
 
     <!-- Scripts -->
-    <script src="api.js?v=50"></script>
-    <script src="auth.js?v=50"></script>
-    <script src="components.js?v=50"></script>
-    <script src="app.js?v=50"></script>
+    <script src="api.js?v=51"></script>
+    <script src="auth.js?v=51"></script>
+    <script src="components.js?v=51"></script>
+    <script src="app.js?v=51"></script>
 
     <!-- PWA Service Worker: register + auto-reload when a new version activates -->
     <script>

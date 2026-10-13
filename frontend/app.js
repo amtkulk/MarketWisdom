@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v50',
+    VERSION: 'v51',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -28,8 +28,56 @@ const app = {
         (links || sidebar).querySelectorAll('.nav-btn').forEach(a => a.addEventListener('click', close));
     },
 
+    // Collapsible "Admin" group in the side menu (only shown to admins by auth.js).
+    setupAdminGroup() {
+        const btn = document.getElementById('nav-admin-toggle');
+        const items = document.getElementById('nav-admin-items');
+        if (!btn || !items) return;
+        let open = false;
+        try { open = localStorage.getItem('mw_nav_admin_open') === '1'; } catch (e) {}
+        this._setAdminOpen(open);
+        btn.addEventListener('click', () => {
+            const now = items.hidden;                       // hidden → open it
+            this._setAdminOpen(now);
+            try { localStorage.setItem('mw_nav_admin_open', now ? '1' : '0'); } catch (e) {}
+            if (now && items.scrollIntoView) items.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        });
+    },
+
+    _setAdminOpen(open) {
+        const btn = document.getElementById('nav-admin-toggle');
+        const items = document.getElementById('nav-admin-items');
+        if (!btn || !items) return;
+        items.hidden = !open;
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        btn.classList.toggle('open', !!open);
+    },
+
+    // Count a page view for the admin Site Usage page (fire-and-forget).
+    track(route) {
+        try {
+            const page = String(route || '').replace(/^__gate:/, 'gate-').toLowerCase().replace(/[^a-z0-9\-_]/g, '').slice(0, 32);
+            if (!page) return;
+            const now = Date.now();
+            if (this._lastTrack && this._lastTrack.page === page && now - this._lastTrack.at < 3000) return;
+            this._lastTrack = { page, at: now };
+            let vid = null;
+            try { vid = localStorage.getItem('mw_vid'); } catch (e) {}
+            if (!vid || !/^[a-z0-9-]{8,48}$/.test(vid)) {
+                vid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+                    : 'v' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+                try { localStorage.setItem('mw_vid', vid); } catch (e) {}
+            }
+            const headers = Object.assign({ 'Content-Type': 'application/json' },
+                (typeof Auth !== 'undefined' && Auth.headers) ? Auth.headers() : {});
+            fetch(`${API_BASE_URL}/track`, { method: 'POST', headers, keepalive: true,
+                body: JSON.stringify({ vid, page }) }).catch(() => {});
+        } catch (e) {}
+    },
+
     init() {
         this.setupMobileMenu();
+        this.setupAdminGroup();
         console.log('[MarketWisdom] app', this.VERSION,
                     '| gate:', this.GATE_ENABLED ? 'ON' : 'OFF',
                     '| signed in?', this._isSignedIn(),
@@ -178,7 +226,7 @@ const app = {
         }
         const label = ({
             global: 'Global Market', 'war-news': 'War News', telegram: 'Telegram Feed',
-            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', wyckoff: 'Wyckoff Momentum', multibagger: 'Multibagger Early Signal', orders: 'Corporate Actions', corp: 'Corporate Actions', 'admin-users': 'User Consents', results: 'Nifty50 Result Analyzer', stock: 'Stock Research',
+            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', wyckoff: 'Wyckoff Momentum', multibagger: 'Multibagger Early Signal', orders: 'Corporate Actions', corp: 'Corporate Actions', 'admin-users': 'User Consents', 'admin-usage': 'Site Usage', results: 'Nifty50 Result Analyzer', stock: 'Stock Research',
             overview: 'Stock Overview', reits: 'REITs & InvITs', action: 'Stock Action', heatmap: 'Indices Heatmap', chartink: 'Chartink Comparator',
             nifty: 'Nifty Analysis', watchlist: 'Watchlist',
         })[attemptedRoute] || 'this page';
@@ -220,6 +268,8 @@ const app = {
 
     navigate(route) {
         this.updateNavState(route);
+        this.track(route);
+        if (route === 'admin-users' || route === 'admin-usage') this._setAdminOpen(true);
         const container = document.getElementById('app-container');
         container.innerHTML = ''; // Clear current view
 
@@ -278,6 +328,9 @@ const app = {
                 break;
             case 'admin-users':
                 this.renderAdminUsers(container);
+                break;
+            case 'admin-usage':
+                this.renderAdminUsage(container);
                 break;
             case 'results':
                 this.renderResults(container);
@@ -1492,6 +1545,198 @@ const app = {
                 if (el) el.innerHTML = '<div style="padding:20px;color:var(--red)">'+esc(e.message)+'</div>';
             }
         })();
+    },
+
+    renderAdminUsage(container) {
+        // Admin-only. Menu link hidden for everyone else; the server refuses the data
+        // to non-admins even if the page is opened directly.
+        const u = (typeof Auth !== 'undefined' && Auth.user) ? Auth.user() : null;
+        if (!u || !u.is_admin) {
+            container.innerHTML = '<div class="card" style="max-width:520px;margin:60px auto;text-align:center;padding:36px;color:var(--text-secondary)">This page is not available.</div>';
+            return;
+        }
+        const esc = (t) => String(t === null || t === undefined ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        const getLS = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+        const setLS = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+        const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        const pd = (iso) => { const p = String(iso).split('-').map(Number); return new Date(p[0], p[1]-1, p[2]); };
+        const dS = (iso) => { const d = pd(iso); return d.getDate()+' '+MON[d.getMonth()]; };
+        const dL = (iso) => { const d = pd(iso); return DOW[d.getDay()]+', '+d.getDate()+' '+MON[d.getMonth()]+' '+d.getFullYear(); };
+        const n = (v) => Number(v || 0).toLocaleString('en-IN');
+        const PAGE_NAMES = { home: 'Home', global: 'Global Market', nifty: 'Nifty Analysis', heatmap: 'Heatmap', reits: 'REITs/InvITs',
+            'war-news': 'War News', telegram: 'Telegram Feed', screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master',
+            microcap: 'Micro Cap', gems: 'Hidden Gems', multibagger: 'Multibagger Signal', corp: 'Corporate Actions', orders: 'Corporate Actions',
+            results: 'Nifty50 Result Analyzer', wyckoff: 'Wyckoff', overview: 'Stock Overview', chartink: 'Chartink Comparator', watchlist: 'Watchlist',
+            'admin-users': 'User Consents', 'admin-usage': 'Site Usage', about: 'About', contact: 'Contact', disclaimer: 'Disclaimer' };
+        const pageName = (p) => PAGE_NAMES[p] || (p.startsWith('gate-') ? 'Sign-in prompt · ' + (PAGE_NAMES[p.slice(5)] || p.slice(5)) : p);
+
+        let days = parseInt(getLS('mw_usage_days') || '30', 10); if (![14, 30, 60, 90].includes(days)) days = 30;
+        let exclude = getLS('mw_usage_excl') !== '0';
+        let data = null, resizeT = null;
+
+        container.innerHTML = `
+            <div style="margin-bottom:14px">
+                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">📊 Site Usage</h2>
+                <p style="font-size:13px;color:var(--text-secondary)">Unique visitors to marketwisdom.co.in, day by day and week by week. Visible to admins only.</p>
+            </div>
+            <div class="card" style="margin-bottom:14px;padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                <label style="font-size:13px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">Range
+                    <select id="us-days" class="rs-pick" style="max-width:none">
+                        ${[14, 30, 60, 90].map(d => '<option value="'+d+'"'+(d === days ? ' selected' : '')+'>Last '+d+' days</option>').join('')}
+                    </select></label>
+                <label style="font-size:13px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;cursor:pointer">
+                    <input type="checkbox" id="us-excl" ${exclude ? 'checked' : ''}> Exclude admin visits</label>
+                <div id="us-status" style="flex:1;min-width:160px;font-size:12.5px;color:var(--text-secondary)"></div>
+                <button id="us-refresh" class="btn" style="padding:8px 18px;font-size:13px;font-weight:700">↻ Refresh</button>
+            </div>
+            <div id="us-body"><div class="card" style="text-align:center;padding:36px"><span class="spinner"></span></div></div>
+        `;
+        const alive = () => !!document.getElementById('us-body');
+
+        // ── bar chart (SVG, single series, hover tooltip) ──
+        const barChart = (host, items, opts) => {
+            if (!host) return;
+            const W = Math.max(280, host.clientWidth || 600), H = opts.height || 220;
+            const m = { t: 12, r: 8, b: 26, l: 34 };
+            const iw = W - m.l - m.r, ih = H - m.t - m.b;
+            const maxV = Math.max(1, ...items.map(d => d.value));
+            const step = (() => { const raw = maxV / 4, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+                return Math.max(1, (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p); })();
+            const top = Math.ceil(maxV / step) * step;
+            const y = (v) => m.t + ih - (v / top) * ih;
+            const bw = iw / items.length, gap = Math.min(6, Math.max(2, bw * 0.25)), w = Math.max(2, bw - gap);
+            const everyN = Math.max(1, Math.ceil(items.length / Math.floor(iw / (opts.labelW || 46))));
+            let svg = '<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(opts.title)+'" style="display:block;max-width:100%">';
+            for (let v = 0; v <= top; v += step) {
+                svg += '<line x1="'+m.l+'" x2="'+(W - m.r)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="rgba(100,116,139,'+(v === 0 ? '0.45' : '0.15')+')" stroke-width="1"/>'
+                     + '<text x="'+(m.l - 6)+'" y="'+(y(v) + 4)+'" text-anchor="end" font-size="10.5" fill="#64748b">'+n(v)+'</text>';
+            }
+            items.forEach((d, i) => {
+                const x = m.l + i * bw + gap / 2, h = (d.value / top) * ih, yy = m.t + ih - h, r = Math.min(4, w / 2, h);
+                if (d.value > 0) {
+                    const path = 'M'+x+','+(m.t + ih)+' V'+(yy + r)+' Q'+x+','+yy+' '+(x + r)+','+yy+' H'+(x + w - r)+' Q'+(x + w)+','+yy+' '+(x + w)+','+(yy + r)+' V'+(m.t + ih)+' Z';
+                    svg += '<path d="'+path+'" fill="#4f46e5" fill-opacity="'+(d.partial ? '0.4' : '1')+'"'+(d.partial ? ' stroke="#4f46e5" stroke-width="1" stroke-dasharray="3 2"' : '')+'/>';
+                }
+                if ((items.length - 1 - i) % everyN === 0)          // spaced back from the latest bar
+                {
+                    const cx = x + w / 2, half = 22;                  // keep edge labels inside the chart
+                    const anchor = cx + half > W ? 'end' : (cx - half < 0 ? 'start' : 'middle');
+                    const lx = anchor === 'end' ? W - 2 : anchor === 'start' ? 2 : cx;
+                    svg += '<text x="'+lx+'" y="'+(H - 8)+'" text-anchor="'+anchor+'" font-size="10.5" fill="#64748b">'+esc(d.label)+'</text>';
+                }
+                svg += '<rect class="us-hit" data-i="'+i+'" x="'+(m.l + i * bw)+'" y="'+m.t+'" width="'+bw+'" height="'+ih+'" fill="transparent"/>';
+            });
+            svg += '</svg>';
+            host.style.position = 'relative';
+            host.innerHTML = svg + '<div class="us-tip" hidden></div>';
+            const tip = host.querySelector('.us-tip');
+            host.querySelectorAll('.us-hit').forEach(r => {
+                const show = () => {
+                    const d = items[+r.getAttribute('data-i')];
+                    tip.innerHTML = d.tip; tip.hidden = false;
+                    const bx = +r.getAttribute('x') + +r.getAttribute('width') / 2;
+                    const tw = tip.offsetWidth;
+                    tip.style.left = Math.max(0, Math.min(W - tw, bx - tw / 2)) + 'px';
+                    tip.style.top = '0px';
+                    host.querySelectorAll('.us-hit').forEach(z => z.setAttribute('fill', 'transparent'));
+                    r.setAttribute('fill', 'rgba(79,70,229,0.06)');
+                };
+                r.addEventListener('mouseenter', show);
+                r.addEventListener('click', show);
+            });
+            host.addEventListener('mouseleave', () => { tip.hidden = true; host.querySelectorAll('.us-hit').forEach(z => z.setAttribute('fill', 'transparent')); });
+        };
+
+        const tipHtml = (title, d) => '<div style="font-weight:800;margin-bottom:3px">'+esc(title)+'</div>'
+            + '<div><b>'+n(d.users)+'</b> unique visitor'+(d.users === 1 ? '' : 's')+'</div>'
+            + '<div style="color:#64748b">'+n(d.signed_in)+' signed-in · '+n(d.anonymous)+' not signed in</div>'
+            + '<div style="color:#64748b">'+n(d.views)+' page views</div>';
+
+        const drawCharts = () => {
+            if (!data || !alive()) return;
+            barChart(document.getElementById('us-daily'), data.daily.map(d => ({
+                label: dS(d.date), value: d.users, tip: tipHtml(dL(d.date), d) })), { title: 'Daily unique visitors', labelW: 48 });
+            barChart(document.getElementById('us-weekly'), data.weekly.map(w => ({
+                label: dS(w.week_start), value: w.users, partial: w.partial,
+                tip: tipHtml('Week of '+dS(w.week_start)+' – '+dS(w.week_end)+(w.partial ? ' (so far)' : ''), w) })), { title: 'Weekly unique visitors', labelW: 52 });
+        };
+
+        const render = () => {
+            const el = document.getElementById('us-body');
+            if (!el || !data) return;
+            const k = data.kpis || {};
+            const tile = (label, val, sub) => '<div class="us-kpi"><div class="us-kpi-l">'+esc(label)+'</div><div class="us-kpi-v">'+n(val)+'</div>'+(sub ? '<div class="us-kpi-s">'+sub+'</div>' : '')+'</div>';
+            const empty = !data.tracking_since;
+            let h = '';
+            if (empty) h += '<div class="card" style="padding:14px 16px;margin-bottom:14px;border-color:rgba(217,119,6,.4);color:#92400e;font-size:13px">No visits recorded yet. Counting starts from this update; numbers appear as people use the site.</div>';
+            h += '<div class="us-kpis">'
+               + tile('Today', k.today, 'unique visitors')
+               + tile('Yesterday', k.yesterday, 'unique visitors')
+               + tile('Last 7 days', k.last7, 'avg '+(k.avg_daily_7 || 0)+' a day')
+               + tile('Last 30 days', k.last30, 'unique visitors')
+               + tile('Signed-in users', k.signed_in_30, 'last 30 days')
+               + tile('Page views', k.views_30, 'last 30 days')
+               + '</div>';
+            h += '<div class="card" style="padding:16px;margin-bottom:14px"><div class="us-h">Daily unique visitors <span>· last '+data.daily.length+' days</span></div><div id="us-daily" class="us-chart"></div>'
+               + '<details class="us-table"><summary>Show as table</summary><div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Unique</th><th>Signed-in</th><th>Not signed in</th><th>Page views</th></tr></thead><tbody>'
+               + data.daily.slice().reverse().map(d => '<tr><td>'+esc(dL(d.date))+'</td><td><b>'+n(d.users)+'</b></td><td>'+n(d.signed_in)+'</td><td>'+n(d.anonymous)+'</td><td>'+n(d.views)+'</td></tr>').join('')
+               + '</tbody></table></div></details></div>';
+            h += '<div class="card" style="padding:16px;margin-bottom:14px"><div class="us-h">Weekly unique visitors <span>· Monday–Sunday, last 12 weeks · a person visiting on several days counts once per week</span></div><div id="us-weekly" class="us-chart"></div>'
+               + '<details class="us-table"><summary>Show as table</summary><div style="overflow-x:auto"><table><thead><tr><th>Week</th><th>Unique</th><th>Signed-in</th><th>Not signed in</th><th>Page views</th></tr></thead><tbody>'
+               + data.weekly.slice().reverse().map(w => '<tr><td>'+esc(dS(w.week_start))+' – '+esc(dS(w.week_end))+(w.partial ? ' <i style="color:var(--text-secondary)">(so far)</i>' : '')+'</td><td><b>'+n(w.users)+'</b></td><td>'+n(w.signed_in)+'</td><td>'+n(w.anonymous)+'</td><td>'+n(w.views)+'</td></tr>').join('')
+               + '</tbody></table></div></details></div>';
+            // top pages + most active users
+            const maxP = Math.max(1, ...(data.top_pages || []).map(p => p.views));
+            h += '<div class="us-two">'
+               + '<div class="card" style="padding:16px"><div class="us-h">Most viewed pages <span>· last 7 days</span></div>'
+               + ((data.top_pages || []).length ? (data.top_pages.map(p => '<div class="us-prow"><div class="us-pname">'+esc(pageName(p.page))+'</div><div class="us-pbar"><i style="width:'+Math.max(2, p.views / maxP * 100)+'%"></i></div><div class="us-pval">'+n(p.views)+'</div></div>').join('')) : '<div style="color:var(--text-secondary);font-size:13px">No page views yet.</div>')
+               + '</div>'
+               + '<div class="card" style="padding:16px"><div class="us-h">Most active signed-in users <span>· last 30 days</span></div>'
+               + ((data.top_users || []).length ? '<div style="overflow-x:auto"><table class="us-utable"><thead><tr><th>Email</th><th>Days</th><th>Views</th><th>Last seen</th></tr></thead><tbody>'
+                    + data.top_users.map((t, ti) => '<tr'+(ti >= 10 ? ' class="us-more" hidden' : '')+'><td style="word-break:break-all">'+esc(t.email)+'</td><td><b>'+n(t.days)+'</b></td><td>'+n(t.views)+'</td><td style="white-space:nowrap">'+esc(String(t.last_seen || '').replace(/^(\d{4})-(\d\d)-(\d\d)/, (m0, a, b, c) => dS(a+'-'+b+'-'+c)))+'</td></tr>').join('')
+                    + '</tbody></table></div>'
+                    + (data.top_users.length > 10 ? '<button id="us-more-btn" class="rs-pill" style="margin-top:10px">Show all '+data.top_users.length+'</button>' : '')
+                    : '<div style="color:var(--text-secondary);font-size:13px">No signed-in visits yet.</div>')
+               + '</div></div>';
+            h += '<div style="font-size:11.5px;color:var(--text-secondary);line-height:1.6;margin-top:12px">'
+               + '• A <b>unique visitor</b> is one signed-in Google account, or one browser for people who aren\'t signed in (a random ID kept in that browser). Someone who browses first and then signs in the same day counts once. The same person on two devices without signing in counts twice.<br>'
+               + '• Search-engine bots and crawlers are not counted. Days are in Indian time (IST).'
+               + (data.excluding_admins ? '<br>• Admin visits (login4amit@gmail.com, amtkulk@gmail.com) are excluded. Untick the box above to include them.' : '')
+               + (data.tracking_since ? '<br>• Counting since <b>'+esc(dL(data.tracking_since))+'</b>.' : '')
+               + '</div>';
+            el.innerHTML = h;
+            const mb = document.getElementById('us-more-btn');
+            if (mb) mb.addEventListener('click', () => { el.querySelectorAll('tr.us-more').forEach(r => { r.hidden = false; }); mb.remove(); });
+            drawCharts();
+        };
+
+        const load = async () => {
+            const st = document.getElementById('us-status');
+            const btn = document.getElementById('us-refresh');
+            if (st) st.innerHTML = '<span class="spinner" style="vertical-align:middle;width:12px;height:12px;margin-right:6px"></span>Loading…';
+            if (btn) btn.disabled = true;
+            try {
+                const res = await fetch(`${API_BASE_URL}/admin/usage?days=${days}&exclude_admins=${exclude ? 1 : 0}`, { headers: Auth.headers(), cache: 'no-store' });
+                let d; try { d = await res.json(); } catch (e) { throw new Error('Server error (Status: '+res.status+')'); }
+                if (!res.ok) throw new Error(d.error || 'Could not load usage');
+                if (!alive()) return;
+                data = d;
+                render();
+                if (st) st.innerHTML = 'Updated '+new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+            } catch (e) {
+                if (st) st.innerHTML = '<span style="color:var(--red);font-weight:600">'+esc(e.message)+'</span>';
+                const el = document.getElementById('us-body');
+                if (el && !data) el.innerHTML = '<div class="card" style="padding:20px;color:var(--red)">'+esc(e.message)+'</div>';
+            } finally { if (btn) btn.disabled = false; }
+        };
+
+        document.getElementById('us-days').addEventListener('change', (e) => { days = +e.target.value; setLS('mw_usage_days', days); load(); });
+        document.getElementById('us-excl').addEventListener('change', (e) => { exclude = e.target.checked; setLS('mw_usage_excl', exclude ? '1' : '0'); load(); });
+        document.getElementById('us-refresh').addEventListener('click', load);
+        const onResize = () => { if (!alive()) { window.removeEventListener('resize', onResize); return; } clearTimeout(resizeT); resizeT = setTimeout(drawCharts, 150); };
+        window.addEventListener('resize', onResize);
+        load();
     },
 
     renderOrders(container) {           // old #orders links land on the Orders tab
