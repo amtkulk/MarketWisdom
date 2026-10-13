@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v52',
+    VERSION: 'v54',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -75,8 +75,21 @@ const app = {
         } catch (e) {}
     },
 
+    // "Version vNN" under the disclaimer on every page (plus the server's version if it differs,
+    // which means the browser still has an old copy → hard refresh).
+    showVersion() {
+        const el = document.getElementById('app-version');
+        if (!el) return;
+        el.textContent = 'Market Wisdom ' + this.VERSION;
+        fetch(`${API_BASE_URL}/version`, { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(d => {
+            if (!d || !d.version) return;
+            el.textContent = 'Market Wisdom ' + this.VERSION + (d.version !== this.VERSION ? ' · server ' + d.version + ' (refresh the page to update)' : '');
+        }).catch(() => {});
+    },
+
     init() {
         this.setupMobileMenu();
+        this.showVersion();
         this.setupAdminGroup();
         console.log('[MarketWisdom] app', this.VERSION,
                     '| gate:', this.GATE_ENABLED ? 'ON' : 'OFF',
@@ -172,6 +185,24 @@ const app = {
             // Re-poll so the server's view (snooze window / read-for-day) drives what's left.
             this.poll();
         },
+    },
+
+    // "Screener ↗  Chart ↗" links shown next to a stock name on every scanner.
+    // Indian stocks → Screener.in + TradingView (NSE, or BSE for a 6-digit BSE code);
+    // US stocks (opts.market === 'us') → TradingView only.
+    stockLinks(ticker, opts) {
+        opts = opts || {};
+        const t = String(ticker || '').trim().toUpperCase().replace(/\.(NS|BO)$/, '');
+        if (!t) return '';
+        const a = (href, label) => '<a class="stk-link" href="' + href + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">' + label + '</a>';
+        if (opts.market === 'us')
+            return '<span class="stk-links">' + a('https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(t), 'Chart ↗') + '</span>';
+        const bse = opts.exchange === 'BSE' || /^\d{6}$/.test(t);
+        const tv = (bse ? 'BSE:' : 'NSE:') + encodeURIComponent(t.replace(/[^A-Z0-9]/g, '_'));   // TradingView: BAJAJ-AUTO → BAJAJ_AUTO, M&M → M_M
+        return '<span class="stk-links">'
+             + a('https://www.screener.in/company/' + encodeURIComponent(t) + '/', 'Screener ↗')
+             + a('https://www.tradingview.com/chart/?symbol=' + tv, 'Chart ↗')
+             + '</span>';
     },
 
     _isSignedIn() {
@@ -680,7 +711,7 @@ const app = {
                 upcoming.forEach(f => {
                     const dt = daysTo(f.next_ex_date);
                     const when = dt === 0 ? 'TODAY' : (dt > 0 ? 'in ' + dt + ' day' + (dt>1?'s':'') : '');
-                    h += '<div style="display:flex;justify-content:space-between;font-size:12.5px"><span><b style="color:var(--text-primary)">'+esc(f.symbol)+'</b> <span style="color:var(--text-secondary)">'+esc(f.name)+'</span></span><span style="color:var(--yellow);font-weight:700">'+fmtDate(f.next_ex_date)+(when?' · '+when:'')+(f.next_amount?' · ₹'+f.next_amount:'')+'</span></div>';
+                    h += '<div style="display:flex;justify-content:space-between;font-size:12.5px"><span><b style="color:var(--text-primary)">'+esc(f.symbol)+'</b>'+app.stockLinks(f.symbol)+' <span style="color:var(--text-secondary)">'+esc(f.name)+'</span></span><span style="color:var(--yellow);font-weight:700">'+fmtDate(f.next_ex_date)+(when?' · '+when:'')+(f.next_amount?' · ₹'+f.next_amount:'')+'</span></div>';
                 });
                 h += '</div></div>';
             }
@@ -701,7 +732,7 @@ const app = {
                     const latest = (f.dividends && f.dividends[0]) ? f.dividends[0] : null;
                     const exCol = f.next_ex_date ? 'var(--yellow)' : 'var(--text-secondary)';
                     h += '<tr style="border-top:1px solid rgba(15,23,42,0.06)">';
-                    h += '<td style="padding:10px 12px"><div style="font-weight:800;color:var(--text-primary)">'+esc(f.symbol)+'</div><div style="font-size:11px;color:var(--text-secondary)">'+esc(f.name)+'</div></td>';
+                    h += '<td style="padding:10px 12px"><div style="font-weight:800;color:var(--text-primary)">'+esc(f.symbol)+app.stockLinks(f.symbol)+'</div><div style="font-size:11px;color:var(--text-secondary)">'+esc(f.name)+'</div></td>';
                     h += '<td style="padding:10px 12px;text-align:right;font-weight:700">'+(f.price!=null?'₹'+Number(f.price).toLocaleString('en-IN'):'—')+'</td>';
                     h += '<td style="padding:10px 12px;text-align:right;font-weight:700;color:'+exCol+'">'+fmtDate(f.next_ex_date)+'</td>';
                     h += '<td style="padding:10px 12px;text-align:right">'+(f.next_amount!=null?'₹'+f.next_amount:'—')+'</td>';
@@ -1043,7 +1074,7 @@ const app = {
                 const sc=s.score>=60?'var(--green)':s.score>=40?'var(--yellow)':'var(--text-secondary)';
                 h+='<tr style="border-bottom:1px solid rgba(15,23,42,0.06);'+bg+'">';
                 h+='<td style="padding:14px 12px;font-weight:800;font-size:14px">'+re+'</td>';
-                h+='<td style="padding:14px 12px;font-weight:800;color:var(--text-primary);font-size:14px">'+s.ticker+'</td>';
+                h+='<td style="padding:14px 12px;font-weight:800;color:var(--text-primary);font-size:14px">'+s.ticker+app.stockLinks(s.ticker, {market})+'</td>';
                 h+='<td style="padding:14px 12px;text-align:right;font-weight:700;font-size:14px">'+cur+s.price.toLocaleString()+'</td>';
                 h+='<td style="padding:14px 12px;text-align:right;color:var(--green);font-weight:600">'+s.pe+'</td>';
                 h+='<td style="padding:14px 12px;text-align:right"><span style="background:'+vc+'20;color:'+vc+';padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700">'+s.vol_ratio+'x</span></td>';
@@ -1139,7 +1170,7 @@ const app = {
                     const rsCol = (s.rs_6m||0) >= 0 ? 'var(--green)' : 'var(--red)';
                     h += '<tr style="border-bottom:1px solid rgba(15,23,42,0.06);'+bg+'">';
                     h += '<td style="padding:12px 10px;font-weight:800">'+medal+'</td>';
-                    h += '<td style="padding:12px 10px;font-weight:800;color:var(--text-primary)">'+s.ticker+(s.macd_bull?' <span title="MACD bullish" style="font-size:10px">📈</span>':'')+'</td>';
+                    h += '<td style="padding:12px 10px;font-weight:800;color:var(--text-primary)">'+s.ticker+(s.macd_bull?' <span title="MACD bullish" style="font-size:10px">📈</span>':'')+app.stockLinks(s.ticker)+'</td>';
                     h += '<td style="padding:12px 10px;text-align:right;font-weight:700">₹'+Number(s.price).toLocaleString("en-IN")+'</td>';
                     if (SHOWMCAP) h += '<td style="padding:12px 10px;text-align:right;color:var(--text-secondary);font-weight:600">'+fmt(s.mcap)+'</td>';
                     h += '<td style="padding:12px 10px;text-align:right"><div style="display:flex;align-items:center;justify-content:flex-end;gap:8px"><div style="width:56px;height:6px;background:rgba(15,23,42,0.08);border-radius:3px;overflow:hidden"><div style="width:'+Math.min(s.score,100)+'%;height:100%;background:'+sc+'"></div></div><b style="color:'+sc+'">'+s.score+'</b></div></td>';
@@ -1301,7 +1332,7 @@ const app = {
                     h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">';
                     h += '<div style="display:flex;align-items:center;gap:12px;min-width:200px">';
                     h += '<div style="font-size:18px;font-weight:800;color:var(--text-secondary);width:28px">'+s.rank+'</div>';
-                    h += '<div><div style="font-weight:800;color:var(--text-primary);font-size:15px">'+s.ticker+(s.macd_bull?' <span title="MACD bullish" style="font-size:11px">📈</span>':'')+'</div><div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center">'+tags+conf+'</div></div>';
+                    h += '<div><div style="font-weight:800;color:var(--text-primary);font-size:15px">'+s.ticker+(s.macd_bull?' <span title="MACD bullish" style="font-size:11px">📈</span>':'')+app.stockLinks(s.ticker)+'</div><div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center">'+tags+conf+'</div></div>';
                     h += '</div>';
                     h += '<div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">';
                     h += '<div style="text-align:right"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">Price</div><div style="font-weight:700">₹'+Number(s.price).toLocaleString("en-IN")+'</div></div>';
@@ -1334,7 +1365,7 @@ const app = {
             const modal = document.getElementById('gems-modal');
             const title = document.getElementById('gems-modal-title');
             const bodyEl = document.getElementById('gems-modal-body');
-            title.innerHTML = '💎 ' + stock.ticker + ' <span style="font-size:12px;color:var(--text-secondary);font-weight:600">· Wonder ' + stock.wonder_score + '</span>';
+            title.innerHTML = '💎 ' + stock.ticker + app.stockLinks(stock.ticker) + ' <span style="font-size:12px;color:var(--text-secondary);font-weight:600">· Wonder ' + stock.wonder_score + '</span>';
             bodyEl.innerHTML = '<div style="text-align:center;padding:30px"><div class="spinner"></div><div style="color:var(--text-secondary);font-size:13px;margin-top:10px">Generating institutional deep-dive from live data…</div></div>';
             modal.style.display = 'flex';
             try {
@@ -1452,7 +1483,7 @@ const app = {
                 if (s.breakout_ext_pct !== null && s.breakout_ext_pct !== undefined) extra = '<div style="text-align:right"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">Past breakout</div><div style="font-weight:700">+'+s.breakout_ext_pct+'%</div></div>';
                 else if (s.spring_undercut_pct !== null && s.spring_undercut_pct !== undefined) extra = '<div style="text-align:right"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">Spring dip</div><div style="font-weight:700">-'+s.spring_undercut_pct+'%</div></div>';
                 h += '<div class="card" style="padding:14px 16px"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">';
-                h += '<div style="display:flex;align-items:center;gap:12px;min-width:220px"><div style="font-size:18px;font-weight:800;color:var(--text-secondary);width:26px">'+s.rank+'</div><div><div style="font-weight:800;color:var(--text-primary);font-size:15px">'+s.ticker+'</div><div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center"><span style="font-size:12px;font-weight:700;color:var(--text-primary)">'+s.phase+'</span> '+tfTag+' '+conf+'</div></div></div>';
+                h += '<div style="display:flex;align-items:center;gap:12px;min-width:220px"><div style="font-size:18px;font-weight:800;color:var(--text-secondary);width:26px">'+s.rank+'</div><div><div style="font-weight:800;color:var(--text-primary);font-size:15px">'+s.ticker+app.stockLinks(s.ticker)+'</div><div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center"><span style="font-size:12px;font-weight:700;color:var(--text-primary)">'+s.phase+'</span> '+tfTag+' '+conf+'</div></div></div>';
                 h += '<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">';
                 h += '<div style="text-align:right"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">Price</div><div style="font-weight:700">₹'+Number(s.price).toLocaleString("en-IN")+'</div></div>';
                 h += '<div style="text-align:right"><div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase">Base range</div><div style="font-weight:700">'+fmt(s.range_pct,'%')+'</div></div>';
@@ -1960,7 +1991,7 @@ const app = {
             el.innerHTML = '<div class="card" style="margin-bottom:14px;padding:16px">'
                 + '<div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px">'
                 +   '<div style="flex:1;min-width:200px"><div style="font-size:18px;font-weight:800;color:var(--text-primary)">'+esc(c.name)+'</div>'
-                +   '<div style="font-size:12.5px;color:var(--text-secondary);margin-top:2px">NSE: <b>'+esc(c.sym)+'</b>'+(c.bse_code ? ' · BSE: '+esc(c.bse_code) : '')+(c.industry ? ' · '+esc(c.industry) : '')+(c.basis ? ' · '+esc(c.basis) : '')+'</div>'
+                +   '<div style="font-size:12.5px;color:var(--text-secondary);margin-top:2px">NSE: <b>'+esc(c.sym)+'</b>'+app.stockLinks(c.sym)+(c.bse_code ? ' · BSE: '+esc(c.bse_code) : '')+(c.industry ? ' · '+esc(c.industry) : '')+(c.basis ? ' · '+esc(c.basis) : '')+'</div>'
                 +   (isLookup ? '<div style="margin-top:6px"><span class="rs-badge '+(c.in_nifty50 ? 'ok' : 'tba')+'">'+(c.in_nifty50 ? 'Nifty 50 company' : '🔎 Your search · not in Nifty 50')+'</span></div>' : '')
                 +   '<div style="margin-top:8px">'+pill+'</div></div>'
                 +   '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select id="rs-pick" class="rs-pick" aria-label="Choose company">'
@@ -2662,8 +2693,7 @@ const app = {
             h += '<div class="mb2-head">';
             h += '<div style="display:flex;align-items:flex-start;gap:12px;flex:1 1 240px;min-width:0"><div style="font-size:18px;font-weight:800;color:var(--text-secondary);width:26px;flex-shrink:0">'+rankCell+'</div><div style="min-width:0">'
                + '<div style="font-weight:800;color:var(--text-primary);font-size:15px">'+esc(s.ticker)
-               + ' <a href="https://www.screener.in/company/'+sym+'/" target="_blank" rel="noopener" style="font-size:11px;font-weight:600;color:var(--text-accent);text-decoration:none;margin-left:6px;white-space:nowrap">Screener ↗</a>'
-               + ' <a href="https://www.tradingview.com/chart/?symbol='+tvSym+'" target="_blank" rel="noopener" style="font-size:11px;font-weight:600;color:var(--text-accent);text-decoration:none;margin-left:4px;white-space:nowrap">Chart ↗</a></div>'
+               + app.stockLinks(s.ticker, { exchange: s.exchange }) + '</div>'
                + (s.name ? '<div style="font-size:12px;color:var(--text-secondary);margin-top:1px">'+esc(s.name)+(s.exchange ? ' · '+esc(s.exchange) : '')+(via ? ' · found via '+esc(via) : '')+'</div>' : '')
                + '<div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap;align-items:center">'+tags+'</div>'
                + '</div></div>';
@@ -3651,7 +3681,7 @@ const app = {
                 return `
                     <tr>
                         <td>${i+1}</td>
-                        <td><b>${s.company_name}</b><br><span style="font-size:11px;color:var(--text-secondary)">${s.ticker}</span></td>
+                        <td><b>${s.company_name}</b><br><span style="font-size:11px;color:var(--text-secondary)">${s.ticker}</span>${app.stockLinks(s.ticker)}</td>
                         <td>${s.sector}</td>
                         <td>
                             <div style="font-size:11px;color:var(--text-secondary)">Saved: Rs.${s.price}</div>
@@ -3754,19 +3784,22 @@ const app = {
             html += Components.StatCard('Common', data.common_count, 'var(--green)');
             html += Components.StatCard(`${l2} Total`, data.count2, '#9333ea');
             html += '</div>';
+            const info = data.info || {};
+            const pct = (s) => { const v = (info[s] || {}).per_chg; return (v === null || v === undefined) ? '' :
+                '<span style="font-weight:700;color:'+(v >= 0 ? 'var(--green)' : 'var(--red)')+'">'+(v > 0 ? '+' : '')+v.toFixed(2)+'%</span>'; };
             const mkTable = (title, stocks, color) => {
                 let r = `<div class="card" style="padding:0;overflow:hidden"><div style="padding:12px 16px;font-weight:800;font-size:13px;color:${color}">${title} (${stocks.length})</div>`;
                 r += stocks.length
-                    ? '<div style="max-height:320px;overflow:auto"><table><tbody>' + stocks.map((s,i)=>`<tr><td style="width:34px;color:var(--text-secondary)">${i+1}</td><td style="color:${color};font-weight:600">${esc(s)}</td></tr>`).join('') + '</tbody></table></div>'
+                    ? '<div style="max-height:360px;overflow:auto"><table><tbody>' + stocks.map((s,i)=>`<tr><td style="width:34px;color:var(--text-secondary)">${i+1}</td><td style="color:${color};font-weight:600">${esc(s)}${app.stockLinks(s)}</td><td style="text-align:right;white-space:nowrap">${pct(s)}</td></tr>`).join('') + '</tbody></table></div>'
                     : '<p style="padding:0 16px 14px;color:var(--text-secondary);font-size:13px">No stocks</p>';
                 return r + '</div>';
             };
             html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px">';
-            html += mkTable('✅ Common', data.common || [], 'var(--green)');
+            html += mkTable('✅ Common' + (Object.keys(info).length ? ' · strongest first' : ''), data.common || [], 'var(--green)');
             html += mkTable(`Only in ${l1}`, data.only_in_1 || [], '#2563eb');
             html += mkTable(`Only in ${l2}`, data.only_in_2 || [], '#9333ea');
             html += '</div>';
-            html += `<div style="text-align:right;margin-top:10px;font-size:11px;color:var(--text-secondary);font-style:italic">Last scanned: ${esc(data.timestamp||'')}</div>`;
+            html += `<div style="text-align:right;margin-top:10px;font-size:11px;color:var(--text-secondary);font-style:italic">Last scanned: ${esc(data.timestamp||'')}${data.took !== undefined ? ' · took ' + esc(data.took) + ' s' : ''}</div>`;
             el.innerHTML = html;
         };
 
@@ -3794,7 +3827,7 @@ const app = {
                               : (r.per_chg >= 0 ? 'var(--green)' : 'var(--red)');
                     html += `<tr>
                         <td style="color:var(--text-secondary);width:34px">${i+1}</td>
-                        <td style="font-weight:700;color:var(--text-primary)">${esc(r.symbol)}</td>
+                        <td style="font-weight:700;color:var(--text-primary)">${esc(r.symbol)}${app.stockLinks(r.symbol)}</td>
                         <td style="text-align:right;font-weight:700;color:${c}">${fmtPct(r.per_chg)}</td>
                         <td style="text-align:right;color:#334155">${fmtPr(r.close)}</td>
                     </tr>`;
@@ -3804,7 +3837,7 @@ const app = {
             } else {
                 html += '<div style="color:var(--text-secondary);font-size:13px">The scanner returned no stocks right now.</div>';
             }
-            html += `<div style="text-align:right;margin-top:12px;font-size:11px;color:var(--text-secondary);font-style:italic">Last scanned: ${esc(data.timestamp||'')}</div>`;
+            html += `<div style="text-align:right;margin-top:12px;font-size:11px;color:var(--text-secondary);font-style:italic">Last scanned: ${esc(data.timestamp||'')}${data.took !== undefined ? ' · took ' + esc(data.took) + ' s' : ''}</div>`;
             html += '</div>';
             el.innerHTML = html;
         };
@@ -3822,32 +3855,59 @@ const app = {
             if (!bar) return;
             if (on) {
                 bar.style.display = 'block';
-                bar.innerHTML = `<div class="card" style="padding:12px 16px;background:rgba(22,163,74,0.06);border-color:rgba(22,163,74,0.25);display:flex;align-items:center;gap:12px;margin-top:14px"><span class="spinner"></span><span style="color:var(--green);font-weight:600">${u.msg} in the background... You can navigate away — the result will be here when you return.</span></div>`;
+                bar.innerHTML = `<div class="card" style="padding:12px 16px;background:rgba(22,163,74,0.06);border-color:rgba(22,163,74,0.25);display:flex;align-items:center;gap:12px;margin-top:14px"><span class="spinner"></span><span style="color:var(--green);font-weight:600">${u.msg}… usually a second or two. If Chartink is slow it continues in the background, so you can navigate away and come back.</span></div>`;
             } else if (errText) {
                 bar.style.display = 'block';
-                bar.innerHTML = `<div class="card" style="padding:12px 16px;border-color:var(--red);margin-top:14px"><span style="color:var(--red);font-weight:600">Scan failed: ${esc(errText)}</span></div>`;
+                bar.innerHTML = `<div class="card" style="padding:12px 16px;border-color:var(--red);margin-top:14px"><span style="color:var(--red);font-weight:600">${esc(errText)}</span></div>`;
             } else {
                 bar.style.display = 'none';
             }
         };
 
+        // Only needed when the server falls back to its slower browser path:
+        // check quickly at first (1 s), then ease off to every 3 s.
         const poll = (mode) => {
-            if (timers[mode]) clearInterval(timers[mode]);
+            if (timers[mode]) clearTimeout(timers[mode]);
             setRunning(mode, true);
-            timers[mode] = setInterval(async () => {
+            let wait = 1000;
+            const tick = async () => {
+                timers[mode] = null;
+                if (!document.getElementById(ui[mode].bar)) return;          // left the page
                 try {
                     const st = await api.chartinkStatus(mode);
                     if (st.status === 'done') {
-                        clearInterval(timers[mode]); timers[mode] = null;
                         setRunning(mode, false);
                         const data = await api.chartinkResults(mode);
                         if (!data.empty) ui[mode].render(data);
-                    } else if (st.status === 'error') {
-                        clearInterval(timers[mode]); timers[mode] = null;
-                        setRunning(mode, false, st.error || 'Unknown error');
+                        return;
+                    }
+                    if (st.status === 'error' || st.status === 'idle') {
+                        setRunning(mode, false, st.status === 'error' ? (st.error || 'Unknown error') : 'The scan was interrupted (server restarted). Please run it again.');
+                        return;
                     }
                 } catch (e) {}
-            }, 5000);
+                wait = Math.min(3000, wait + 500);
+                timers[mode] = setTimeout(tick, wait);
+            };
+            timers[mode] = setTimeout(tick, wait);
+        };
+
+        // Start a scan: the server usually answers with the finished result straight away.
+        const CK_RE = /^https?:\/\/(www\.)?chartink\.com\/screener\/[A-Za-z0-9][A-Za-z0-9\-_]*\/?(\?.*)?$/;
+        const start = async (mode, payload) => {
+            setRunning(mode, true);
+            try {
+                const r = await api.chartinkRun(payload);
+                if (r.status === 'done' && r.results) {
+                    setRunning(mode, false);
+                    ui[mode].render(r.results);
+                } else {
+                    poll(mode);                                              // slow fallback in progress
+                }
+            } catch (err) {
+                setRunning(mode, false, err.message || 'Could not start the scan');
+            }
+            loadSaved();
         };
 
         const resume = async (mode) => {
@@ -3902,24 +3962,19 @@ const app = {
         document.getElementById('btn-chartink').addEventListener('click', async () => {
             const u1 = document.getElementById('url1').value.trim();
             const u2 = document.getElementById('url2').value.trim();
-            if (!u1 || !u2) return alert('Please enter both URLs');
-            try {
-                await api.chartinkRun({ mode:'compare', url1:u1, url2:u2,
-                    label1: document.getElementById('label1').value.trim(),
-                    label2: document.getElementById('label2').value.trim() });
-                poll('compare');
-                loadSaved();
-            } catch (err) { alert('Failed to start: ' + err.message); }
+            if (!u1 || !u2) return setRunning('compare', false, 'Please enter both Chartink screener links.');
+            const bad = [[u1, 'Screener 1'], [u2, 'Screener 2']].filter(x => !CK_RE.test(x[0])).map(x => x[1]);
+            if (bad.length) return setRunning('compare', false, bad.join(' and ') + ' must look like https://chartink.com/screener/your-scan');
+            start('compare', { mode:'compare', url1:u1, url2:u2,
+                label1: document.getElementById('label1').value.trim(),
+                label2: document.getElementById('label2').value.trim() });
         });
 
         document.getElementById('btn-single-scan').addEventListener('click', async () => {
             const url = document.getElementById('single-url').value.trim();
-            if (!url) return alert('Please paste a Chartink screener URL or pick a saved one');
-            try {
-                await api.chartinkRun({ mode:'single', url });
-                poll('single');
-                loadSaved();
-            } catch (err) { alert('Failed to start: ' + err.message); }
+            if (!url) return setRunning('single', false, 'Please paste a Chartink screener link or pick a saved one.');
+            if (!CK_RE.test(url)) return setRunning('single', false, 'The link must look like https://chartink.com/screener/your-scan');
+            start('single', { mode:'single', url });
         });
 
         document.getElementById('saved-scanners').addEventListener('change', (e) => {

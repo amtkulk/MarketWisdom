@@ -39,6 +39,8 @@ _auth_serializer = URLSafeTimedSerializer(APP_SECRET, salt="mw-auth-v1")
 SESSION_MAX_AGE = 60 * 60 * 24 * 30      # 30 days
 
 # Comma-separated list of admin emails (case-insensitive).
+APP_VERSION = "v54"      # keep in step with frontend app.js VERSION (shown in the page footer)
+
 # Set on Azure as an env var: ADMIN_EMAILS=login4amit@gmail.com,other@gmail.com
 # Built-in admins (always), plus any extra emails from the ADMIN_EMAILS env var.
 DEFAULT_ADMINS = {"login4amit@gmail.com", "amtkulk@gmail.com"}
@@ -206,6 +208,12 @@ def api_admin_consents():
         return jsonify({"users": list_user_consents(), "version": CONSENT_VERSION})
     except Exception as e:
         return jsonify({"error": f"Could not load consents: {e}"}), 500
+
+
+@app.route("/api/version")
+def api_version():
+    """Server build version, shown next to the page version in the footer."""
+    return jsonify({"version": APP_VERSION})
 
 
 @app.route("/api/track", methods=["POST"])
@@ -1238,25 +1246,23 @@ def scrape_chartink_http(url):
 
 
 def scrape_chartink_rich(url, max_pages=3):
-    """Return (rich_rows, err) where rich_rows preserve Chartink's native order
-    and carry per-row % change and price. Fast HTTP path first, Playwright fallback."""
-    names, err, rich = scrape_chartink_http(url)
+    """Return (rich_rows, err): rows in Chartink's native order with % change and price.
+    Fast cached HTTP path → headless browser reading Chartink's JSON → old table scrape.
+    An empty list with err=None is a valid 'no stocks match right now' answer."""
+    import chartink as _ck
+    rows, err, _path = _ck.run(url)
+    if rows is not None:
+        return rows, None
+    names, err2, rich = _scrape_chartink_playwright(url, max_pages=max_pages)
     if names:
         return rich, None
-    names, err, rich = _scrape_chartink_playwright(url, max_pages=max_pages)
-    if names:
-        return rich, None
-    return [], err
+    return [], err or err2
 
 
 def scrape_chartink(url, max_pages=3):
-    """Dispatcher (symbols only, for set math): try fast HTTP first, then Playwright.
-    Order-preserving, so callers that want native order can rely on it too."""
-    names, err, _rich = scrape_chartink_http(url)
-    if names:
-        return names, None
-    names, err, _rich = _scrape_chartink_playwright(url, max_pages=max_pages)
-    return names, err
+    """Symbols only (order-preserving)."""
+    rows, err = scrape_chartink_rich(url, max_pages)
+    return [r["symbol"] for r in rows], err
 
 
 _nse_cookie_cache = {"cookie": None, "ts": 0}
@@ -2921,6 +2927,12 @@ def _scanner_name_from_url(url):
 
 @app.route("/api/chartink/run", methods=["POST"])
 def api_chartink_run():
+    """Run one screener (single) or two (compare). Both screeners are fetched at the
+    same time over the fast path and the result is returned IN THIS RESPONSE
+    (status 'done'). Only if Chartink can't be read that way does it fall back to a
+    background browser job (status 'started'; the page then polls)."""
+    import chartink as _ck
+    import concurrent.futures
     user = current_user()
     if not user:
         return jsonify({"error": "Please sign in first."}), 401
@@ -2932,24 +2944,24 @@ def api_chartink_run():
     key = f"{scope}::{mode}"
 
     if mode == "single":
-        url = (body.get("url") or "").strip()
-        if not url.startswith("https://chartink.com/"):
-            return jsonify({"error": "Please provide a valid chartink.com screener URL"}), 400
-        payload = {"url": url, "name": (body.get("name") or "").strip() or _scanner_name_from_url(url)}
+        url = _ck.normalize_url(body.get("url"))
+        if not _ck.valid_url(url):
+            return jsonify({"error": "Please paste a Chartink screener link like https://chartink.com/screener/your-scan"}), 400
+        payload = {"url": url, "name": (body.get("name") or "").strip()[:80] or _scanner_name_from_url(url)}
+        urls = [url]
         try:
             save_chartink_scanner(scope, url, payload["name"])
         except Exception as e:
             print(f"[Chartink] save scanner failed: {e}")
     else:
-        url1 = (body.get("url1") or "").strip()
-        url2 = (body.get("url2") or "").strip()
-        if not url1.startswith("https://chartink.com/") or not url2.startswith("https://chartink.com/"):
-            return jsonify({"error": "Please provide two valid chartink.com screener URLs"}), 400
-        payload = {
-            "url1": url1, "url2": url2,
-            "label1": (body.get("label1") or "").strip() or "Screener 1",
-            "label2": (body.get("label2") or "").strip() or "Screener 2",
-        }
+        url1, url2 = _ck.normalize_url(body.get("url1")), _ck.normalize_url(body.get("url2"))
+        bad = [n for n, u in (("Screener 1", url1), ("Screener 2", url2)) if not _ck.valid_url(u)]
+        if bad:
+            return jsonify({"error": " and ".join(bad) + " must be a Chartink screener link like https://chartink.com/screener/your-scan"}), 400
+        payload = {"url1": url1, "url2": url2,
+                   "label1": (body.get("label1") or "").strip()[:60] or "Screener 1",
+                   "label2": (body.get("label2") or "").strip()[:60] or "Screener 2"}
+        urls = [url1, url2]
         for u, n in ((url1, payload["label1"]), (url2, payload["label2"])):
             try:
                 save_chartink_scanner(scope, u, n if n.lower() not in ("screener 1", "screener 2")
@@ -2963,35 +2975,49 @@ def api_chartink_run():
         _chartink_jobs[key] = {"status": "running", "error": None,
                                "results": _chartink_jobs.get(key, {}).get("results")}
 
+    def build(rows_by_url, took, path):
+        if mode == "single":
+            rows = rows_by_url[payload["url"]]
+            res = {"mode": "single", "url": payload["url"], "name": payload["name"], "rows": rows,
+                   "stocks": [r["symbol"] for r in rows], "count": len(rows)}
+        else:
+            res = _ck.compare(payload["url1"], payload["url2"], payload["label1"], payload["label2"],
+                              rows_by_url[payload["url1"]], rows_by_url[payload["url2"]])
+        res["timestamp"] = _ist_now().strftime("%d %b %Y  %H:%M:%S")
+        res["took"] = round(took, 1)
+        res["path"] = path
+        return res
+
+    # 1) fast path, both screeners at once, answered inline
+    t0 = time.time()
+    got, errs = {}, {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(urls)) as pool:
+        futs = {pool.submit(_ck.run_fast, u): u for u in dict.fromkeys(urls)}
+        for f in concurrent.futures.as_completed(futs):
+            u = futs[f]
+            try:
+                got[u] = f.result()
+            except Exception as e:
+                errs[u] = str(e)
+    if not errs:
+        result = build(got, time.time() - t0, "fast")
+        with _chartink_jobs_lock:
+            _chartink_jobs[key] = {"status": "done", "error": None, "results": result}
+        return jsonify({"status": "done", "results": result})
+
+    # 2) fallback for the screener(s) the fast path couldn't read: background browser job
+    print(f"[Chartink] fast path failed for {list(errs)}: {errs}; using browser fallback")
+
     def worker():
         try:
-            if mode == "single":
-                rows, err = scrape_chartink_rich(payload["url"], 3)
+            for u in list(errs):
+                rows, err = scrape_chartink_rich(u, 3)
                 if err and not rows:
-                    raise Exception(err)
-                result = {"mode": "single", "url": payload["url"], "name": payload["name"],
-                          "rows": rows,
-                          "stocks": [r["symbol"] for r in rows],   # kept for back-compat
-                          "count": len(rows)}
-            else:
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                    f1 = pool.submit(scrape_chartink, payload["url1"], 3)
-                    f2 = pool.submit(scrape_chartink, payload["url2"], 3)
-                    l1, e1 = f1.result()
-                    l2, e2 = f2.result()
-                if e1: raise Exception(f"Screener 1: {e1}")
-                if e2: raise Exception(f"Screener 2: {e2}")
-                s1, s2 = set(l1), set(l2)
-                result = {"mode": "compare",
-                          "url1": payload["url1"], "url2": payload["url2"],
-                          "label1": payload["label1"], "label2": payload["label2"],
-                          "list1": sorted(l1), "list2": sorted(l2),
-                          "common": sorted(s1 & s2),
-                          "only_in_1": sorted(s1 - s2), "only_in_2": sorted(s2 - s1),
-                          "count1": len(l1), "count2": len(l2),
-                          "common_count": len(s1 & s2)}
-            result["timestamp"] = datetime.now().strftime("%d %b %Y  %H:%M:%S")
+                    label = "Screener 1" if (mode == "compare" and u == payload.get("url1")) else \
+                            "Screener 2" if mode == "compare" else "Scanner"
+                    raise Exception(f"{label}: {err}")
+                got[u] = rows
+            result = build(got, time.time() - t0, "browser")
             with _chartink_jobs_lock:
                 _chartink_jobs[key] = {"status": "done", "error": None, "results": result}
         except Exception as e:
