@@ -96,19 +96,52 @@ def _params(page, d_from, d_to, category=CATEGORY, subcat=SUBCATEGORY, scrip="")
     }
 
 
-def _bse_get_direct(params, timeout=10):
-    """One API page via curl_cffi (browser TLS fingerprint). Returns dict or raises."""
-    from curl_cffi import requests as cffi
-    r = cffi.get(BSE_API, params=params, headers=_HDRS, impersonate="chrome120", timeout=timeout)
-    if r.status_code != 200:
-        raise RuntimeError(f"BSE API HTTP {r.status_code}")
-    try:
-        data = r.json()
-    except Exception:
-        raise RuntimeError("BSE API returned non-JSON (likely blocked)")
+def short_err(e, limit=140):
+    """One readable line from an exception (no JS/Python stack traces on the page)."""
+    t = str(e or "").strip().splitlines()[0] if str(e or "").strip() else type(e).__name__
+    t = re.split(r"\s+at\s+(?:https?://|\S+\s*\(|eval\b|<anonymous>)", t)[0]   # drop JS stack tails
+    t = re.sub(r"https?://\S+", "", t).strip(" :")
+    return (t[:limit] + "…") if len(t) > limit else (t or "no response")
+
+
+def _check_payload(data):
     if not isinstance(data, dict) or "Table" not in data:
-        raise RuntimeError("BSE API returned an unexpected payload")
+        raise RuntimeError("BSE returned an unexpected payload (likely blocked)")
     return data
+
+
+_warm = {"cookies": None, "ts": 0}
+
+
+def _bse_get_direct(params, timeout=10):
+    """One API page via curl_cffi (browser TLS fingerprint). Tries: plain call →
+    call with a fresh bseindia.com session's cookies → a second browser identity.
+    Returns dict or raises with a short reason."""
+    from curl_cffi import requests as cffi
+    reasons = []
+    attempts = [("chrome120", False), ("chrome120", True), ("chrome124", True)]
+    for imp, warm in attempts:
+        try:
+            cookies = None
+            if warm:
+                if not _warm["cookies"] or time.time() - _warm["ts"] > 600:
+                    w = cffi.get("https://www.bseindia.com/", headers={"User-Agent": _HDRS["User-Agent"],
+                                 "Accept": "text/html,application/xhtml+xml"}, impersonate=imp, timeout=timeout)
+                    _warm.update({"cookies": dict(w.cookies), "ts": time.time()})
+                cookies = _warm["cookies"]
+            r = cffi.get(BSE_API, params=params, headers=_HDRS, cookies=cookies, impersonate=imp, timeout=timeout)
+            if r.status_code != 200:
+                reasons.append(f"HTTP {r.status_code}")
+                continue
+            try:
+                return _check_payload(r.json())
+            except ValueError:
+                reasons.append("non-JSON reply (blocked)")
+        except RuntimeError as e:
+            reasons.append(str(e))
+        except Exception as e:
+            reasons.append(short_err(e, 60))
+    raise RuntimeError("direct: " + ", ".join(dict.fromkeys(reasons)))
 
 
 class BseClient:
@@ -118,38 +151,71 @@ class BseClient:
     def __init__(self, allow_browser=True):
         self.allow_browser = allow_browser
         self.mode = "direct"
-        self._pw = self._browser = self._page = None
+        self._pw = self._browser = self._ctx = self._page = None
+        self._direct_err = None
 
     def get(self, params):
         if self.mode == "direct":
             try:
                 return _bse_get_direct(params)
             except Exception as e:
+                self._direct_err = short_err(e)
                 if not self.allow_browser:
-                    raise
+                    raise RuntimeError(self._direct_err)
                 print(f"[Corp] direct BSE call failed ({e}); switching to headless browser")
                 self._open_browser()
-        return self._browser_get(params)
+        try:
+            return self._browser_get(params)
+        except Exception as e:
+            raise RuntimeError("; ".join(x for x in (self._direct_err, "browser: " + short_err(e, 80)) if x))
 
     def _open_browser(self):
         from playwright.sync_api import sync_playwright
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(headless=True)
-        ctx = self._browser.new_context(user_agent=_HDRS["User-Agent"])
-        self._page = ctx.new_page()
-        self._page.goto(BSE_ANN_PAGE, wait_until="domcontentloaded", timeout=45000)
+        self._ctx = self._browser.new_context(user_agent=_HDRS["User-Agent"])
+        self._page = self._ctx.new_page()
+        try:
+            self._page.goto(BSE_ANN_PAGE, wait_until="domcontentloaded", timeout=45000)
+        except Exception as e:
+            print(f"[Corp] bseindia.com page load: {e}")
         self.mode = "browser"
 
     def _browser_get(self, params):
+        """Three ways, most robust first: (1) the browser context's own HTTP client
+        (shares bseindia.com cookies, no CORS rules), (2) opening the API URL as a page,
+        (3) an in-page fetch without credentials."""
         from urllib.parse import urlencode
-        data = self._page.evaluate(
-            "async (u) => { const r = await fetch(u, {credentials: 'include', "
-            "headers: {'Accept': 'application/json, text/plain, */*'}}); "
-            "if (!r.ok) throw new Error('HTTP ' + r.status); return await r.json(); }",
-            BSE_API + "?" + urlencode(params))
-        if not isinstance(data, dict) or "Table" not in data:
-            raise RuntimeError("unexpected payload via browser")
-        return data
+        url = BSE_API + "?" + urlencode(params)
+        reasons = []
+        try:
+            r = self._ctx.request.get(url, headers=_HDRS, timeout=30000)
+            if r.ok:
+                return _check_payload(r.json())
+            reasons.append(f"HTTP {r.status}")
+        except Exception as e:
+            reasons.append(short_err(e, 60))
+        try:
+            p = self._ctx.new_page()
+            try:
+                resp = p.goto(url, referer="https://www.bseindia.com/", wait_until="domcontentloaded", timeout=30000)
+                if resp and resp.ok:
+                    import json as _json
+                    return _check_payload(_json.loads(p.inner_text("body")))
+                reasons.append(f"page HTTP {resp.status if resp else '—'}")
+            finally:
+                p.close()
+        except Exception as e:
+            reasons.append(short_err(e, 60))
+        try:
+            data = self._page.evaluate(
+                "async (u) => { const r = await fetch(u, {credentials: 'omit', "
+                "headers: {'Accept': 'application/json, text/plain, */*'}}); "
+                "if (!r.ok) throw new Error('HTTP ' + r.status); return await r.json(); }", url)
+            return _check_payload(data)
+        except Exception as e:
+            reasons.append(short_err(e, 60))
+        raise RuntimeError(", ".join(dict.fromkeys(reasons)))
 
     def close(self):
         try:
@@ -1277,7 +1343,7 @@ def _run_job(fetch_feeds, momentum_feeds, priority, fetch_only=False):
                             _note_fetch(feed, client.mode)
                     except Exception as e:
                         with _lock:
-                            _S["store"]["last_error"][feed] = f"BSE did not respond: {e}"
+                            _S["store"]["last_error"][feed] = f"BSE did not respond ({short_err(e)})"
                 for feed in [f for f in order if f in momentum_feeds]:
                     _job_stage(f"Loading 30 days of {FEEDS[feed]['label']} (for frequency counts)")
                     with _lock:
@@ -1669,7 +1735,7 @@ def get_feed_view(feed="orders", force=False):
             need_fetch = False
         except Exception as e:
             with _lock:
-                _S["store"]["last_error"][feed] = f"BSE did not respond: {e}"
+                _S["store"]["last_error"][feed] = f"BSE did not respond ({short_err(e)})"
         finally:
             client.close()
     view = build_view(feed)
@@ -1786,7 +1852,7 @@ def get_raw_view(feed="orders", force=False):
             threading.Thread(target=_save_store, daemon=True).start()
         except Exception as e:
             with _lock:
-                _S["store"]["last_error"][feed] = f"BSE did not respond: {e}"
+                _S["store"]["last_error"][feed] = f"BSE did not respond ({short_err(e)})"
         finally:
             client.close()
     view = build_raw_view(feed)
