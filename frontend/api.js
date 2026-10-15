@@ -323,6 +323,18 @@ const api = {
         return data;
     },
 
+    async corpIngest(feed, rows) {
+        const res = await fetch(`${API_BASE_URL}/corp/ingest`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...this._authH() },
+            body: JSON.stringify({ feed, rows })
+        });
+        let data;
+        try { data = await res.json(); } catch(e) { throw new Error(`Server error (Status: ${res.status}).`); }
+        if (!res.ok) throw new Error(data.error || 'Could not save');
+        return data;
+    },
+
     async fetchOrders(refresh) {
         const res = await fetch(`${API_BASE_URL}/orders${refresh ? '?refresh=1' : ''}`);
         let data;

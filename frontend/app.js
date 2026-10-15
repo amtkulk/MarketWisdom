@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v56',
+    VERSION: 'v57',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -2159,7 +2159,16 @@ const app = {
             if (!d) { el.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Fetching from BSE…'; return; }
             if (sub) sub.innerHTML = 'BSE corporate announcements · Segment: <b>Equity</b> · Category: <b>Company Update</b> · Sub Category: <b>'+esc(d.subcategory)+'</b>. Listed exactly as on bseindia.com: newest first, last 3 filing days.';
             let h = '';
-            if (d.error) h += '<div style="color:#a16207;font-weight:600;margin-bottom:3px">⚠ '+esc(d.error)+'. Showing the last saved list.</div>';
+            if (d.relay) {
+                h += '<div style="color:var(--green);font-weight:600;margin-bottom:3px">✓ Live from BSE, fetched by your browser'
+                   + (d.relay === 'saved' ? ' and saved for all visitors' : '') + '. (BSE blocks our cloud server, not your browser.)</div>';
+            } else if (d.relaying) {
+                h += '<div style="color:var(--text-accent);font-weight:600;margin-bottom:3px"><span class="spinner" style="vertical-align:middle;margin-right:6px;width:12px;height:12px"></span>BSE blocks our server, so your browser is fetching the latest list from BSE…</div>';
+            } else if (d.error) {
+                h += '<div style="color:#a16207;font-weight:600;margin-bottom:3px">⚠ ' + (d.browser_failed
+                    ? 'BSE is blocking both our server and this page\'s request from your browser. Showing the last saved list; BSE\'s own page is below.'
+                    : esc(d.error) + '. Showing the last saved list.') + '</div>';
+            }
             h += 'Total No of Announcements <b style="color:var(--text-primary)">'+(d.total || 0)+'</b>'
                + (d.updated_at ? ' · updated <b style="color:var(--text-primary)">'+esc(d.updated_at)+'</b>' : '');
             if (d.fetching) h += ' <span style="margin-left:8px;color:var(--text-accent);font-weight:600"><span class="spinner" style="vertical-align:middle;margin-right:4px;width:12px;height:12px"></span>Fetching…</span>';
@@ -2191,7 +2200,96 @@ const app = {
                     + (d.error ? 'Couldn\'t reach BSE yet and nothing is saved. Try Refresh in a minute.' : 'No announcements in this sub category in the last few days.') + '</div>';
                 return;
             }
-            el.innerHTML = (d.days || []).map(day => '<div class="cr-day">'+esc(day.label)+'</div>' + day.items.map(itemHtml).join('')).join('');
+            el.innerHTML = (d.browser_failed ? bseFallbackHtml() : '')
+                + (d.days || []).map(day => '<div class="cr-day">'+esc(day.label)+'</div>' + day.items.map(itemHtml).join('')).join('');
+            const sb = document.getElementById('cr-show-bse');
+            if (sb) sb.addEventListener('click', () => {
+                const box = document.getElementById('cr-bse-frame');
+                if (box) box.innerHTML = '<iframe src="https://www.bseindia.com/corporates/ann.html" title="BSE corporate announcements" style="width:100%;height:75vh;border:1px solid var(--border-color);border-radius:10px;background:#fff" referrerpolicy="no-referrer"></iframe>'
+                    + '<div style="font-size:11.5px;color:var(--text-secondary);margin-top:6px">If the box stays blank, BSE doesn\'t allow its page inside other sites; use the button above. On BSE choose Category <b>Company Update</b> and Sub Category <b>'+esc(d.subcategory)+'</b>.</div>';
+                sb.remove();
+            });
+        };
+
+        const bseFallbackHtml = () => '<div class="card" style="margin-bottom:14px;padding:14px 16px;border-color:rgba(234,179,8,.45)">'
+            + '<div style="font-weight:800;color:var(--text-primary);margin-bottom:4px">See today\'s announcements on BSE</div>'
+            + '<div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:10px">On BSE pick Segment <b>Equity</b>, Category <b>Company Update</b>, Sub Category <b>'+esc((cache[tab] || {}).subcategory || '')+'</b>, then Submit.</div>'
+            + '<div style="display:flex;gap:8px;flex-wrap:wrap"><a href="https://www.bseindia.com/corporates/ann.html" target="_blank" rel="noopener" style="display:inline-block;padding:8px 16px;font-size:13px;font-weight:700;text-decoration:none;color:#fff;background:var(--text-accent);border-radius:10px">Open BSE announcements ↗</a>'
+            + '<button id="cr-show-bse" class="btn" style="padding:8px 16px;font-size:13px;font-weight:700;background:var(--bg-card);color:var(--text-accent);border:1px solid var(--text-accent)">Show BSE\'s page here</button></div>'
+            + '<div id="cr-bse-frame" style="margin-top:10px"></div></div>';
+
+        // ── When BSE blocks our cloud server, fetch the same data from THIS browser ──
+        // (people's browsers aren't blocked). Same API + filters bseindia.com uses.
+        const BSE_API = 'https://api.bseindia.com/BseIndiaAPI/api/AnnSubCategoryGetData/w';
+        const ymd = (d) => d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+        const bseFromBrowser = async (subcat) => {
+            const to = new Date(), from = new Date(Date.now() - 7 * 864e5);
+            let rows = [], page = 1, pages = 1;
+            while (page <= Math.min(pages, 6)) {
+                const qs = new URLSearchParams({ pageno: page, strCat: 'Company Update', subcategory: subcat, strPrevDate: ymd(from),
+                                                 strToDate: ymd(to), strSearch: 'P', strscrip: '', strType: 'C' });
+                let data = null, lastErr = null;
+                for (const rp of ['no-referrer', 'strict-origin-when-cross-origin']) {
+                    try {
+                        const r = await fetch(BSE_API + '?' + qs, { mode: 'cors', credentials: 'omit', referrerPolicy: rp, cache: 'no-store' });
+                        if (!r.ok) throw new Error('HTTP ' + r.status);
+                        data = await r.json();
+                        if (!data || !Array.isArray(data.Table)) throw new Error('unexpected reply');
+                        break;
+                    } catch (e) { lastErr = e; data = null; }
+                }
+                if (!data) throw lastErr || new Error('blocked');
+                if (!data.Table.length) break;
+                rows = rows.concat(data.Table);
+                pages = parseInt(data.Table[0].TotalPageCnt || 1, 10) || 1;
+                page++;
+            }
+            return rows;
+        };
+        // BSE rows → the same view the server builds (BSE's order, last 3 filing days)
+        const MONS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const bseTime = (v) => { const m = /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)/.exec(String(v || '')); return m ? { date: m[1]+'-'+m[2]+'-'+m[3], show: m[3]+'-'+m[2]+'-'+m[1]+' '+m[4]+':'+m[5]+':'+m[6], label: m[3]+' '+MONS[+m[2]-1]+' '+m[1] } : null; };
+        const localView = (rows, base) => {
+            const seen = new Set(), items = [];
+            rows.forEach(r => {
+                const id = String(r.NEWSID || '').trim();
+                const t = bseTime(r.DissemDT) || bseTime(r.NEWS_DT) || bseTime(r.DT_TM);
+                if (!id || seen.has(id) || !t) return;
+                seen.add(id);
+                const rc = bseTime(r.News_submission_dt);
+                const size = typeof r.Fld_Attachsize === 'number' ? r.Fld_Attachsize : null;
+                items.push({ date: t.date, label: t.label, subject: String(r.NEWSSUB || '').replace(/\s+/g, ' ').trim(),
+                    headline: String(r.HEADLINE || '').replace(/\s+/g, ' ').trim(), category: String(r.CATEGORYNAME || '').trim() || 'Company Update',
+                    attachment: String(r.ATTACHMENTNAME || '').trim(), size_mb: size ? Math.round(size / 1048576 * 100) / 100 : null,
+                    recv: rc ? rc.show : null, dissem: t.show, time_taken: String(r.TimeDiff || '').trim() || null });
+            });
+            const dates = [...new Set(items.map(x => x.date))].sort().reverse().slice(0, 3);
+            const keep = items.filter(x => dates.includes(x.date));
+            const days = [];
+            keep.forEach(x => { let d = days.find(y => y.date === x.date); if (!d) { d = { date: x.date, label: x.label, items: [] }; days.push(d); } d.items.push(x); });
+            const now = new Date();
+            return Object.assign({}, base, { days, total: keep.length, empty: !keep.length, error: null, fetching: false,
+                updated_at: now.getDate() + ' ' + MONS[now.getMonth()] + ' ' + now.getFullYear() + ' ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + ' (your browser)' });
+        };
+        const isAdmin = () => !!(typeof Auth !== 'undefined' && Auth.user && Auth.user() && Auth.user().is_admin);
+        const relayTried = {};
+        const relay = async (feed) => {
+            const base = cache[feed];
+            if (!base || !base.error || relayTried[feed] && Date.now() - relayTried[feed] < 60000) return;
+            relayTried[feed] = Date.now();
+            base.relaying = true; if (feed === tab) renderStatus();
+            try {
+                const rows = await bseFromBrowser(base.subcategory);
+                let view = null;
+                if (isAdmin()) {                        // admins' browsers also refresh the saved list for everyone
+                    try { view = await api.corpIngest(feed, rows); view.relay = 'saved'; } catch (e) { view = null; }
+                }
+                if (!view) { view = localView(rows, base); view.relay = 'local'; }
+                cache[feed] = view;
+            } catch (e) {
+                base.relaying = false; base.browser_failed = (e && e.message) || 'blocked';
+            }
+            if (alive() && feed === tab) renderAll();
         };
 
         const renderAll = () => { renderTabs(); renderStatus(); renderList(); };
@@ -2214,7 +2312,8 @@ const app = {
                 if (btn && my === loadSeq) { btn.disabled = false; btn.innerHTML = '↻ Refresh'; }
             }
             const d = cache[feed];
-            if (d && d.fetching && alive() && my === loadSeq) pollTimer = setTimeout(() => load(false), 6000);
+            if (d && d.error && alive() && my === loadSeq) relay(feed);
+            else if (d && d.fetching && alive() && my === loadSeq) pollTimer = setTimeout(() => load(false), 6000);
         };
 
         const switchTab = (f) => {

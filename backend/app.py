@@ -39,7 +39,7 @@ _auth_serializer = URLSafeTimedSerializer(APP_SECRET, salt="mw-auth-v1")
 SESSION_MAX_AGE = 60 * 60 * 24 * 30      # 30 days
 
 # Comma-separated list of admin emails (case-insensitive).
-APP_VERSION = "v56"      # keep in step with frontend app.js VERSION (shown in the page footer)
+APP_VERSION = "v57"      # keep in step with frontend app.js VERSION (shown in the page footer)
 
 # Set on Azure as an env var: ADMIN_EMAILS=login4amit@gmail.com,other@gmail.com
 # Built-in admins (always), plus any extra emails from the ADMIN_EMAILS env var.
@@ -3326,6 +3326,24 @@ def api_corp():
         import traceback
         print(traceback.format_exc())
         return jsonify({"error": f"Corporate actions feed failed: {e}", "days": [], "watch": [], "stats": {}}), 500
+
+
+@app.route("/api/corp/ingest", methods=["POST"])
+def api_corp_ingest():
+    """Admin-only: rows the admin's browser fetched from BSE (BSE blocks our cloud
+    server, not people's browsers). Validated + saved so every visitor sees them."""
+    _, err = _require_admin()
+    if err: return err
+    try:
+        from orders import ingest_browser_rows
+        body = request.get_json(silent=True) or {}
+        return jsonify(ingest_browser_rows((body.get("feed") or "orders").lower(), body.get("rows") or []))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({"error": f"Could not save: {e}"}), 500
 
 
 @app.route("/api/orders")

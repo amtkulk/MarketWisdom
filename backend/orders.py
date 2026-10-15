@@ -1312,6 +1312,53 @@ def _job_stage(s):
         _S["job"]["stage"] = s
 
 
+def _set_err(feed, e):
+    """Record why BSE couldn't be read (call under lock). Remembers when the headless
+    browser was refused too, so we don't relaunch it on every page view (BSE blocks
+    cloud-server addresses; retrying for 30 minutes only burns server memory)."""
+    msg = f"BSE did not respond ({short_err(e)})"
+    _S["store"]["last_error"][feed] = msg
+    if "browser:" in msg:
+        _S.setdefault("browser_fail_at", {})[feed] = time.time()
+
+
+BROWSER_RETRY_AFTER = 30 * 60
+
+
+def ingest_browser_rows(feed, rows):
+    """Save BSE rows that an admin's own browser fetched from api.bseindia.com
+    (used when BSE blocks our cloud server). Rows are re-validated and normalized
+    exactly like server-fetched ones. Returns the refreshed raw view."""
+    feed = feed if feed in FEEDS else "orders"
+    if not isinstance(rows, list):
+        raise ValueError("rows must be a list")
+    keys = ("NEWSID", "NEWSSUB", "SCRIP_CD", "SLONGNAME", "DissemDT", "NEWS_DT", "DT_TM", "NSURL",
+            "News_submission_dt", "ATTACHMENTNAME", "HEADLINE", "TimeDiff", "CATEGORYNAME", "SUBCATNAME")
+    clean = []
+    for r in rows[:600]:
+        if not isinstance(r, dict):
+            continue
+        nid = str(r.get("NEWSID") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9\-]{6,64}", nid):
+            continue
+        c = {k: (str(r.get(k))[:1000] if r.get(k) is not None else None) for k in keys}
+        att = c.get("ATTACHMENTNAME") or ""
+        if att and not re.fullmatch(r"[A-Za-z0-9_\-\.]{1,120}", att):
+            c["ATTACHMENTNAME"] = None
+        ns = c.get("NSURL") or ""
+        if ns and not ns.startswith("https://www.bseindia.com/"):
+            c["NSURL"] = None
+        size = r.get("Fld_Attachsize")
+        c["Fld_Attachsize"] = size if isinstance(size, (int, float)) and 0 <= size < 5e8 else None
+        clean.append(c)
+    with _lock:
+        _load_store()
+        _merge(clean, feed, record_order=True)
+        _note_fetch(feed, "browser relay")
+    threading.Thread(target=_save_store, daemon=True).start()
+    return build_raw_view(feed)
+
+
 def _note_fetch(feed, how):
     st = _S["store"]
     st["source"] = f"live ({how})"
@@ -1343,7 +1390,7 @@ def _run_job(fetch_feeds, momentum_feeds, priority, fetch_only=False):
                             _note_fetch(feed, client.mode)
                     except Exception as e:
                         with _lock:
-                            _S["store"]["last_error"][feed] = f"BSE did not respond ({short_err(e)})"
+                            _set_err(feed, e)
                 for feed in [f for f in order if f in momentum_feeds]:
                     _job_stage(f"Loading 30 days of {FEEDS[feed]['label']} (for frequency counts)")
                     with _lock:
@@ -1735,7 +1782,7 @@ def get_feed_view(feed="orders", force=False):
             need_fetch = False
         except Exception as e:
             with _lock:
-                _S["store"]["last_error"][feed] = f"BSE did not respond ({short_err(e)})"
+                _set_err(feed, e)
         finally:
             client.close()
     view = build_view(feed)
@@ -1852,10 +1899,12 @@ def get_raw_view(feed="orders", force=False):
             threading.Thread(target=_save_store, daemon=True).start()
         except Exception as e:
             with _lock:
-                _S["store"]["last_error"][feed] = f"BSE did not respond ({short_err(e)})"
+                _set_err(feed, e)
         finally:
             client.close()
     view = build_raw_view(feed)
-    if need_fetch and _start_job([feed], [], feed, fetch_only=True):
+    recent_browser_fail = time.time() - (_S.get("browser_fail_at") or {}).get(feed, 0) < BROWSER_RETRY_AFTER
+    if need_fetch and not recent_browser_fail and _start_job([feed], [], feed, fetch_only=True):
         view["fetching"] = True
+    view["server_blocked"] = bool(view.get("error")) and ("403" in (view.get("error") or "") or recent_browser_fail)
     return view
