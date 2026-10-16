@@ -39,7 +39,7 @@ _auth_serializer = URLSafeTimedSerializer(APP_SECRET, salt="mw-auth-v1")
 SESSION_MAX_AGE = 60 * 60 * 24 * 30      # 30 days
 
 # Comma-separated list of admin emails (case-insensitive).
-APP_VERSION = "v57"      # keep in step with frontend app.js VERSION (shown in the page footer)
+APP_VERSION = "v59"      # keep in step with frontend app.js VERSION (shown in the page footer)
 
 # Set on Azure as an env var: ADMIN_EMAILS=login4amit@gmail.com,other@gmail.com
 # Built-in admins (always), plus any extra emails from the ADMIN_EMAILS env var.
@@ -208,6 +208,18 @@ def api_admin_consents():
         return jsonify({"users": list_user_consents(), "version": CONSENT_VERSION})
     except Exception as e:
         return jsonify({"error": f"Could not load consents: {e}"}), 500
+
+
+@app.before_request
+def _start_background_readers():
+    """Keep NSE's filing feeds (Corporate Actions + result dates) read every ~10 min."""
+    if os.environ.get("MW_NO_POLLERS") == "1":
+        return
+    try:
+        import nse_feeds
+        nse_feeds.ensure_poller()
+    except Exception as e:
+        print(f"[NSE] poller start failed: {e}")
 
 
 @app.route("/api/version")

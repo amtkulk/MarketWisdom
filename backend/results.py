@@ -415,6 +415,124 @@ def fetch_dividend_history(sym):
     return out
 
 
+# ══════════════════════════════════════════════════════════════
+#  Stock move after results
+# ══════════════════════════════════════════════════════════════
+
+_yahoo_cache = {}            # sym → (ts, [dates])
+
+
+def _yticker(sym):
+    return f"{sym}.BO" if str(sym).isdigit() else f"{sym}.NS"
+
+
+def fetch_prices(syms):
+    """{sym: [(date, close, volume)]} for the stocks + '^NSEI' (Nifty 50), ~2 years daily."""
+    try:
+        import screener as S
+    except Exception:
+        return {}
+    tick = {_yticker(s): s for s in syms}
+    out = {}
+    try:
+        data = S._bulk_download_ohlc(list(tick) + ["^NSEI"], "2y")
+    except Exception as e:
+        print(f"[Results] price download failed: {e}")
+        return out
+    for t, rows in (data or {}).items():
+        key = "^NSEI" if t == "^NSEI" else tick.get(t)
+        if key:
+            out[key] = [((r[0].date() if hasattr(r[0], "date") else r[0]), r[1], r[2]) for r in rows]
+    return out
+
+
+def yahoo_result_dates(sym):
+    """Past + upcoming earnings dates from Yahoo Finance's calendar (IST dates). Cached 12 h."""
+    now = _now_ts()
+    hit = _yahoo_cache.get(sym)
+    if hit and now - hit[0] < 12 * 3600:
+        return hit[1]
+    dates = []
+    try:
+        import yfinance as yf
+        df = yf.Ticker(_yticker(sym)).get_earnings_dates(limit=12)
+        for ts in (df.index if df is not None else []):
+            try:
+                ts = ts.tz_convert("Asia/Kolkata") if getattr(ts, "tzinfo", None) else ts
+                dates.append(ts.date())
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"[Results] Yahoo earnings dates {sym}: {e}")
+    _yahoo_cache[sym] = (now, dates)
+    return dates
+
+
+def _window(qe):
+    """Days after quarter end when results can come out (SEBI: 45 days; 60 for March) + slack."""
+    return qe + dt.timedelta(days=7), qe + dt.timedelta(days=(75 if qe.month == 3 else 60))
+
+
+def result_reaction(qe, rows, nifty, filing_dates=(), yahoo_dates=(), today=None):
+    """How the stock moved on the first trading day AFTER the results.
+    Result date from: exchange filing → Yahoo calendar → biggest volume spike (estimate).
+    rows / nifty: [(date, close, volume)] oldest → newest. Returns dict or None. Pure."""
+    today = today or _today()
+    if not rows or len(rows) < 30:
+        return None
+    lo, hi = _window(qe)
+    days = [r[0] for r in rows]
+    close = {r[0]: r[1] for r in rows}
+    nclose = {r[0]: r[1] for r in (nifty or [])}
+
+    def prev_day(d):
+        ps = [x for x in days if x < d]
+        return ps[-1] if ps else None
+
+    def pct(a, b):
+        return round((a / b - 1) * 100, 2) if a and b else None
+
+    def nifty_move(d):
+        if d not in nclose:
+            return None
+        nd = [x for x in sorted(nclose) if x < d]
+        return pct(nclose[d], nclose[nd[-1]]) if nd else None
+
+    basis, D = None, None
+    for src, ds in (("filing", filing_dates), ("yahoo", yahoo_dates)):
+        c = sorted(d for d in (ds or []) if lo <= d <= hi)
+        if c:
+            basis, D = src, c[0]
+            break
+    if D:
+        after = [x for x in days if x > D]
+        if not after:
+            return {"basis": basis, "result_date": D.isoformat(), "pending": True}
+        R = after[0]
+        P = prev_day(R)
+        out = {"basis": basis, "result_date": D.isoformat(), "reaction_date": R.isoformat(),
+               "move": pct(close[R], close[P]) if P else None, "nifty": nifty_move(R)}
+        if D in close and prev_day(D):
+            out["day_move"] = pct(close[D], close[prev_day(D)])
+        return out
+    # estimate: the trading day in the results window with the biggest volume spike
+    vol = {r[0]: r[2] for r in rows}
+    best, best_ratio = None, 0
+    for i, d in enumerate(days):
+        if not (lo <= d <= min(hi, today)) or i < 21:
+            continue
+        base = sum(vol[x] for x in days[i - 20:i]) / 20
+        ratio = vol[d] / base if base else 0
+        if ratio > best_ratio:
+            best, best_ratio = d, ratio
+    if not best or best_ratio < 1.8:
+        return None
+    P = prev_day(best)
+    return {"basis": "estimated", "result_date": None, "reaction_date": best.isoformat(),
+            "move": pct(close[best], close[P]) if P else None, "nifty": nifty_move(best),
+            "volume_x": round(best_ratio, 1)}
+
+
 def dividend_quarter(ex_date, kind=None):
     """Which results quarter a dividend belongs to. A final dividend goes with the
     March quarter; others with the latest quarter that ended ≥12 days before the
@@ -450,7 +568,7 @@ def _sub(a, b):
     return None if a is None or b is None else round(a - b, 2)
 
 
-def build_company(meta, page, cols, today, cal_dates=None, divs=None, filed_on=None):
+def build_company(meta, page, cols, today, cal_dates=None, divs=None, filed_on=None, px=None):
     """Assemble the 4-quarter comparison for one company. Pure (testable)."""
     rows = (page or {}).get("rows") or {}
     dates = (page or {}).get("dates") or []
@@ -544,6 +662,15 @@ def build_company(meta, page, cols, today, cal_dates=None, divs=None, filed_on=N
 
     # Status of each column (announced or not) + the latest quarter's dates
     have = [qe in dates and at("np", qe) is not None for qe in cols]
+
+    # Stock move on the first trading day after each quarter's results
+    if px and px.get("rows"):
+        moves = []
+        for i, qe in enumerate(cols):
+            r = result_reaction(qe, px["rows"], px.get("nifty"), px.get("filing") or [], px.get("yahoo") or [], today) if have[i] else None
+            moves.append(r)
+        metrics.append({"key": "move", "label": "Stock move after results", "unit": "move",
+                        "vals": [(m or {}).get("move") for m in moves], "items": moves})
     latest = cols[-1]
     status = {"announced": have[-1]}
     future = sorted(d for d in (cal_dates or []) if d > latest)
@@ -558,7 +685,7 @@ def build_company(meta, page, cols, today, cal_dates=None, divs=None, filed_on=N
             status["note"] = "Board meeting today"
         elif upcoming:
             status["expected_on"] = upcoming[0].isoformat()
-            status["note"] = "Board meeting date (BSE)"
+            status["note"] = "Board meeting date (exchange filing)"
         elif past:
             status["expected_on"] = max(past).isoformat()
             status["note"] = "Results out; figures updating"
@@ -620,14 +747,42 @@ def _cols_meta(cols):
     return [{"qe": qe.isoformat(), "label": q_label(qe), "fy": fy_label(qe)} for qe in cols]
 
 
-def _process_one(meta, cols, today, cal, actions, with_filing=True):
+def _nse_meetings():
+    """Result board-meeting dates from NSE's Board Meetings feed (reachable from the cloud)."""
+    try:
+        import nse_feeds
+        return nse_feeds.result_meetings()
+    except Exception as e:
+        print(f"[Results] NSE meetings unavailable: {e}")
+        return {"by_symbol": {}, "by_name": {}}
+
+
+def _process_one(meta, cols, today, cal, actions, with_filing=True, nse_meet=None, prices=None):
     page = fetch_company_page(meta["sym"])
     code = (page or {}).get("bse_code")
     divs = list((actions or {}).get(code, [])) if code else []
     divs += fetch_dividend_history(meta["sym"])
-    cal_dates = (cal or {}).get(code, []) if code else []
+    cal_dates = list((cal or {}).get(code, [])) if code else []
+    nm = nse_meet if nse_meet is not None else _nse_meetings()
+    try:
+        import nse_feeds
+        name_key = nse_feeds._norm_name((page or {}).get("name") or meta.get("name"))
+    except Exception:
+        name_key = None
+    nse_dates = (nm.get("by_symbol") or {}).get(meta["sym"], []) + ((nm.get("by_name") or {}).get(name_key, []) if name_key else [])
+    for d in nse_dates:
+        if d > cols[-1] and d not in cal_dates:
+            cal_dates.append(d)
+    # prices for the "stock move after results" row
+    if prices is None:
+        prices = fetch_prices([meta["sym"]])
+    rows = (prices or {}).get(meta["sym"])
+    px = None
+    if rows:
+        px = {"rows": rows, "nifty": (prices or {}).get("^NSEI"),
+              "filing": sorted(set(cal_dates) | set(nse_dates)), "yahoo": yahoo_result_dates(meta["sym"])}
     filed = None
-    rec = build_company(meta, page, cols, today, cal_dates, divs)
+    rec = build_company(meta, page, cols, today, cal_dates, divs, px=px)
     if with_filing and rec["status"].get("announced") and not rec["status"].get("announced_on") and code:
         filed = fetch_result_filing_date(code, cols[-1], today)
         if filed:
@@ -644,14 +799,16 @@ def _run_job():
         universe, src = nifty50_list()
         cal = fetch_result_calendar(cols[-1], today)
         actions = fetch_upcoming_actions()
+        nse_meet = _nse_meetings()
+        prices = fetch_prices([m["sym"] for m in universe])          # one download for all 50 + Nifty
         companies = dict(store.get("companies") or {}) if store.get("season") == q_label(cols[-1]) else {}
         store.update({"season": q_label(cols[-1]), "cols": _cols_meta(cols),
                       "universe": universe, "universe_src": src,
-                      "calendar_ok": cal is not None, "actions_ok": actions is not None})
+                      "calendar_ok": cal is not None or bool(nse_meet.get("by_symbol")), "actions_ok": actions is not None})
         failed = []
         for i, meta in enumerate(universe):
             try:
-                rec = _process_one(meta, cols, today, cal, actions)
+                rec = _process_one(meta, cols, today, cal, actions, nse_meet=nse_meet, prices=prices)
                 if not rec.get("ok"):
                     failed.append(meta["sym"])
                 if rec.get("ok") or meta["sym"] not in companies:

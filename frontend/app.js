@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v57',
+    VERSION: 'v59',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -1950,13 +1950,32 @@ const app = {
                         if (mi === 0) {
                             let msg;
                             if (s.out_pending) msg = '<div class="rs-blank-t">Results out</div><div>'+esc(dLong(s.expected_on))+'</div><div class="rs-blank-n">Numbers will appear after the next update.</div>';
-                            else if (s.expected_on) msg = '<div class="rs-blank-t">Results expected</div><div class="rs-blank-d">'+esc(dLong(s.expected_on))+'</div><div class="rs-blank-n">Board meeting date filed on BSE</div>';
+                            else if (s.expected_on) msg = '<div class="rs-blank-t">Results expected</div><div class="rs-blank-d">'+esc(dLong(s.expected_on))+'</div><div class="rs-blank-n">Board meeting date filed with the exchange</div>';
                             else msg = '<div class="rs-blank-t">Date not announced</div><div class="rs-blank-n">SEBI deadline</div><div class="rs-blank-d">'+esc(dLong(s.deadline || data.deadline))+'</div>';
                             tr += '<td class="rs-blank" rowspan="'+(metrics.length + 1)+'">'+msg+'</td>';
                         }
                         continue;
                     }
                     const v = m.vals[i];
+                    if (m.unit === 'move') {
+                        const it = (m.items && m.items[i]) || null;
+                        let cell;
+                        if (!it) cell = '<span class="rs-none">—</span>';
+                        else if (it.pending) cell = '<div class="rs-sub2">results '+esc(dShort(it.result_date))+'<br>reaction pending</div>';
+                        else {
+                            const up = it.move >= 0;
+                            const tip = (it.result_date ? 'Results on '+dLong(it.result_date)+'. ' : 'Result date estimated from the biggest volume spike ('+esc(it.volume_x)+'× average). ')
+                                      + 'Move = close on '+dLong(it.reaction_date)+' vs the previous close.'
+                                      + (it.day_move !== undefined && it.day_move !== null ? ' Result-day move: '+(it.day_move > 0 ? '+' : '')+it.day_move+'%.' : '')
+                                      + (it.basis === 'yahoo' ? ' Result date from Yahoo Finance\'s earnings calendar.' : it.basis === 'filing' ? ' Result date from the exchange filing.' : '');
+                            cell = '<div title="'+esc(tip)+'"><div class="rs-val" style="color:'+(it.move === null ? 'var(--text-secondary)' : up ? 'var(--green)' : 'var(--red)')+'">'
+                                 + (it.move === null ? '—' : (up ? '▲ +' : '▼ ')+it.move.toFixed(2)+'%') + '</div>'
+                                 + '<div class="rs-sub2">on '+esc(dShort(it.reaction_date))+(it.basis === 'estimated' ? ' <span class="rs-est">est.</span>' : '')
+                                 + (it.nifty !== null && it.nifty !== undefined ? ' · Nifty '+(it.nifty > 0 ? '+' : '')+it.nifty.toFixed(2)+'%' : '')+'</div></div>';
+                        }
+                        tr += '<td'+(i === last ? ' class="rs-latest"' : '')+'>'+cell+'</td>';
+                        continue;
+                    }
                     if (m.unit === 'div') {
                         const items = (m.items && m.items[i]) || [];
                         tr += '<td'+(i === last ? ' class="rs-latest"' : '')+'>' + (items.length
@@ -1987,6 +2006,7 @@ const app = {
             if (c.lender) notes.push('This is a lender, so EBITDA and EBIT don\'t apply (interest is its raw material). Net Interest Income, operating (financing) profit and NPA are shown instead. Gross/Net NPA: lower is better.');
             else notes.push('EBITDA = operating profit before other income, depreciation, interest and tax. EBIT = profit before tax + interest.');
             notes.push('Dividends are matched to the quarter whose results they came with, using the ex-date (BSE / Yahoo Finance).');
+            if (metrics.some(m => m.key === 'move')) notes.push('Stock move after results = close on the first trading day after the results vs the close before it (hover a cell for dates). Result dates come from the exchange filing, else Yahoo Finance\'s earnings calendar; “est.” means the date was estimated from the biggest volume spike in the results window. The Nifty 50\'s move that day is shown for comparison.');
 
             el.innerHTML = '<div class="card" style="margin-bottom:14px;padding:16px">'
                 + '<div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px">'
@@ -2125,7 +2145,7 @@ const app = {
         container.innerHTML = `
             <div style="margin-bottom:14px">
                 <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">📑 Corporate Actions</h2>
-                <p id="cr-sub" style="font-size:13px;color:var(--text-secondary)">BSE corporate announcements, listed exactly as on bseindia.com: newest first, last 3 filing days.</p>
+                <p id="cr-sub" style="font-size:13px;color:var(--text-secondary)">BSE + NSE corporate announcements: newest first, last 3 filing days.</p>
             </div>
             <div class="corp-layout">
                 <div class="corp-main" style="min-width:0">
@@ -2147,7 +2167,7 @@ const app = {
             const count = (f) => (cache[f] && !cache[f].fetching) ? cache[f].total : undefined;
             el.innerHTML = TABS.map(t => '<button class="corp-tab'+(t.feed === tab ? ' active' : '')+'" data-f="'+t.feed+'">'
                 + '<span class="ct-ico">'+t.icon+'</span><span><div class="ct-label">'+esc(t.label)+'</div>'
-                + '<div class="ct-sub">'+(count(t.feed) !== undefined ? count(t.feed)+' announcement'+(count(t.feed) === 1 ? '' : 's') : 'BSE · Company Update')+'</div></span></button>').join('');
+                + '<div class="ct-sub">'+(count(t.feed) !== undefined ? count(t.feed)+' announcement'+(count(t.feed) === 1 ? '' : 's') : 'BSE + NSE')+'</div></span></button>').join('');
             el.querySelectorAll('.corp-tab').forEach(b => b.addEventListener('click', () => switchTab(b.getAttribute('data-f'))));
         };
 
@@ -2157,31 +2177,41 @@ const app = {
             const d = cache[tab];
             if (!el) return;
             if (!d) { el.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Fetching from BSE…'; return; }
-            if (sub) sub.innerHTML = 'BSE corporate announcements · Segment: <b>Equity</b> · Category: <b>Company Update</b> · Sub Category: <b>'+esc(d.subcategory)+'</b>. Listed exactly as on bseindia.com: newest first, last 3 filing days.';
+            if (sub) sub.innerHTML = 'Corporate announcements from <b>BSE</b> (Equity · Company Update · <b>'+esc(d.subcategory)+'</b>) and <b>NSE</b> (official filings feed). Newest first, last 3 filing days. A filing made on both exchanges is shown once.';
             let h = '';
+            const nse = d.nse || {};
+            h += '<div style="margin-bottom:3px">'
+                + '<b style="color:var(--text-primary)">NSE</b> ' + (nse.error && !nse.updated_at ? '<span style="color:#a16207">⚠ feed unreachable</span>'
+                    : '<span style="color:var(--green)">✓</span> updated ' + esc(nse.updated_at || '—'))
+                + ' &nbsp;·&nbsp; <b style="color:var(--text-primary)">BSE</b> ' + (d.relay ? '<span style="color:var(--green)">✓</span> via your browser'
+                    : d.relaying ? '<span style="color:var(--text-accent)">fetching via your browser…</span>'
+                    : d.error ? (d.browser_failed ? '<span style="color:#a16207">⚠ blocked (last saved list)</span>' : '<span style="color:#a16207">⚠ blocked from our server</span>')
+                    : '<span style="color:var(--green)">✓</span> updated ' + esc(d.updated_at || '—'))
+                + '</div>';
             if (d.relay) {
                 h += '<div style="color:var(--green);font-weight:600;margin-bottom:3px">✓ Live from BSE, fetched by your browser'
                    + (d.relay === 'saved' ? ' and saved for all visitors' : '') + '. (BSE blocks our cloud server, not your browser.)</div>';
             } else if (d.relaying) {
                 h += '<div style="color:var(--text-accent);font-weight:600;margin-bottom:3px"><span class="spinner" style="vertical-align:middle;margin-right:6px;width:12px;height:12px"></span>BSE blocks our server, so your browser is fetching the latest list from BSE…</div>';
-            } else if (d.error) {
-                h += '<div style="color:#a16207;font-weight:600;margin-bottom:3px">⚠ ' + (d.browser_failed
-                    ? 'BSE is blocking both our server and this page\'s request from your browser. Showing the last saved list; BSE\'s own page is below.'
-                    : esc(d.error) + '. Showing the last saved list.') + '</div>';
+            } else if (d.error && d.browser_failed) {
+                h += '<div style="color:#a16207;font-weight:600;margin-bottom:3px">⚠ BSE is blocking both our server and your browser\'s request: NSE filings are live, BSE-only filings are from the last saved list. BSE\'s own page is linked below.</div>';
             }
-            h += 'Total No of Announcements <b style="color:var(--text-primary)">'+(d.total || 0)+'</b>'
-               + (d.updated_at ? ' · updated <b style="color:var(--text-primary)">'+esc(d.updated_at)+'</b>' : '');
+            h += 'Total No of Announcements <b style="color:var(--text-primary)">'+(d.total || 0)+'</b>';
             if (d.fetching) h += ' <span style="margin-left:8px;color:var(--text-accent);font-weight:600"><span class="spinner" style="vertical-align:middle;margin-right:4px;width:12px;height:12px"></span>Fetching…</span>';
             el.innerHTML = h;
         };
 
+        const SRC_CHIP = { 'BSE': ['#1e3a8a', 'rgba(30,58,138,.10)'], 'NSE': ['#b45309', 'rgba(217,119,6,.12)'], 'BSE · NSE': ['#047857', 'rgba(16,185,129,.12)'] };
         const itemHtml = (it) => {
+            const pdfA = (href, label) => '<a href="'+href+'" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;font-weight:700;color:#dc2626;text-decoration:none;white-space:nowrap">📄 '+label+'</a>';
             const pdf = it.attachment
-                ? '<a href="/api/corp/pdf?f='+encodeURIComponent(it.attachment)+'" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;font-weight:700;color:#dc2626;text-decoration:none;white-space:nowrap">📄 PDF'+(it.size_mb ? ' <span style="color:var(--text-primary);font-weight:600">'+it.size_mb.toFixed(2)+' MB</span>' : '')+'</a>'
-                : '';
+                ? pdfA('/api/corp/pdf?f='+encodeURIComponent(it.attachment), 'PDF'+(it.size_mb ? ' <span style="color:var(--text-primary);font-weight:600">'+it.size_mb.toFixed(2)+' MB</span>' : ''))
+                : (it.pdf_url ? pdfA(esc(it.pdf_url), 'PDF') : '');
+            const sc = SRC_CHIP[it.src] || SRC_CHIP.BSE;
+            const chip = '<span title="Filed on '+esc(it.src || 'BSE')+'" style="font-size:10px;font-weight:800;letter-spacing:.04em;padding:2px 7px;border-radius:8px;color:'+sc[0]+';background:'+sc[1]+';white-space:nowrap">'+esc(it.src || 'BSE')+'</span>';
             return '<div class="cr-item">'
                  + '<div class="cr-head"><div class="cr-subject">'+esc(it.subject)+'</div>'
-                 + '<div class="cr-cat">'+esc(it.category)+'</div><div class="cr-pdf">'+pdf+'</div></div>'
+                 + '<div class="cr-cat">'+chip+' '+esc(it.category)+'</div><div class="cr-pdf">'+pdf+'</div></div>'
                  + (it.headline ? '<div class="cr-line">'+esc(it.headline)+'</div>' : '')
                  + '<div class="cr-line cr-times">'
                  + (it.recv ? 'Exchange Received Time <b>'+esc(it.recv)+'</b> ' : '')
@@ -2263,8 +2293,20 @@ const app = {
                     attachment: String(r.ATTACHMENTNAME || '').trim(), size_mb: size ? Math.round(size / 1048576 * 100) / 100 : null,
                     recv: rc ? rc.show : null, dissem: t.show, time_taken: String(r.TimeDiff || '').trim() || null });
             });
-            const dates = [...new Set(items.map(x => x.date))].sort().reverse().slice(0, 3);
-            const keep = items.filter(x => dates.includes(x.date));
+            const normCo = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\b(limited|ltd|the|india|co|company|corporation|corp)\b/g, ' ').replace(/\s+/g, ' ').trim();
+            const ts = (x) => { const m = /^(\d\d)-(\d\d)-(\d{4}) (\d\d):(\d\d):(\d\d)/.exec(x.dissem || ''); return m ? new Date(+m[3], +m[2]-1, +m[1], +m[4], +m[5], +m[6]).getTime() : 0; };
+            items.forEach(x => { x.src = 'BSE'; x.norm = normCo(String(x.subject).split(' - ')[0]); x.t = ts(x); });
+            (base.nse_items || []).forEach(n => {
+                const nt = ts(n);
+                const dup = items.find(b => b.src.startsWith('BSE') && b.norm && b.norm === n.norm && Math.abs(b.t - nt) <= 3 * 3600e3);
+                if (dup) { dup.src = 'BSE · NSE'; return; }
+                const p = String(n.date).split('-');
+                items.push(Object.assign({}, n, { label: p[2] + ' ' + MONS[+p[1]-1] + ' ' + p[0], t: nt }));
+            });
+            items.sort((a, b) => b.t - a.t);
+            const dates = [];
+            items.forEach(x => { if (!dates.includes(x.date)) dates.push(x.date); });
+            const keep = items.filter(x => dates.slice(0, 3).includes(x.date));
             const days = [];
             keep.forEach(x => { let d = days.find(y => y.date === x.date); if (!d) { d = { date: x.date, label: x.label, items: [] }; days.push(d); } d.items.push(x); });
             const now = new Date();

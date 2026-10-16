@@ -1837,39 +1837,91 @@ def resolve_pdf_url(attachment):
 #     (same fields, same order, newest first; no analysis added)
 # ══════════════════════════════════════════════════════════════
 
+def _norm_co(s):
+    s = re.sub(r"[^a-z0-9 ]", " ", (s or "").lower())
+    s = re.sub(r"\b(limited|ltd|the|india|co|company|corporation|corp)\b", " ", s)
+    return " ".join(s.split())
+
+
+def merge_sources(bse_items, nse_items, n_days=3):
+    """BSE + NSE filings → one list, newest first, last n filing days. A company that
+    filed the same news on both exchanges (same name, within 3 h) appears once."""
+    out = [dict(b, src=b.get("src") or "BSE") for b in bse_items]
+    for n in nse_items:
+        nt = dt.datetime.strptime(n["dt"], "%Y-%m-%dT%H:%M:%S")
+        dup = None
+        for b in out:
+            if b["src"].startswith("BSE") and b.get("norm") and b["norm"] == n.get("norm"):
+                bt = dt.datetime.strptime(b["dt"], "%Y-%m-%dT%H:%M:%S")
+                if abs((bt - nt).total_seconds()) <= 3 * 3600:
+                    dup = b
+                    break
+        if dup is not None:
+            dup["src"] = "BSE · NSE"
+            dup.setdefault("nse_pdf", n.get("pdf_url"))
+            if not dup.get("code_nse"):
+                dup["code_nse"] = n.get("code")
+            continue
+        out.append(dict(n))
+    out.sort(key=lambda x: x["dt"], reverse=True)              # newest first (BSE's own order is the same)
+    dates = []
+    for x in out:
+        if x["date"] not in dates:
+            dates.append(x["date"])
+    keep = set(dates[:n_days])
+    lo = (_now_ist().date() - dt.timedelta(days=7)).strftime("%Y-%m-%d")
+    return [x for x in out if x["date"] in keep and x["date"] >= lo]
+
+
 def build_raw_view(feed):
     with _lock:
         st = json.loads(json.dumps(_S["store"]))
         job = dict(_S["job"])
     news = st["news"]
-    dates = set(_window_dates(news, feed))
-    items = {k: v for k, v in news.items() if v.get("feed") == feed and v["date"] in dates}
-    bse_order = [i for i in (st.get("order") or {}).get(feed, []) if i in items]
-    rest = sorted((v for k, v in items.items() if k not in set(bse_order)), key=lambda v: v["dt"], reverse=True)
-    ordered = [items[i] for i in bse_order] + rest
+    try:
+        import nse_feeds
+        nse_store = nse_feeds._load()
+        nse_status = nse_feeds.status(nse_store)
+        nse_by_feed = {f: nse_feeds.display_items(f, nse_store) for f in FEED_ORDER}
+    except Exception as e:
+        print(f"[Corp] NSE feed unavailable: {e}")
+        nse_status, nse_by_feed = {"error": str(e), "updated_at": None}, {f: [] for f in FEED_ORDER}
+
+    def bse_flat(f):
+        lo = (_now_ist().date() - dt.timedelta(days=7)).strftime("%Y-%m-%d")
+        items = {k: v for k, v in news.items() if v.get("feed") == f and v["date"] >= lo}
+        bse_order = [i for i in (st.get("order") or {}).get(f, []) if i in items]
+        rest = sorted((v for k, v in items.items() if k not in set(bse_order)), key=lambda v: v["dt"], reverse=True)
+        out = []
+        for v in [items[i] for i in bse_order] + rest:
+            out.append({
+                "id": v["id"], "src": "BSE", "company": v.get("company"), "code": v.get("code"),
+                "subject": v.get("subject") or f"{v.get('company')} - {v.get('code')}",
+                "category": v.get("category") or CATEGORY, "headline": v.get("headline"),
+                "recv": v.get("recv"), "dt": v["dt"], "date": v["date"],
+                "dissem": v.get("dissem") or dt.datetime.strptime(v["dt"], "%Y-%m-%dT%H:%M:%S").strftime("%d-%m-%Y %H:%M:%S"),
+                "time_taken": v.get("time_taken"), "attachment": v.get("attachment"),
+                "size_mb": v.get("size_mb") if v.get("size_mb") is not None else
+                           (round(v["size_kb"] / 1024, 2) if v.get("size_kb") else None),
+                "bse_url": v.get("bse_url"), "norm": _norm_co(v.get("company")),
+            })
+        return out
+
+    merged = merge_sources(bse_flat(feed), nse_by_feed.get(feed, []))
     days, cur = [], None
-    for v in ordered:
+    for v in merged:
         if cur is None or cur["date"] != v["date"]:
             cur = {"date": v["date"], "label": dt.datetime.strptime(v["date"], "%Y-%m-%d").strftime("%d %b %Y"), "items": []}
             days.append(cur)
-        cur["items"].append({
-            "id": v["id"], "company": v.get("company"), "code": v.get("code"),
-            "subject": v.get("subject") or f"{v.get('company')} - {v.get('code')}",
-            "category": v.get("category") or CATEGORY, "headline": v.get("headline"),
-            "recv": v.get("recv"),
-            "dissem": v.get("dissem") or dt.datetime.strptime(v["dt"], "%Y-%m-%dT%H:%M:%S").strftime("%d-%m-%Y %H:%M:%S"),
-            "time_taken": v.get("time_taken"), "attachment": v.get("attachment"),
-            "size_mb": v.get("size_mb") if v.get("size_mb") is not None else
-                       (round(v["size_kb"] / 1024, 2) if v.get("size_kb") else None),
-            "bse_url": v.get("bse_url"),
-        })
+        cur["items"].append(v)
     tabs = [{"feed": f, "label": FEEDS[f]["label"], "icon": FEEDS[f]["icon"],
-             "count": len(_window_items(news, f))} for f in FEED_ORDER]
+             "count": len(merge_sources(bse_flat(f), nse_by_feed.get(f, [])))} for f in FEED_ORDER]
     return {"feed": feed, "label": FEEDS[feed]["label"], "icon": FEEDS[feed]["icon"],
             "subcategory": (st.get("subcat_map") or {}).get(feed) or FEEDS[feed]["subcats"][0],
-            "days": days, "total": len(ordered), "tabs": tabs,
+            "days": days, "total": len(merged), "tabs": tabs,
             "updated_at": (st.get("updated_at") or {}).get(feed), "error": (st.get("last_error") or {}).get(feed),
-            "fetching": job["running"], "empty": not ordered}
+            "nse": nse_status, "nse_items": nse_by_feed.get(feed, []),
+            "fetching": job["running"], "empty": not merged}
 
 
 def get_raw_view(feed="orders", force=False):
@@ -1877,6 +1929,12 @@ def get_raw_view(feed="orders", force=False):
     seconds), fall back to the headless browser in the background if BSE
     refuses, and never start the PDF / AI / price analysis."""
     feed = feed if feed in FEEDS else "orders"
+    try:
+        import nse_feeds
+        nse_feeds.ensure_poller()
+        nse_feeds.refresh(max_age=60 if force else 180)
+    except Exception as e:
+        print(f"[Corp] NSE refresh failed: {e}")
     now = time.time()
     with _lock:
         _load_store()
