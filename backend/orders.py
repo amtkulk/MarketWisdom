@@ -1876,6 +1876,7 @@ def merge_sources(bse_items, nse_items, n_days=3):
 
 def build_raw_view(feed, nse_only=False):
     with _lock:
+        _load_store()                       # a fresh server process hasn't loaded the saved store yet
         st = json.loads(json.dumps(_S["store"]))
         job = dict(_S["job"])
     news = st["news"]

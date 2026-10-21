@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v60',
+    VERSION: 'v61',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
