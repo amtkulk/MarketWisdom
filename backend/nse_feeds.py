@@ -8,7 +8,7 @@ which — unlike www.nseindia.com and BSE's API — doesn't block cloud servers)
                              dates for the Nifty50 Result Analyzer.
 
 Each feed only holds recent filings, so a background poller reads both every
-~10 minutes in market hours (hourly otherwise) and keeps 7 days of history in the DB.
+~5 minutes in market hours (hourly otherwise) and keeps 7 days of history in the DB.
 """
 import datetime as dt
 import re
@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 STORE_KEY = "nse_filings"
 KEEP_DAYS = 7
-POLL_MARKET = 10 * 60
+POLL_MARKET = 5 * 60          # feed holds only the latest few hundred filings → read often in market hours
 POLL_QUIET = 60 * 60
 HOSTS = ("https://nsearchives.nseindia.com", "https://archives.nseindia.com")
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"

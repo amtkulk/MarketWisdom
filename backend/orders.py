@@ -1862,8 +1862,9 @@ def merge_sources(bse_items, nse_items, n_days=3):
             if not dup.get("code_nse"):
                 dup["code_nse"] = n.get("code")
             continue
-        out.append(dict(n))
-    out.sort(key=lambda x: x["dt"], reverse=True)              # newest first (BSE's own order is the same)
+        # slot the NSE filing into BSE's own sequence (never re-sort BSE's listing)
+        pos = next((k for k, b in enumerate(out) if b["dt"] < n["dt"]), len(out))
+        out.insert(pos, dict(n))
     dates = []
     for x in out:
         if x["date"] not in dates:
@@ -1873,7 +1874,7 @@ def merge_sources(bse_items, nse_items, n_days=3):
     return [x for x in out if x["date"] in keep and x["date"] >= lo]
 
 
-def build_raw_view(feed):
+def build_raw_view(feed, nse_only=False):
     with _lock:
         st = json.loads(json.dumps(_S["store"]))
         job = dict(_S["job"])
@@ -1888,6 +1889,8 @@ def build_raw_view(feed):
         nse_status, nse_by_feed = {"error": str(e), "updated_at": None}, {f: [] for f in FEED_ORDER}
 
     def bse_flat(f):
+        if nse_only:
+            return []
         lo = (_now_ist().date() - dt.timedelta(days=7)).strftime("%Y-%m-%d")
         items = {k: v for k, v in news.items() if v.get("feed") == f and v["date"] >= lo}
         bse_order = [i for i in (st.get("order") or {}).get(f, []) if i in items]
@@ -1919,15 +1922,29 @@ def build_raw_view(feed):
     return {"feed": feed, "label": FEEDS[feed]["label"], "icon": FEEDS[feed]["icon"],
             "subcategory": (st.get("subcat_map") or {}).get(feed) or FEEDS[feed]["subcats"][0],
             "days": days, "total": len(merged), "tabs": tabs,
-            "updated_at": (st.get("updated_at") or {}).get(feed), "error": (st.get("last_error") or {}).get(feed),
-            "nse": nse_status, "nse_items": nse_by_feed.get(feed, []),
-            "fetching": job["running"], "empty": not merged}
+            "updated_at": nse_status.get("updated_at") if nse_only else (st.get("updated_at") or {}).get(feed),
+            "error": (nse_status.get("error") if not nse_status.get("updated_at") else None) if nse_only else (st.get("last_error") or {}).get(feed),
+            "source": "nse" if nse_only else "both", "nse_subjects": NSE_TAB_SUBJECTS.get(feed),
+            "nse": nse_status, "nse_items": [] if nse_only else nse_by_feed.get(feed, []),
+            "fetching": False if nse_only else job["running"], "empty": not merged}
+
+
+CORP_SOURCE = (os.environ.get("CORP_SOURCE") or "nse").strip().lower()   # "nse" (default) or "both"
+
+
+# NSE subjects shown on each tab (for the page subtitle)
+NSE_TAB_SUBJECTS = {
+    "orders": "Bagging/Receiving of orders/contracts · Letter of Award / Intent · work orders",
+    "meets": "Analysts/Institutional Investor Meet/Con. Call Updates",
+    "press": "Press Release / Media Release",
+}
 
 
 def get_raw_view(feed="orders", force=False):
-    """Plain listing for the page: pull the latest from BSE (inline, a few
-    seconds), fall back to the headless browser in the background if BSE
-    refuses, and never start the PDF / AI / price analysis."""
+    """Plain listing for the Corporate Actions page. Default source: NSE's official
+    filings feed (live, reachable from our server). With CORP_SOURCE=both it also
+    pulls BSE (inline, with the browser/relay fallbacks) — BSE blocks cloud servers,
+    so NSE-only is the default. Never starts the PDF / AI / price analysis."""
     feed = feed if feed in FEEDS else "orders"
     try:
         import nse_feeds
@@ -1935,6 +1952,8 @@ def get_raw_view(feed="orders", force=False):
         nse_feeds.refresh(max_age=60 if force else 180)
     except Exception as e:
         print(f"[Corp] NSE refresh failed: {e}")
+    if CORP_SOURCE != "both":
+        return build_raw_view(feed, nse_only=True)
     now = time.time()
     with _lock:
         _load_store()

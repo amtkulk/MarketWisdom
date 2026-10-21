@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v59',
+    VERSION: 'v60',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -2145,7 +2145,7 @@ const app = {
         container.innerHTML = `
             <div style="margin-bottom:14px">
                 <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">📑 Corporate Actions</h2>
-                <p id="cr-sub" style="font-size:13px;color:var(--text-secondary)">BSE + NSE corporate announcements: newest first, last 3 filing days.</p>
+                <p id="cr-sub" style="font-size:13px;color:var(--text-secondary)">NSE corporate filings: newest first, last 3 filing days.</p>
             </div>
             <div class="corp-layout">
                 <div class="corp-main" style="min-width:0">
@@ -2167,7 +2167,7 @@ const app = {
             const count = (f) => (cache[f] && !cache[f].fetching) ? cache[f].total : undefined;
             el.innerHTML = TABS.map(t => '<button class="corp-tab'+(t.feed === tab ? ' active' : '')+'" data-f="'+t.feed+'">'
                 + '<span class="ct-ico">'+t.icon+'</span><span><div class="ct-label">'+esc(t.label)+'</div>'
-                + '<div class="ct-sub">'+(count(t.feed) !== undefined ? count(t.feed)+' announcement'+(count(t.feed) === 1 ? '' : 's') : 'BSE + NSE')+'</div></span></button>').join('');
+                + '<div class="ct-sub">'+(count(t.feed) !== undefined ? count(t.feed)+' announcement'+(count(t.feed) === 1 ? '' : 's') : 'NSE')+'</div></span></button>').join('');
             el.querySelectorAll('.corp-tab').forEach(b => b.addEventListener('click', () => switchTab(b.getAttribute('data-f'))));
         };
 
@@ -2177,9 +2177,19 @@ const app = {
             const d = cache[tab];
             if (!el) return;
             if (!d) { el.innerHTML = '<span class="spinner" style="vertical-align:middle;margin-right:6px"></span> Fetching from BSE…'; return; }
-            if (sub) sub.innerHTML = 'Corporate announcements from <b>BSE</b> (Equity · Company Update · <b>'+esc(d.subcategory)+'</b>) and <b>NSE</b> (official filings feed). Newest first, last 3 filing days. A filing made on both exchanges is shown once.';
+            if (sub) sub.innerHTML = d.source === 'nse'
+                ? 'Corporate filings from <b>NSE</b>\'s official live feed · <b>'+esc(d.nse_subjects || '')+'</b>. Newest first, last 3 filing days.'
+                : 'Corporate announcements from <b>BSE</b> (Equity · Company Update · <b>'+esc(d.subcategory)+'</b>) and <b>NSE</b> (official filings feed). Newest first, last 3 filing days. A filing made on both exchanges is shown once.';
             let h = '';
             const nse = d.nse || {};
+            if (d.source === 'nse') {
+                h += (nse.updated_at
+                        ? '<div style="margin-bottom:3px"><b style="color:var(--text-primary)">NSE</b> <span style="color:var(--green)">✓ live</span> · updated <b style="color:var(--text-primary)">' + esc(nse.updated_at) + '</b> <span style="color:var(--text-secondary)">(checked every 5 min in market hours)</span></div>'
+                        : '<div style="color:#a16207;font-weight:600;margin-bottom:3px">⚠ NSE\'s filings feed didn\'t respond yet. Try Refresh in a minute.</div>')
+                   + 'Total No of Announcements <b style="color:var(--text-primary)">' + (d.total || 0) + '</b>';
+                el.innerHTML = h;
+                return;
+            }
             h += '<div style="margin-bottom:3px">'
                 + '<b style="color:var(--text-primary)">NSE</b> ' + (nse.error && !nse.updated_at ? '<span style="color:#a16207">⚠ feed unreachable</span>'
                     : '<span style="color:var(--green)">✓</span> updated ' + esc(nse.updated_at || '—'))
@@ -2227,7 +2237,7 @@ const app = {
             if (!d) { el.innerHTML = ''; return; }
             if (d.empty) {
                 el.innerHTML = '<div class="card" style="text-align:center;padding:36px;color:var(--text-secondary)">'
-                    + (d.error ? 'Couldn\'t reach BSE yet and nothing is saved. Try Refresh in a minute.' : 'No announcements in this sub category in the last few days.') + '</div>';
+                    + (d.error ? 'Couldn\'t reach the exchange feed yet and nothing is saved. Try Refresh in a minute.' : 'No announcements of this kind in the last few days.') + '</div>';
                 return;
             }
             el.innerHTML = (d.browser_failed ? bseFallbackHtml() : '')
@@ -2354,7 +2364,7 @@ const app = {
                 if (btn && my === loadSeq) { btn.disabled = false; btn.innerHTML = '↻ Refresh'; }
             }
             const d = cache[feed];
-            if (d && d.error && alive() && my === loadSeq) relay(feed);
+            if (d && d.error && d.source !== 'nse' && alive() && my === loadSeq) relay(feed);
             else if (d && d.fetching && alive() && my === loadSeq) pollTimer = setTimeout(() => load(false), 6000);
         };
 
