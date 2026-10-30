@@ -11,6 +11,34 @@ from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
 
 app = Flask(__name__)
+
+
+# Data feeds (Yahoo especially) sometimes hand back NaN/Infinity. Python's json writes
+# those as bare NaN, which browsers refuse to parse ("Unexpected token 'N'") and the
+# whole page fails. Send them as null instead, for every API response.
+from flask.json.provider import DefaultJSONProvider
+
+
+def _json_safe(o):
+    if isinstance(o, float):
+        return None if o != o or o in (float("inf"), float("-inf")) else o
+    if isinstance(o, dict):
+        return {k: _json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_safe(v) for v in o]
+    return o
+
+
+class _SafeJSONProvider(DefaultJSONProvider):
+    def dumps(self, obj, **kwargs):
+        kwargs.setdefault("allow_nan", False)
+        try:
+            return super().dumps(obj, **kwargs)        # fast path: nothing to clean
+        except ValueError:
+            return super().dumps(_json_safe(obj), **kwargs)
+
+
+app.json = _SafeJSONProvider(app)
 # Enable CORS for all routes so the React frontend can talk to this API
 CORS(app)
 
@@ -39,7 +67,7 @@ _auth_serializer = URLSafeTimedSerializer(APP_SECRET, salt="mw-auth-v1")
 SESSION_MAX_AGE = 60 * 60 * 24 * 30      # 30 days
 
 # Comma-separated list of admin emails (case-insensitive).
-APP_VERSION = "v61"      # keep in step with frontend app.js VERSION (shown in the page footer)
+APP_VERSION = "v62"      # keep in step with frontend app.js VERSION (shown in the page footer)
 
 # Set on Azure as an env var: ADMIN_EMAILS=login4amit@gmail.com,other@gmail.com
 # Built-in admins (always), plus any extra emails from the ADMIN_EMAILS env var.
@@ -3650,12 +3678,13 @@ def fetch_reits_invits():
         if row["price"] is None:
             try:
                 import yfinance as yf
-                h = yf.Ticker(yt).history(period="5d")
-                if len(h):
-                    row["price"] = round(float(h["Close"].iloc[-1]), 2)
-                    if len(h) > 1:
-                        prev = float(h["Close"].iloc[-2])
-                        row["change_pct"] = round((row["price"] - prev) / prev * 100, 2)
+                closes = yf.Ticker(yt).history(period="5d")["Close"].dropna()   # Yahoo leaves blank (NaN) rows
+                if len(closes):
+                    row["price"] = round(float(closes.iloc[-1]), 2)
+                    if len(closes) > 1:
+                        prev = float(closes.iloc[-2])
+                        if prev:
+                            row["change_pct"] = round((row["price"] - prev) / prev * 100, 2)
             except Exception:
                 pass
         # dividends / ex-dates
