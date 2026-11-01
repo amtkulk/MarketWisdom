@@ -307,6 +307,26 @@ const api = {
         return data;
     },
 
+    async fetchAutoSales() {
+        const res = await fetch(`${API_BASE_URL}/auto-sales`, { cache: 'no-store' });
+        let data;
+        try { data = await res.json(); } catch(e) { throw new Error(`Server error (Status: ${res.status}).`); }
+        if (!res.ok) throw new Error(data.error || 'Failed to load car sales');
+        return data;
+    },
+
+    async saveAutoSales(payload) {
+        const res = await fetch(`${API_BASE_URL}/auto-sales`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...this._authH() },
+            body: JSON.stringify(payload)
+        });
+        let data;
+        try { data = await res.json(); } catch(e) { throw new Error(`Server error (Status: ${res.status}).`); }
+        if (!res.ok) throw new Error(data.error || 'Could not save');
+        return data;
+    },
+
     async fetchResultLookup(q, refresh) {
         const res = await fetch(`${API_BASE_URL}/results/lookup?q=${encodeURIComponent(q)}${refresh ? '&refresh=1' : ''}`, { cache: 'no-store' });
         let data;

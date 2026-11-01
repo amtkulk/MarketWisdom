@@ -67,7 +67,7 @@ _auth_serializer = URLSafeTimedSerializer(APP_SECRET, salt="mw-auth-v1")
 SESSION_MAX_AGE = 60 * 60 * 24 * 30      # 30 days
 
 # Comma-separated list of admin emails (case-insensitive).
-APP_VERSION = "v62"      # keep in step with frontend app.js VERSION (shown in the page footer)
+APP_VERSION = "v63"      # keep in step with frontend app.js VERSION (shown in the page footer)
 
 # Set on Azure as an env var: ADMIN_EMAILS=login4amit@gmail.com,other@gmail.com
 # Built-in admins (always), plus any extra emails from the ADMIN_EMAILS env var.
@@ -3407,6 +3407,37 @@ def api_orders_pdf():
     if not url:
         return jsonify({"error": "Invalid attachment name."}), 400
     return redirect(url, code=302)
+
+
+@app.route("/api/auto-sales", methods=["GET"])
+def api_auto_sales():
+    """Monthly car-sales tracker: last 4 months by carmaker + latest NSE sales filings."""
+    import auto_sales
+    try:
+        return jsonify(auto_sales.build_view())
+    except Exception as e:
+        return jsonify({"error": "Could not build car sales: " + str(e)[:120]}), 500
+
+
+@app.route("/api/auto-sales", methods=["POST"])
+def api_auto_sales_save():
+    """Admin: add/replace one month ({month, rows, sources, industry, industry_ly}) or {month, delete: true}."""
+    u, err = _require_admin()
+    if err:
+        return err
+    import auto_sales
+    body = request.get_json(silent=True) or {}
+    try:
+        if body.get("delete"):
+            auto_sales.delete_month(body.get("month"), user=u.get("email"))
+        else:
+            auto_sales.save_month(body.get("month"), body.get("rows"), body.get("sources"),
+                                  body.get("industry"), body.get("industry_ly"), user=u.get("email"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": "Could not save: " + str(e)[:120]}), 500
+    return jsonify(auto_sales.build_view())
 
 
 @app.route("/api/results/nifty50")

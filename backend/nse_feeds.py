@@ -32,6 +32,9 @@ FEED_RULES = {
     "press": re.compile(r"press release|media release", re.I),
 }
 _SKIP_MEETS = re.compile(r"audio|video|recording|transcript", re.I)      # BSE lists these elsewhere
+# Monthly sales updates from the listed carmakers (for the Car Sales page)
+AUTO_SALES_SYMBOLS = {"MARUTI", "TMPV", "TATAMOTORS", "M&M", "HYUNDAI"}
+_AUTO_SALES = re.compile(r"\bsales\b|business update|despatch|dispatch", re.I)
 
 _lock = threading.RLock()
 _poller = {"started": False}
@@ -72,6 +75,8 @@ def parse_rss(xml_bytes):
 def classify(item):
     """Which Corporate Actions tab an NSE announcement belongs to (or None)."""
     text = (item.get("subject") or "") + " " + (item.get("headline") or "")
+    if item.get("symbol") in AUTO_SALES_SYMBOLS and _AUTO_SALES.search(text):
+        return "autosales"
     for feed in ("orders", "meets", "press"):
         if FEED_RULES[feed].search(text):
             if feed == "meets" and _SKIP_MEETS.search(item.get("subject") or ""):

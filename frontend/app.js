@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v62',
+    VERSION: 'v63',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -11,7 +11,7 @@ const app = {
     // Public (no sign-in) so the AdSense crawler + search engines see real
     // content, and casual visitors get value before signing up. Personal/compute
     // -heavy pages (watchlist, screeners, overview, chartink) stay gated.
-    PUBLIC_ROUTES: new Set(['home', 'global', 'heatmap', 'war-news', 'about', 'contact', 'disclaimer']),
+    PUBLIC_ROUTES: new Set(['home', 'global', 'heatmap', 'autosales', 'war-news', 'about', 'contact', 'disclaimer']),
 
     setupMobileMenu() {
         const toggle  = document.getElementById('menu-toggle');
@@ -257,7 +257,7 @@ const app = {
         }
         const label = ({
             global: 'Global Market', 'war-news': 'War News', telegram: 'Telegram Feed',
-            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', wyckoff: 'Wyckoff Momentum', multibagger: 'Multibagger Early Signal', orders: 'Corporate Actions', corp: 'Corporate Actions', 'admin-users': 'User Consents', 'admin-usage': 'Site Usage', results: 'Nifty50 Result Analyzer', stock: 'Stock Research',
+            screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', wyckoff: 'Wyckoff Momentum', multibagger: 'Multibagger Early Signal', orders: 'Corporate Actions', corp: 'Corporate Actions', 'admin-users': 'User Consents', 'admin-usage': 'Site Usage', results: 'Nifty50 Result Analyzer', autosales: 'Car Sales Tracker', stock: 'Stock Research',
             overview: 'Stock Overview', reits: 'REITs & InvITs', action: 'Stock Action', heatmap: 'Indices Heatmap', chartink: 'Chartink Comparator',
             nifty: 'Nifty Analysis', watchlist: 'Watchlist',
         })[attemptedRoute] || 'this page';
@@ -362,6 +362,9 @@ const app = {
                 break;
             case 'admin-usage':
                 this.renderAdminUsage(container);
+                break;
+            case 'autosales':
+                this.renderAutoSales(container);
                 break;
             case 'results':
                 this.renderResults(container);
@@ -1601,7 +1604,7 @@ const app = {
         const PAGE_NAMES = { home: 'Home', global: 'Global Market', nifty: 'Nifty Analysis', heatmap: 'Heatmap', reits: 'REITs/InvITs',
             'war-news': 'War News', telegram: 'Telegram Feed', screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master',
             microcap: 'Micro Cap', gems: 'Hidden Gems', multibagger: 'Multibagger Signal', corp: 'Corporate Actions', orders: 'Corporate Actions',
-            results: 'Nifty50 Result Analyzer', wyckoff: 'Wyckoff', overview: 'Stock Overview', chartink: 'Chartink Comparator', watchlist: 'Watchlist',
+            results: 'Nifty50 Result Analyzer', autosales: 'Car Sales', wyckoff: 'Wyckoff', overview: 'Stock Overview', chartink: 'Chartink Comparator', watchlist: 'Watchlist',
             'admin-users': 'User Consents', 'admin-usage': 'Site Usage', about: 'About', contact: 'Contact', disclaimer: 'Disclaimer' };
         const pageName = (p) => PAGE_NAMES[p] || (p.startsWith('gate-') ? 'Sign-in prompt · ' + (PAGE_NAMES[p.slice(5)] || p.slice(5)) : p);
 
@@ -1775,6 +1778,246 @@ const app = {
 
     renderOrders(container) {           // old #orders links land on the Orders tab
         return this.renderCorp(container, 'orders');
+    },
+
+    // ── Car Sales Tracker: monthly domestic PV dispatches by carmaker (last 4 months) ──
+    renderAutoSales(container) {
+        const esc = (t) => String(t === null || t === undefined ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        const n = (v) => (v === null || v === undefined) ? '—' : Number(v).toLocaleString('en-IN');
+        const pct = (v, plain) => {
+            if (v === null || v === undefined) return '<span style="color:var(--text-secondary)">—</span>';
+            const col = v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--text-secondary)';
+            return '<span style="color:' + col + ';font-weight:700">' + (v > 0 ? '+' : '') + v.toFixed(1) + '%</span>';
+        };
+        const lakh = (v) => v >= 100000 ? (v / 100000).toFixed(2) + ' lakh' : n(v);
+        const dLong = (iso) => { try { return new Date(iso + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); } catch (e) { return iso; } };
+        const u = (typeof Auth !== 'undefined' && Auth.user) ? Auth.user() : null;
+        const isAdmin = !!(u && u.is_admin);
+        let data = null, mode = 'units', resizeT = null;
+
+        container.innerHTML = `
+            <div style="margin-bottom:14px">
+                <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🚗 Car Sales Tracker</h2>
+                <p style="font-size:13px;color:var(--text-secondary);line-height:1.6">Domestic passenger-vehicle sales by carmaker for the last 4 months. Carmakers publish the previous month's numbers on the <b>1st of every month</b>.</p>
+            </div>
+            <div id="as-body"><div class="card" style="text-align:center;padding:36px"><span class="spinner"></span></div></div>
+            <div style="font-size:11.5px;color:var(--text-secondary);text-align:center;margin-top:14px;line-height:1.6">Figures are company-reported dispatches compiled from company releases and trade publications. They can be revised later. Not investment advice.</div>
+        `;
+        const alive = () => !!document.getElementById('as-body');
+
+        // ── line chart: one line per carmaker across the months (SVG, hover/tap tooltips) ──
+        const lineChart = (host) => {
+            if (!host || !data) return;
+            const months = data.months, cos = data.companies.slice(0, 6);
+            const val = (c, i) => mode === 'share' ? c.cells[i].share : c.cells[i].units;
+            const W = Math.max(280, host.clientWidth || 600), H = 250;
+            const m = { t: 14, r: 14, b: 28, l: mode === 'share' ? 36 : 54 };
+            const iw = W - m.l - m.r, ih = H - m.t - m.b;
+            const all = []; cos.forEach(c => months.forEach((_, i) => { const v = val(c, i); if (v !== null && v !== undefined) all.push(v); }));
+            const maxV = Math.max(1, ...all);
+            const step = (() => { const raw = maxV / 4, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+                return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; })();
+            const top = Math.ceil(maxV / step) * step;
+            const x = (i) => m.l + (months.length === 1 ? iw / 2 : i * iw / (months.length - 1));
+            const y = (v) => m.t + ih - (v / top) * ih;
+            const yl = (v) => mode === 'share' ? v + '%' : (v >= 100000 ? (v / 100000).toFixed(v % 100000 ? 1 : 0) + 'L' : v >= 1000 ? Math.round(v / 1000) + 'k' : v);
+            let svg = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Car sales by carmaker" style="display:block;max-width:100%">';
+            for (let v = 0; v <= top + 1e-9; v += step)
+                svg += '<line x1="' + m.l + '" x2="' + (W - m.r) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="rgba(100,116,139,' + (v === 0 ? '0.45' : '0.15') + ')"/>'
+                     + '<text x="' + (m.l - 6) + '" y="' + (y(v) + 4) + '" text-anchor="end" font-size="10.5" fill="#64748b">' + yl(+v.toFixed(4)) + '</text>';
+            months.forEach((mo, i) => {
+                const anchor = i === 0 ? 'start' : i === months.length - 1 ? 'end' : 'middle';
+                svg += '<text x="' + x(i) + '" y="' + (H - 8) + '" text-anchor="' + anchor + '" font-size="10.5" fill="#64748b">' + esc(mo.short) + '</text>';
+            });
+            cos.forEach(c => {
+                let d = '', pts = '';
+                months.forEach((_, i) => {
+                    const v = val(c, i); if (v === null || v === undefined) return;
+                    d += (d ? ' L' : 'M') + x(i) + ',' + y(v);
+                    pts += '<circle cx="' + x(i) + '" cy="' + y(v) + '" r="3.5" fill="' + c.color + '" stroke="#fff" stroke-width="1.5"/>';
+                });
+                svg += '<path d="' + d + '" fill="none" stroke="' + c.color + '" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>' + pts;
+            });
+            const colW = months.length > 1 ? iw / (months.length - 1) : iw;
+            months.forEach((_, i) => {
+                const x0 = Math.max(m.l - 10, x(i) - colW / 2), x1 = Math.min(W, x(i) + colW / 2);
+                svg += '<rect class="as-hit" data-i="' + i + '" x="' + x0 + '" y="' + m.t + '" width="' + (x1 - x0) + '" height="' + ih + '" fill="transparent"/>';
+            });
+            svg += '</svg>';
+            host.style.position = 'relative';
+            host.innerHTML = svg + '<div class="us-tip" hidden></div>';
+            const tip = host.querySelector('.us-tip');
+            host.querySelectorAll('.as-hit').forEach(r => {
+                const show = () => {
+                    const i = +r.getAttribute('data-i');
+                    tip.innerHTML = '<div style="font-weight:800;margin-bottom:4px">' + esc(months[i].label) + '</div>'
+                        + cos.map(c => '<div style="display:flex;justify-content:space-between;gap:14px"><span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:' + c.color + ';margin-right:5px"></span>' + esc(c.name) + '</span><b>'
+                            + (mode === 'share' ? (c.cells[i].share !== null ? c.cells[i].share + '%' : '—') : n(c.cells[i].units)) + '</b></div>').join('');
+                    tip.hidden = false;
+                    const tw = tip.offsetWidth;
+                    tip.style.left = Math.max(0, Math.min(W - tw, x(i) - tw / 2)) + 'px';
+                    tip.style.top = '0px';
+                };
+                r.addEventListener('mouseenter', show);
+                r.addEventListener('click', show);
+            });
+            host.addEventListener('mouseleave', () => { tip.hidden = true; });
+        };
+
+        const adminHtml = () => {
+            const months = Object.keys(data.raw || {}).sort();
+            const next = data.next_release ? data.next_release.month : '';
+            const opts = [next].concat(months.slice().reverse()).filter((v, i, a) => v && a.indexOf(v) === i);
+            return '<div class="card" style="margin-top:16px;border-top:3px solid #7c3aed"><div class="section-title">🛠 Admin · add or correct a month</div>'
+                + '<p style="font-size:12.5px;color:var(--text-secondary);margin:0 0 10px;line-height:1.6">On the 1st, open the filings above (or a trade report), then enter each carmaker\'s <b>domestic</b> passenger-vehicle sales and the same month last year. Leave a row blank if it isn\'t out yet. Only admins see this.</p>'
+                + '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'
+                + '<label style="font-size:13px;color:var(--text-secondary)">Month <select id="as-m" class="rs-pick" style="max-width:none">'
+                + opts.map(mo => '<option value="' + mo + '">' + esc(new Date(mo + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })) + (data.raw[mo] ? ' (saved)' : ' (new)') + '</option>').join('')
+                + '</select></label></div>'
+                + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:380px"><thead><tr style="text-align:left;color:var(--text-secondary);font-size:11.5px;text-transform:uppercase">'
+                + '<th style="padding:6px">Carmaker</th><th style="padding:6px">This month</th><th style="padding:6px">Same month last year</th></tr></thead><tbody>'
+                + data.company_list.map(c => '<tr><td style="padding:4px 6px;font-weight:600">' + esc(c.name) + '</td>'
+                    + '<td style="padding:4px 6px"><input class="as-in" data-k="' + c.key + '" data-f="units" inputmode="numeric" placeholder="e.g. 1,80,000" style="width:100%;max-width:150px;padding:6px 8px;border:1px solid var(--border-color);border-radius:8px;font:inherit"></td>'
+                    + '<td style="padding:4px 6px"><input class="as-in" data-k="' + c.key + '" data-f="ly" inputmode="numeric" style="width:100%;max-width:150px;padding:6px 8px;border:1px solid var(--border-color);border-radius:8px;font:inherit"></td></tr>').join('')
+                + '</tbody></table></div>'
+                + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-top:10px">'
+                + '<input id="as-ind" inputmode="numeric" placeholder="Industry total (optional)" style="padding:7px 9px;border:1px solid var(--border-color);border-radius:8px;font:inherit;font-size:13px">'
+                + '<input id="as-indly" inputmode="numeric" placeholder="Industry total last year (optional)" style="padding:7px 9px;border:1px solid var(--border-color);border-radius:8px;font:inherit;font-size:13px">'
+                + '<input id="as-srcn" placeholder="Source name (e.g. Autocar India)" style="padding:7px 9px;border:1px solid var(--border-color);border-radius:8px;font:inherit;font-size:13px">'
+                + '<input id="as-srcu" placeholder="Source link (https://…)" style="padding:7px 9px;border:1px solid var(--border-color);border-radius:8px;font:inherit"></div>'
+                + '<div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap"><button id="as-save" class="btn" style="padding:8px 18px;font-size:13px;font-weight:700">💾 Save month</button>'
+                + '<button id="as-del" class="btn" style="padding:8px 14px;font-size:13px;background:transparent;color:var(--red);border:1px solid var(--red)">Delete month</button>'
+                + '<span id="as-msg" style="font-size:12.5px;color:var(--text-secondary)"></span></div></div>';
+        };
+
+        const wireAdmin = () => {
+            const sel = document.getElementById('as-m'); if (!sel) return;
+            const fill = () => {
+                const r = data.raw[sel.value] || { rows: {}, sources: [] };
+                document.querySelectorAll('.as-in').forEach(inp => {
+                    const v = (r.rows[inp.dataset.k] || {})[inp.dataset.f];
+                    inp.value = (v === null || v === undefined) ? '' : Number(v).toLocaleString('en-IN');
+                });
+                document.getElementById('as-ind').value = r.industry ? Number(r.industry).toLocaleString('en-IN') : '';
+                document.getElementById('as-indly').value = r.industry_ly ? Number(r.industry_ly).toLocaleString('en-IN') : '';
+                const s0 = (r.sources || [])[0] || ['', ''];
+                document.getElementById('as-srcn').value = s0[0]; document.getElementById('as-srcu').value = s0[1];
+                document.getElementById('as-del').style.display = data.raw[sel.value] ? '' : 'none';
+            };
+            sel.addEventListener('change', fill); fill();
+            const msg = (t, bad) => { const el = document.getElementById('as-msg'); el.textContent = t; el.style.color = bad ? 'var(--red)' : 'var(--green)'; };
+            const send = async (payload, okText) => {
+                try {
+                    const fresh = await api.saveAutoSales(payload);
+                    data = fresh; const keep = payload.month; render();
+                    const s2 = document.getElementById('as-m'); if (s2 && [...s2.options].some(o => o.value === keep)) { s2.value = keep; s2.dispatchEvent(new Event('change')); }
+                    const el = document.getElementById('as-msg'); if (el) { el.textContent = okText; el.style.color = 'var(--green)'; }
+                } catch (e) { msg(e.message || 'Could not save', true); }
+            };
+            document.getElementById('as-save').addEventListener('click', () => {
+                const rows = {};
+                document.querySelectorAll('.as-in').forEach(inp => { const v = inp.value.replace(/[,\s]/g, ''); if (!v) return; (rows[inp.dataset.k] = rows[inp.dataset.k] || {})[inp.dataset.f] = v; });
+                const sn = document.getElementById('as-srcn').value.trim(), su = document.getElementById('as-srcu').value.trim();
+                send({ month: sel.value, rows, industry: document.getElementById('as-ind').value.replace(/[,\s]/g, '') || null,
+                       industry_ly: document.getElementById('as-indly').value.replace(/[,\s]/g, '') || null,
+                       sources: su ? [[sn || 'Source', su]] : [] }, '✓ Saved');
+            });
+            document.getElementById('as-del').addEventListener('click', () => {
+                if (!window.confirm || window.confirm('Delete ' + sel.options[sel.selectedIndex].text + '?')) send({ month: sel.value, delete: true }, '✓ Deleted');
+            });
+        };
+
+        const render = () => {
+            const el = document.getElementById('as-body'); if (!el || !data) return;
+            const M = data.months, C = data.companies;
+            if (!M.length) { el.innerHTML = '<div class="card" style="text-align:center;padding:36px;color:var(--text-secondary)">No car sales data yet.</div>'; return; }
+            const L = M[M.length - 1], li = M.length - 1;
+            let h = '';
+            // status
+            const nr = data.next_release;
+            if (data.due_now && nr) {
+                h += '<div class="card" style="border-left:4px solid var(--yellow);background:rgba(217,119,6,0.06);margin-bottom:14px;font-size:13px;line-height:1.6">'
+                   + '📅 <b>' + esc(nr.label) + ' numbers are out.</b> The official company filings are listed below. The table will move to ' + esc(nr.label) + ' once they are added.</div>';
+            }
+            // KPI tiles
+            const big = C.filter(c => (c.cells[li].units || 0) >= 20000 && c.cells[li].yoy !== null);
+            const best = big.slice().sort((a, b) => b.cells[li].yoy - a.cells[li].yoy)[0];
+            const worst = big.slice().sort((a, b) => a.cells[li].yoy - b.cells[li].yoy)[0];
+            const leader = C[0];
+            const tile = (label, value, sub) => '<div class="card" style="padding:14px 16px;margin:0"><div style="font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;font-weight:700;letter-spacing:.03em">' + label + '</div>'
+                + '<div style="font-size:clamp(17px,4.6vw,21px);font-weight:800;color:var(--text-primary);margin-top:4px;font-variant-numeric:tabular-nums;line-height:1.25">' + value + '</div><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">' + sub + '</div></div>';
+            h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px">'
+               + tile(esc(L.label) + ' · total', lakh(L.total), pct(L.total_yoy) + ' vs last year · ' + pct(L.total_mom) + ' vs last month')
+               + tile('Market leader', esc(leader.name), leader.cells[li].share + '% share · ' + n(leader.cells[li].units) + ' units')
+               + (best ? tile('Fastest growing', esc(best.name), pct(best.cells[li].yoy) + ' vs last year') : '')
+               + (worst && worst.cells[li].yoy < 0 ? tile('Biggest decline', esc(worst.name), pct(worst.cells[li].yoy) + ' vs last year') : '')
+               + '</div>';
+            // table
+            const th = 'padding:9px 10px;font-size:11px;text-transform:uppercase;color:var(--text-secondary);font-weight:700;white-space:nowrap';
+            const td = 'padding:9px 10px;border-top:1px solid var(--border-color);white-space:nowrap;font-variant-numeric:tabular-nums';
+            h += '<div class="card" style="padding:0;overflow:hidden"><div style="padding:14px 16px 6px"><div class="section-title" style="margin:0">Sales by carmaker <span style="font-size:11px;font-weight:500;color:var(--text-secondary)">· units sold in India · % vs same month last year</span></div></div>'
+               + '<div id="as-tbl" style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'
+               + '<th style="' + th + ';text-align:left;position:sticky;left:0;background:var(--bg-card)">Carmaker</th>'
+               + M.map((mo, i) => '<th style="' + th + ';text-align:right' + (i === li ? ';color:var(--text-primary)' : '') + '">' + esc(mo.short) + '</th>').join('')
+               + '<th style="' + th + ';text-align:right">vs ' + esc(M.length > 1 ? M[li - 1].short.split(' ')[0] : 'prev') + '</th><th style="' + th + ';text-align:right">Share</th></tr></thead><tbody>';
+            C.forEach(c => {
+                const lc = c.cells[li];
+                h += '<tr><td style="' + td + ';position:sticky;left:0;background:var(--bg-card)"><div style="display:flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:3px;flex-shrink:0;background:' + c.color + '"></span><b style="color:var(--text-primary)">' + esc(c.name) + '</b></div>'
+                   + (c.symbol ? '<div style="font-size:11px;color:var(--text-secondary);margin:2px 0 0 16px">NSE: ' + esc(c.symbol) + app.stockLinks(c.symbol) + '</div>' : '') + '</td>'
+                   + c.cells.map((x, i) => '<td style="' + td + ';text-align:right"><div style="font-weight:' + (i === li ? 800 : 600) + ';color:var(--text-primary)">' + n(x.units) + '</div><div style="font-size:11.5px">' + (x.units ? pct(x.yoy) : '') + '</div></td>').join('')
+                   + '<td style="' + td + ';text-align:right">' + pct(lc.mom) + '</td>'
+                   + '<td style="' + td + ';text-align:right;font-weight:700">' + (lc.share !== null ? lc.share + '%' : '—') + '</td></tr>';
+            });
+            h += '<tr><td style="' + td + ';border-top:2px solid var(--border-color);position:sticky;left:0;background:var(--bg-card)"><b>Total (carmakers above)</b></td>'
+               + M.map((mo, i) => '<td style="' + td + ';border-top:2px solid var(--border-color);text-align:right"><div style="font-weight:800">' + n(mo.total) + '</div><div style="font-size:11.5px">' + pct(mo.total_yoy) + '</div></td>').join('')
+               + '<td style="' + td + ';border-top:2px solid var(--border-color);text-align:right">' + pct(L.total_mom) + '</td><td style="' + td + ';border-top:2px solid var(--border-color);text-align:right;font-weight:700">100%</td></tr>';
+            const ind = M.filter(mo => mo.industry);
+            if (ind.length) h += '<tr><td style="' + td + ';position:sticky;left:0;background:var(--bg-card);color:var(--text-secondary)">Whole industry</td>'
+               + M.map(mo => '<td style="' + td + ';text-align:right;color:var(--text-secondary)">' + (mo.industry ? (mo.industry_approx ? '≈' : '') + n(mo.industry) + (mo.industry_yoy !== null ? '<div style="font-size:11.5px">' + pct(mo.industry_yoy) + '</div>' : '') : '—') + '</td>').join('')
+               + '<td style="' + td + '"></td><td style="' + td + '"></td></tr>';
+            h += '</tbody></table></div></div>';
+            // chart
+            h += '<div class="card" style="margin-top:16px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">'
+               + '<div class="section-title" style="margin:0">Trend · top 6 carmakers</div>'
+               + '<div style="display:flex;gap:6px">' + [['units', 'Units'], ['share', 'Market share']].map(([k, t]) => '<button class="as-mode btn" data-m="' + k + '" style="padding:5px 12px;font-size:12px;' + (mode === k ? '' : 'background:transparent;color:var(--text-primary);border:1px solid var(--border-color)') + '">' + t + '</button>').join('') + '</div></div>'
+               + '<div id="as-chart"></div><div style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:12px;color:var(--text-secondary)">'
+               + C.slice(0, 6).map(c => '<span><span style="display:inline-block;width:10px;height:3px;border-radius:2px;background:' + c.color + ';vertical-align:middle;margin-right:5px"></span>' + esc(c.name) + '</span>').join('') + '</div></div>';
+            // filings
+            const F = data.filings || [];
+            h += '<div class="card" style="margin-top:16px"><div class="section-title">📄 Official sales filings on NSE <span style="font-size:11px;font-weight:500;color:var(--text-secondary)">· listed carmakers, last 7 days, checked every 5 minutes</span></div>'
+               + (F.length ? '<div style="display:grid;gap:8px">' + F.map(f => '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:13px;padding:8px 0;border-top:1px solid var(--border-color)">'
+                    + '<div style="min-width:0;flex:1 1 260px"><b style="color:var(--text-primary)">' + esc(f.company) + '</b>' + (f.symbol ? app.stockLinks(f.symbol) : '') + '<div style="font-size:12px;color:var(--text-secondary);margin-top:2px">' + esc(f.headline || '') + '</div></div>'
+                    + '<div style="text-align:right;font-size:12px;color:var(--text-secondary)">' + esc(f.when) + (f.pdf_url ? '<div><a href="' + esc(f.pdf_url) + '" target="_blank" rel="noopener" style="color:var(--text-accent);font-weight:700;text-decoration:none">Open filing ↗</a></div>' : '') + '</div></div>').join('') + '</div>'
+                    : '<div style="font-size:13px;color:var(--text-secondary);line-height:1.6">No sales filings in the last 7 days. Maruti Suzuki, Tata Motors PV, Mahindra and Hyundai file their monthly numbers on the 1st. They will show here within a few minutes.</div>')
+               + '</div>';
+            // notes + sources
+            h += '<div class="card" style="margin-top:16px;font-size:12.5px;color:var(--text-secondary);line-height:1.7"><div class="section-title">ℹ️ About these numbers</div>'
+               + '<div>• These are <b>dispatches from factories to dealers</b> (wholesales), which is what carmakers report on the 1st. Showroom sales to buyers (VAHAN registrations) come out separately and differ month to month.</div>'
+               + '<div>• Domestic passenger vehicles only (cars, SUVs, MPVs). Exports and supplies to other carmakers are excluded. Skoda and Volkswagen are combined.</div>'
+               + '<div>• Festive timing moves sales between months (Navratri/Diwali fell in Sep–Oct 2026), so compare with the same month last year as well as last month.</div>'
+               + (nr ? '<div>• <b>Next update:</b> ' + esc(nr.label) + ' numbers, due ' + dLong(nr.date) + '.</div>' : '')
+               + '<div style="margin-top:6px"><b>Sources:</b> ' + M.map(mo => esc(mo.short) + ': ' + (mo.sources.length ? mo.sources.map(s => '<a href="' + esc(s[1]) + '" target="_blank" rel="noopener" style="color:var(--text-accent);text-decoration:none">' + esc(s[0]) + '</a>').join(', ') : 'entered by admin')).join(' · ') + '</div></div>';
+            if (isAdmin) h += adminHtml();
+            el.innerHTML = h;
+            const tbl = document.getElementById('as-tbl');               // phones: start on the newest month
+            if (tbl && tbl.scrollWidth > tbl.clientWidth) {
+                const ths = tbl.querySelectorAll('thead th');
+                if (ths[li + 1]) tbl.scrollLeft = ths[li + 1].offsetLeft - ths[0].offsetWidth;   // newest month just right of the frozen name column
+            }
+            lineChart(document.getElementById('as-chart'));
+            el.querySelectorAll('.as-mode').forEach(b => b.addEventListener('click', () => {          // redraw only the chart (keeps admin inputs)
+                mode = b.dataset.m;
+                el.querySelectorAll('.as-mode').forEach(z => z.setAttribute('style', 'padding:5px 12px;font-size:12px;' + (z.dataset.m === mode ? '' : 'background:transparent;color:var(--text-primary);border:1px solid var(--border-color)')));
+                lineChart(document.getElementById('as-chart'));
+            }));
+            if (isAdmin) wireAdmin();
+        };
+
+        window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (alive()) lineChart(document.getElementById('as-chart')); }, 150); });
+        (async () => {
+            try { data = await api.fetchAutoSales(); if (alive()) render(); }
+            catch (e) { const el = document.getElementById('as-body'); if (el) el.innerHTML = '<div class="card" style="text-align:center;padding:36px;color:var(--red)">Could not load car sales: ' + esc(e.message) + '</div>'; }
+        })();
     },
 
     renderResults(container) {
