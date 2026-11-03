@@ -67,7 +67,7 @@ _auth_serializer = URLSafeTimedSerializer(APP_SECRET, salt="mw-auth-v1")
 SESSION_MAX_AGE = 60 * 60 * 24 * 30      # 30 days
 
 # Comma-separated list of admin emails (case-insensitive).
-APP_VERSION = "v63"      # keep in step with frontend app.js VERSION (shown in the page footer)
+APP_VERSION = "v64"      # keep in step with frontend app.js VERSION (shown in the page footer)
 
 # Set on Azure as an env var: ADMIN_EMAILS=login4amit@gmail.com,other@gmail.com
 # Built-in admins (always), plus any extra emails from the ADMIN_EMAILS env var.
@@ -3674,26 +3674,60 @@ def _to_iso_date(s):
     return ""
 
 
-def _yf_next_dividend(yticker):
-    """Fallback: most recent/upcoming dividend ex-date + amount from yfinance."""
+def _yf_dividends(yticker, n=6):
+    """Past distributions (newest first) from Yahoo, plus Yahoo's upcoming ex-date if it has one.
+    Yahoo adds a payout only on its ex-date, so this is the history, not the early warning."""
+    out = []
     try:
         import yfinance as yf
         t = yf.Ticker(yticker)
         divs = t.dividends
-        if divs is None or len(divs) == 0:
-            return None
-        last_dt = divs.index[-1]
-        iso = last_dt.strftime("%Y-%m-%d")
-        return {"purpose": "Dividend (yfinance)", "ex_date": iso, "ex_date_raw": iso,
-                "record_date": "", "amount": round(float(divs.iloc[-1]), 2)}
+        if divs is not None and len(divs):
+            for ts, amt in list(divs.items())[-n:][::-1]:
+                try:
+                    a = round(float(amt), 3)
+                except Exception:
+                    a = None
+                out.append({"purpose": "Distribution (Yahoo)", "ex_date": ts.strftime("%Y-%m-%d"),
+                            "ex_date_raw": ts.strftime("%Y-%m-%d"), "record_date": "",
+                            "amount": a if a == a else None, "source": "Yahoo"})
+        try:
+            cal = t.calendar or {}
+            exd = cal.get("Ex-Dividend Date") if isinstance(cal, dict) else None
+            if exd:
+                iso = exd.isoformat()[:10] if hasattr(exd, "isoformat") else str(exd)[:10]
+                if iso >= date.today().isoformat() and all(d["ex_date"] != iso for d in out):
+                    out.insert(0, {"purpose": "Upcoming (Yahoo)", "ex_date": iso, "ex_date_raw": iso,
+                                   "record_date": "", "amount": None, "source": "Yahoo"})
+        except Exception:
+            pass
     except Exception:
-        return None
+        pass
+    return out
 
 
-@cached(1800)          # REIT/InvIT board: 30 min
+def _merge_dividends(nse_dists, others):
+    """NSE filings win; drop another source's entry within 3 days of an NSE one (same payout)."""
+    merged = [dict(d, purpose="Distribution (NSE filing)" if d.get("source") == "NSE filing" else "Distribution (NSE)")
+              for d in nse_dists]
+    for o in others:
+        od = date.fromisoformat(o["ex_date"])
+        dup = next((m for m in merged if abs((date.fromisoformat(m["ex_date"]) - od).days) <= 3), None)
+        if dup:
+            if dup.get("amount") is None and o.get("amount") is not None:
+                dup["amount"] = o["amount"]
+            continue
+        merged.append(o)
+    merged.sort(key=lambda d: d["ex_date"], reverse=True)
+    return merged
+
+
+@cached(600)           # REIT/InvIT board: 10 min (NSE filings are read every 5 min)
 def fetch_reits_invits():
     import concurrent.futures
+    import nse_feeds, reit_feed
     today = date.today()
+    nse_store = nse_feeds._load()
 
     def one(item):
         sym, name, kind, yt = item
@@ -3718,27 +3752,34 @@ def fetch_reits_invits():
                             row["change_pct"] = round((row["price"] - prev) / prev * 100, 2)
             except Exception:
                 pass
-        # dividends / ex-dates
-        divs = _nse_corp_actions(sym)
-        if not divs:
-            fb = _yf_next_dividend(yt)
-            if fb: divs = [fb]
-        # keep dividends with a parseable ex-date, newest first
-        divs = [d for d in divs if d.get("ex_date")]
-        divs.sort(key=lambda d: d["ex_date"], reverse=True)
-        row["dividends"] = divs[:5]
-        # the next upcoming (or today's) ex-date
-        upcoming = [d for d in divs if d["ex_date"] >= today.isoformat()]
-        upcoming.sort(key=lambda d: d["ex_date"])
+        # dividends / ex-dates: the trust's own NSE filings (days ahead) + NSE API (if reachable) + Yahoo history
+        nv = reit_feed.view(sym, nse_store, today)
+        nse_d = [dict(d, ex_date_raw=d["ex_date"]) for d in nv["dists"]]
+        api_d = [dict(d, source="NSE") for d in _nse_corp_actions(sym) if d.get("ex_date")]
+        divs = _merge_dividends(nse_d + [d for d in api_d if not any(d["ex_date"] == x["ex_date"] for x in nse_d)],
+                                _yf_dividends(yt))
+        row["dividends"] = divs[:6]
+        t_iso = today.isoformat()
+        upcoming = sorted((d for d in divs if d["ex_date"] >= t_iso), key=lambda d: d["ex_date"])
         if upcoming:
-            row["next_ex_date"] = upcoming[0]["ex_date"]
-            row["next_amount"] = upcoming[0].get("amount")
+            nx = upcoming[0]
+            row.update(next_ex_date=nx["ex_date"], next_amount=nx.get("amount"),
+                       next_record_date=nx.get("record_date") or nx["ex_date"],
+                       next_buy_by=reit_feed.buy_by(nx["ex_date"]), next_announced=nx.get("announced"),
+                       next_link=nx.get("link"), next_source=nx.get("source"))
+        past = [d for d in divs if d["ex_date"] < t_iso]
+        if past:
+            row["prev_ex_date"], row["prev_amount"] = past[0]["ex_date"], past[0].get("amount")
+        row["next_meeting"] = nv["meeting"]
+        row["filings"] = nv["filings"]
         return row
 
     rows = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex:
         rows = list(ex.map(one, REITS_INVITS))
-    return {"funds": rows, "timestamp": datetime.now().strftime("%d %b %Y  %H:%M")}
+    st = nse_feeds.status(nse_store)
+    return {"funds": rows, "timestamp": datetime.now().strftime("%d %b %Y  %H:%M"),
+            "nse_updated_at": st.get("updated_at"), "nse_error": st.get("error") or nse_store.get("reit_error")}
 
 
 def _active_dividend_alerts():
@@ -3747,15 +3788,17 @@ def _active_dividend_alerts():
     data = fetch_reits_invits()
     today = date.today().isoformat()
     alerts = []
+    import reit_feed
     for f in data.get("funds", []):
         for d in f.get("dividends", []):
             exd = d.get("ex_date")
-            if exd and exd >= today:                 # show through the ex-date day
+            if exd and exd >= today:                 # from the day it's announced through the ex-date day
                 alerts.append({
                     "alert_id": f"{f['symbol']}:{exd}",
                     "symbol": f["symbol"], "name": f["name"], "type": f["type"],
                     "ex_date": exd, "record_date": d.get("record_date", ""),
                     "amount": d.get("amount"), "purpose": d.get("purpose", "Dividend"),
+                    "buy_by": reit_feed.buy_by(exd), "announced": d.get("announced"),
                 })
     return alerts
 

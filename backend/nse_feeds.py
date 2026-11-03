@@ -51,6 +51,17 @@ def _symbol_from_link(link):
     return m.group(1) if m else None
 
 
+def _parse_pub(pub):
+    """NSE uses '01-Nov-2026 12:00:00'; some feeds use RFC-822 ('Sun, 01 Nov 2026 12:00:00 +0530')."""
+    for fmt in ("%d-%b-%Y %H:%M:%S", "%a, %d %b %Y %H:%M:%S %z", "%a, %d %b %Y %H:%M:%S %Z", "%d-%b-%Y", "%d %b %Y %H:%M:%S"):
+        try:
+            d = dt.datetime.strptime(pub, fmt)
+            return d.astimezone(IST).replace(tzinfo=None) if d.tzinfo else d
+        except ValueError:
+            continue
+    return None
+
+
 def parse_rss(xml_bytes):
     """RSS → [{title, link, desc, pub (IST iso), subject, headline, symbol}]. Pure."""
     root = ET.fromstring(xml_bytes)
@@ -58,9 +69,8 @@ def parse_rss(xml_bytes):
     for it in root.iter("item"):
         g = lambda tag: (it.findtext(tag) or "").strip()
         title, link, desc, pub = g("title"), g("link"), " ".join(g("description").split()), g("pubDate")
-        try:
-            pub_dt = dt.datetime.strptime(pub, "%d-%b-%Y %H:%M:%S")
-        except ValueError:
+        pub_dt = _parse_pub(pub)
+        if not pub_dt:
             continue
         subject = ""
         m = re.search(r"\|\s*SUBJECT:\s*(.+)$", desc, re.I)
@@ -143,7 +153,7 @@ def _norm_name(s):
 
 
 def refresh(force=False, max_age=180):
-    """Read both NSE feeds (if the saved copy is older than max_age s) and merge."""
+    """Read the NSE feeds (if the saved copy is older than max_age s) and merge."""
     with _lock:
         store = _load()
         if not force and time.time() - (store.get("ts") or 0) < max_age:
@@ -151,8 +161,10 @@ def refresh(force=False, max_age=180):
         store.setdefault("ann", {})
         store.setdefault("meetings", {})
         errors = []
+        ann_all = []
         try:
             for it in parse_rss(_get("/content/RSS/Online_announcements.xml")):
+                ann_all.append(it)
                 feed = classify(it)
                 if feed:
                     key = it["link"] or (it["title"] + it["pub"])
@@ -172,6 +184,18 @@ def refresh(force=False, max_age=180):
                                           "pub": it["pub"]}
         except Exception as e:
             errors.append(str(e))
+        # REIT / InvIT payouts (record date + amount) from the trusts' own filings
+        ca_items, reit_errs = [], []
+        try:
+            ca_items = parse_rss(_get("/content/RSS/Corporate_action.xml"))
+        except Exception as e:
+            reit_errs.append("corporate actions: " + str(e)[:80])
+        try:
+            import reit_feed
+            reit_feed.ingest(store, ann_all, ca_items)
+        except Exception as e:
+            reit_errs.append(str(e)[:120])
+        store["reit_error"] = "; ".join(reit_errs) or None
         cutoff = (now_ist() - dt.timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%dT00:00:00")
         store["ann"] = {k: v for k, v in store["ann"].items() if v["pub"] >= cutoff}
         mcut = (now_ist().date() - dt.timedelta(days=45)).isoformat()

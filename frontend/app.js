@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v63',
+    VERSION: 'v64',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -166,8 +166,8 @@ const app = {
                     </div>
                     <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.6">
                         <b style="color:var(--text-primary)">${esc(a.name)}</b> (${esc(a.type)})<br>
-                        Ex-Date: <b style="color:var(--yellow)">${esc(a.ex_date)}</b>${a.record_date ? ' · Record: ' + esc(a.record_date) : ''}<br>
-                        ${esc(amt)}
+                        Ex-Date: <b style="color:var(--yellow)">${esc(a.ex_date)}</b>${a.record_date && a.record_date !== a.ex_date ? ' · Record: ' + esc(a.record_date) : ''}<br>
+                        ${esc(amt)}${a.buy_by && a.buy_by >= new Date(Date.now() + 19800000).toISOString().slice(0, 10) ? '<br>Buy by: <b style="color:var(--text-primary)">' + esc(a.buy_by) + '</b> to get it' : ''}
                     </div>
                     <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
                         <button class="mw-alert-snooze" style="padding:7px 14px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-card);color:var(--text-secondary);font-weight:700;font-size:12px;cursor:pointer">😴 Snooze 15m</button>
@@ -678,7 +678,7 @@ const app = {
             <div style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px">
                 <div>
                     <h2 style="font-size:22px;font-weight:800;color:var(--text-primary);margin-bottom:4px">🏢 REITs & InvITs</h2>
-                    <p style="font-size:13px;color:var(--text-secondary)">All exchange-listed REITs and InvITs — live price, announcements, and upcoming dividend ex-dates. A dividend ex-date triggers an app-wide alert on every page until you mark it Read.</p>
+                    <p style="font-size:13px;color:var(--text-secondary);line-height:1.6">All exchange-listed REITs and InvITs: live price, upcoming and previous payouts, and the trusts' latest NSE filings. Payouts are picked up from the trust's own NSE filing as soon as it's announced (usually 4–6 days before the ex-date), and an alert shows on every page until you mark it Read. <b>Buy on or before the "buy by" date</b> to get the payout.</p>
                 </div>
                 <button class="btn" id="btn-refresh-reits" style="padding:8px 16px;font-size:13px">↻ Refresh</button>
             </div>
@@ -692,6 +692,7 @@ const app = {
             try { const d = new Date(iso + 'T00:00:00'); return d.toLocaleDateString('en-IN', {day:'2-digit', month:'short', year:'numeric'}); }
             catch(e) { return iso; }
         };
+        const amt = (v) => { const x = Number(v); return Math.abs(x * 100 - Math.round(x * 100)) < 1e-9 ? x.toFixed(2) : String(x); };
         const daysTo = (iso) => {
             if (!iso) return null;
             const d = new Date(iso + 'T00:00:00'), now = new Date(); now.setHours(0,0,0,0);
@@ -714,7 +715,9 @@ const app = {
                 upcoming.forEach(f => {
                     const dt = daysTo(f.next_ex_date);
                     const when = dt === 0 ? 'TODAY' : (dt > 0 ? 'in ' + dt + ' day' + (dt>1?'s':'') : '');
-                    h += '<div style="display:flex;justify-content:space-between;font-size:12.5px"><span><b style="color:var(--text-primary)">'+esc(f.symbol)+'</b>'+app.stockLinks(f.symbol)+' <span style="color:var(--text-secondary)">'+esc(f.name)+'</span></span><span style="color:var(--yellow);font-weight:700">'+fmtDate(f.next_ex_date)+(when?' · '+when:'')+(f.next_amount?' · ₹'+f.next_amount:'')+'</span></div>';
+                    const bb = f.next_buy_by ? daysTo(f.next_buy_by) : null;
+                    const buy = f.next_buy_by ? (bb < 0 ? '<span style="color:var(--text-secondary);font-weight:600">buy-by date passed</span>' : 'buy by <b>' + fmtDate(f.next_buy_by) + '</b>' + (bb === 0 ? ' (today)' : '')) : '';
+                    h += '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12.5px"><span><b style="color:var(--text-primary)">'+esc(f.symbol)+'</b>'+app.stockLinks(f.symbol)+' <span style="color:var(--text-secondary)">'+esc(f.name)+'</span></span><span style="color:var(--yellow);font-weight:700">ex-date '+fmtDate(f.next_ex_date)+(when?' · '+when:'')+(f.next_amount?' · ₹'+amt(f.next_amount)+'/unit':'')+(buy?' · '+buy:'')+'</span></div>';
                 });
                 h += '</div></div>';
             }
@@ -724,12 +727,13 @@ const app = {
                 const grp = funds.filter(f => f.type === kind);
                 if (!grp.length) return;
                 h += '<div style="font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--text-accent);margin:18px 0 10px">'+(kind==='REIT'?'🏢 REITs':'🛣️ InvITs')+' · '+grp.length+'</div>';
-                h += '<div class="card" style="padding:0;overflow:hidden"><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:640px">';
+                h += '<div class="card" style="padding:0;overflow:hidden"><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:820px">';
                 h += '<thead><tr style="text-align:left">'
                    + '<th style="padding:10px 12px">Fund</th>'
                    + '<th style="padding:10px 12px;text-align:right">Price</th>'
                    + '<th style="padding:10px 12px;text-align:right">Next Ex-Date</th>'
                    + '<th style="padding:10px 12px;text-align:right">Amount</th>'
+                   + '<th style="padding:10px 12px;text-align:right">Previous Ex-Date</th>'
                    + '<th style="padding:10px 12px">Latest Announcement</th></tr></thead><tbody>';
                 grp.forEach(f => {
                     const latest = (f.dividends && f.dividends[0]) ? f.dividends[0] : null;
@@ -737,14 +741,26 @@ const app = {
                     h += '<tr style="border-top:1px solid rgba(15,23,42,0.06)">';
                     h += '<td style="padding:10px 12px"><div style="font-weight:800;color:var(--text-primary)">'+esc(f.symbol)+app.stockLinks(f.symbol)+'</div><div style="font-size:11px;color:var(--text-secondary)">'+esc(f.name)+'</div></td>';
                     h += '<td style="padding:10px 12px;text-align:right;font-weight:700">'+(f.price!=null?'₹'+Number(f.price).toLocaleString('en-IN'):'—')+'</td>';
-                    h += '<td style="padding:10px 12px;text-align:right;font-weight:700;color:'+exCol+'">'+fmtDate(f.next_ex_date)+'</td>';
-                    h += '<td style="padding:10px 12px;text-align:right">'+(f.next_amount!=null?'₹'+f.next_amount:'—')+'</td>';
-                    h += '<td style="padding:10px 12px;font-size:12px;color:var(--text-secondary)">'+(latest?esc(latest.purpose)+' <span style="opacity:.7">('+fmtDate(latest.ex_date)+')</span>':'—')+'</td>';
+                    let nx = '<div style="font-weight:700;color:'+exCol+'">'+fmtDate(f.next_ex_date)+'</div>';
+                    if (f.next_ex_date) {
+                        if (f.next_buy_by) nx += '<div style="font-size:11px;color:var(--text-primary);margin-top:2px">Buy by <b>'+fmtDate(f.next_buy_by)+'</b></div>';
+                        if (f.next_announced) nx += '<div style="font-size:11px;color:var(--text-secondary)">Announced '+fmtDate(f.next_announced)+'</div>';
+                    } else if (f.next_meeting) {
+                        nx += '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;white-space:normal;max-width:170px;margin-left:auto">Board meets <b style="color:var(--text-primary)">'+fmtDate(f.next_meeting.date)+'</b>: payout usually announced then</div>';
+                    }
+                    h += '<td style="padding:10px 12px;text-align:right;white-space:nowrap">'+nx+'</td>';
+                    h += '<td style="padding:10px 12px;text-align:right;font-weight:700">'+(f.next_amount!=null?'₹'+amt(f.next_amount):'—')+'</td>';
+                    h += '<td style="padding:10px 12px;text-align:right;white-space:nowrap">'+(f.prev_ex_date?'<div>'+fmtDate(f.prev_ex_date)+'</div><div style="font-size:11.5px;color:var(--text-secondary)">'+(f.prev_amount!=null?'₹'+amt(f.prev_amount)+' / unit':'amount n/a')+'</div>':'—')+'</td>';
+                    const fl = (f.filings && f.filings[0]) || null;
+                    h += '<td style="padding:10px 12px;font-size:12px;color:var(--text-secondary);max-width:260px">'
+                       + (fl ? esc(fl.subject || 'Announcement')+' <span style="opacity:.7">('+fmtDate(fl.date)+')</span>'+(fl.link?' <a href="'+esc(fl.link)+'" target="_blank" rel="noopener" style="color:var(--text-accent);font-weight:600;text-decoration:none">PDF ↗</a>':'')
+                             : (latest?esc(latest.purpose)+' <span style="opacity:.7">('+fmtDate(latest.ex_date)+')</span>':'—'))+'</td>';
                     h += '</tr>';
                 });
                 h += '</tbody></table></div></div>';
             });
-            h += '<div style="text-align:right;margin-top:10px;font-size:11px;color:var(--text-secondary);font-style:italic">As of '+esc((data&&data.timestamp)||'')+'</div>';
+            h += '<div style="text-align:right;margin-top:10px;font-size:11px;color:var(--text-secondary);font-style:italic">As of '+esc((data&&data.timestamp)||'')+(data&&data.nse_updated_at?' · NSE filings read '+esc(data.nse_updated_at):'')+'</div>';
+            h += '<div class="card" style="margin-top:14px;font-size:12.5px;color:var(--text-secondary);line-height:1.7"><b style="color:var(--text-primary)">How the dates work:</b> India settles trades in one day (T+1), so the <b>ex-date is the same as the record date</b>. To receive the payout you must hold the units at the end of the day <b>before</b> the ex-date: buy on or before the "buy by" date (if that day is an exchange holiday, buy one trading day earlier). Units bought on the ex-date don\'t get it. Trusts usually announce the payout with their quarterly results, 4–6 days ahead of the record date, so no site can know the exact date earlier than that. The board-meeting date shown in advance tells you when to expect it.</div>';
             body.innerHTML = h;
         };
 
