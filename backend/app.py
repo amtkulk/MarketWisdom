@@ -67,7 +67,7 @@ _auth_serializer = URLSafeTimedSerializer(APP_SECRET, salt="mw-auth-v1")
 SESSION_MAX_AGE = 60 * 60 * 24 * 30      # 30 days
 
 # Comma-separated list of admin emails (case-insensitive).
-APP_VERSION = "v64"      # keep in step with frontend app.js VERSION (shown in the page footer)
+APP_VERSION = "v65"      # keep in step with frontend app.js VERSION (shown in the page footer)
 
 # Set on Azure as an env var: ADMIN_EMAILS=login4amit@gmail.com,other@gmail.com
 # Built-in admins (always), plus any extra emails from the ADMIN_EMAILS env var.
@@ -1352,7 +1352,6 @@ def get_nse_data(endpoint):
             _nse_cookie_cache["cookie"] = None
         return None
 
-@cached(180)            # option PCR: 3 min
 def _pcr_sigfmt(ce_oi, pe_oi, exp):
     pcr = round(pe_oi / ce_oi, 2) if ce_oi > 0 else 0
     return {"expiry": exp, "ce_oi": int(ce_oi), "pe_oi": int(pe_oi), "pcr": pcr,
@@ -1419,19 +1418,37 @@ def _pcr_rows_nse(symbol):
         return []
 
 
+_PCR_LIVE_SKIP_UNTIL = {}
+
+
+@cached(180)            # option PCR: 3 min
 def fetch_pcr_data(symbol="NIFTY"):
-    # Primary: niftytrader web API. Fallback: NSE option chain. Either can be
-    # blocked/slow from a cloud host, so we try both before giving up.
-    rows = _pcr_rows_niftytrader(symbol)
-    src = "niftytrader"
-    if not rows:
-        rows = _pcr_rows_nse(symbol)
-        src = "nse"
-    if not rows:
+    """Weekly (nearest expiry) and monthly (last expiry of that month) put/call ratio.
+    Live sources first (niftytrader, NSE option chain), both of which usually refuse our
+    cloud server; then NSE's official end-of-day F&O file, which works from the cloud."""
+    import fo_bhav
+    rows, src = [], None
+    if time.time() >= _PCR_LIVE_SKIP_UNTIL.get(symbol, 0):     # don't wait ~20 s on sources that just failed
+        rows, src = _pcr_rows_niftytrader(symbol), "niftytrader"
+        if not rows:
+            rows, src = _pcr_rows_nse(symbol), "nse"
+        if not rows:
+            _PCR_LIVE_SKIP_UNTIL[symbol] = time.time() + 30 * 60
+    if rows:
+        by_iso = {}
+        for sk, label, ce, pe in rows:
+            if sk != datetime.max:
+                by_iso[sk.date().isoformat()] = (label, ce, pe)
+        wk, mo = fo_bhav.pick_expiries(list(by_iso))
+        if wk:
+            return {"weekly": _pcr_sigfmt(by_iso[wk][1], by_iso[wk][2], by_iso[wk][0]),
+                    "monthly": _pcr_sigfmt(by_iso[mo][1], by_iso[mo][2], by_iso[mo][0]),
+                    "symbol": symbol, "source": src, "same_contract": wk == mo}
+    try:
+        return fo_bhav.pcr_from_bhav(symbol, fo_bhav.latest())
+    except Exception as e:
+        print(f"PCR end-of-day fallback failed for {symbol}: {e}")
         return None
-    weekly  = _pcr_sigfmt(rows[0][2], rows[0][3], rows[0][1]) if len(rows) > 0 else None
-    monthly = _pcr_sigfmt(rows[1][2], rows[1][3], rows[1][1]) if len(rows) > 1 else None
-    return {"weekly": weekly, "monthly": monthly, "symbol": symbol, "source": src}
 
 
 @cached(300)            # nifty 1y chart: 5 min

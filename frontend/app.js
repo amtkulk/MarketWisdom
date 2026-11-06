@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v64',
+    VERSION: 'v65',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -4688,30 +4688,40 @@ const app = {
                 }
 
                 // PCR
-                const mkPcr = (title, d) => {
-                    if(!d) return `<div class="card"><div class="section-title">${title}</div><div style="font-size:12px;color:var(--text-secondary)">Live option-chain data unavailable right now — try Refresh.</div></div>`;
+                const mkPcr = (title, d, meta, note) => {
+                    if(!d) return `<div class="card"><div class="section-title">${title}</div><div style="font-size:12px;color:var(--text-secondary)">Option open-interest data isn't available yet. NSE publishes it each trading evening (~6 pm). Try Refresh later.</div></div>`;
                     const col = d.pcr > 1.2 ? 'var(--green)' : d.pcr < 0.8 ? 'var(--red)' : 'var(--yellow)';
+                    const fmtN = (v) => (v != null ? Number(v).toLocaleString('en-IN') : '—');
+                    const sgn = (v) => (v > 0 ? '+' : '') + Number(v).toLocaleString('en-IN');
+                    const eod = meta && meta.source === 'nse_eod';
+                    let asOf = '';
+                    if (eod && meta.as_of) { try { asOf = new Date(meta.as_of + 'T00:00:00').toLocaleDateString('en-IN', {day: 'numeric', month: 'short'}); } catch(e) { asOf = meta.as_of; } }
                     return `<div class="card">
                         <div class="section-title">${title}</div>
-                        <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">Expiry: ${d.expiry}</div>
+                        <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">Expiry: ${d.expiry}${eod ? ' · <span title="From NSE\'s official end-of-day F&amp;O file">NSE close of ' + asOf + '</span>' : ' · live'}</div>
                         <div style="font-size:32px;font-weight:800;color:${col}">${d.pcr}</div>
                         <div style="margin:8px 0">${Components.CheckRow('Signal', d.pcr > 1.2, d.signal, '')}</div>
                         <div style="display:flex;justify-content:space-between;font-size:12px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(15,23,42,0.06)">
-                            <span style="color:var(--green)">PE OI: ${(d.pe_oi != null ? Number(d.pe_oi).toLocaleString('en-IN') : '—')}</span>
-                            <span style="color:var(--red)">CE OI: ${(d.ce_oi != null ? Number(d.ce_oi).toLocaleString('en-IN') : '—')}</span>
+                            <span style="color:var(--green)">PE OI: ${fmtN(d.pe_oi)}</span>
+                            <span style="color:var(--red)">CE OI: ${fmtN(d.ce_oi)}</span>
                         </div>
+                        ${d.pe_oi_chg != null ? `<div style="display:flex;justify-content:space-between;font-size:11.5px;margin-top:4px;color:var(--text-secondary)"><span>Puts added that day: ${sgn(d.pe_oi_chg)}</span><span>Calls added: ${sgn(d.ce_oi_chg)}</span></div>` : ''}
+                        ${note ? `<div style="font-size:11px;color:var(--text-secondary);margin-top:8px;line-height:1.5">${note}</div>` : ''}
                     </div>`;
                 };
 
+                const np = data.nifty_pcr, bp = data.banknifty_pcr;
                 html += '<div class="two-col" style="margin-bottom:16px">';
-                html += mkPcr('Nifty Weekly PCR', data.nifty_pcr?.weekly);
-                html += mkPcr('Nifty Monthly PCR', data.nifty_pcr?.monthly);
+                html += mkPcr('Nifty Weekly PCR', np?.weekly, np, np?.same_contract ? 'This week\'s expiry is also the monthly expiry.' : '');
+                html += mkPcr('Nifty Monthly PCR', np?.monthly, np);
                 html += '</div>';
 
                 html += '<div class="two-col" style="margin-bottom:16px">';
-                html += mkPcr('BankNifty Weekly PCR', data.banknifty_pcr?.weekly);
-                html += mkPcr('BankNifty Monthly PCR', data.banknifty_pcr?.monthly);
+                html += mkPcr('BankNifty Weekly PCR', bp?.weekly, bp, bp?.same_contract ? 'NSE stopped weekly Bank Nifty options in Nov 2024, so this is the nearest (monthly) expiry.' : '');
+                html += mkPcr('BankNifty Monthly PCR', bp?.monthly, bp);
                 html += '</div>';
+                if ((np && np.source === 'nse_eod') || (bp && bp.source === 'nse_eod'))
+                    html += '<div style="font-size:11.5px;color:var(--text-secondary);margin:-6px 0 16px;line-height:1.6">PCR = total put open interest ÷ total call open interest for that expiry, from NSE\'s official end-of-day F&amp;O file (updated each trading evening, ~6 pm). Live option-chain feeds block cloud servers, so during market hours this shows the previous close. Above 1.2 is usually read as bullish (put writers confident), below 0.8 as bearish.</div>';
 
                 // VIX Support & Resistance
                 if (data.vix_levels) {
