@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v65',
+    VERSION: 'v66',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -346,6 +346,9 @@ const app = {
                 break;
             case 'wyckoff':
                 this.renderWyckoff(container);
+                break;
+            case 'daytrader':                    // separate page, code in daytrader.js
+                DayTrader.render(container);
                 break;
             case 'multibagger':
                 this.renderMultibagger(container);
