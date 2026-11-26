@@ -184,6 +184,20 @@ def refresh(force=False, max_age=180):
                                           "pub": it["pub"]}
         except Exception as e:
             errors.append(str(e))
+        # every company's own filings, last 7 days, newest first (Day Trader Scanner news)
+        idx = store.setdefault("sym_ann", {})
+        for it in ann_all:
+            sym = it.get("symbol")
+            if not sym:
+                continue
+            lst = idx.setdefault(sym, [])
+            if any(x[2] == it.get("link") for x in lst):
+                continue
+            lst.append([it["pub"], (it.get("subject") or it.get("headline") or "Announcement")[:140], it.get("link")])
+        cut7 = (now_ist() - dt.timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%dT00:00:00")
+        store["sym_ann"] = {k: sorted((x for x in v if x[0] >= cut7), reverse=True)[:6]
+                            for k, v in idx.items() if any(x[0] >= cut7 for x in v)}
+
         # REIT / InvIT payouts (record date + amount) from the trusts' own filings
         ca_items, reit_errs = [], []
         try:
@@ -270,3 +284,9 @@ def result_meetings(store=None):
 def status(store=None):
     store = store if store is not None else _load()
     return {"updated_at": store.get("updated_at"), "error": store.get("error")}
+
+
+def symbol_filings(sym, store=None):
+    """[{date, subject, link}] — this company's NSE filings in the last 7 days, newest first."""
+    store = store if store is not None else _load()
+    return [{"when": x[0], "subject": x[1], "link": x[2]} for x in (store.get("sym_ann") or {}).get(sym, [])]
