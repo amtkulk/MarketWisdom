@@ -91,6 +91,13 @@ def init_db():
         ''')
         # site usage: one row per visitor per day (visitor = email, or "anon:<browser id>")
         cursor.execute('''
+            CREATE TABLE IF NOT EXISTS paper_docs (
+                key TEXT PRIMARY KEY,
+                doc_json TEXT NOT NULL,
+                updated_at TEXT
+            )
+        ''')
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS usage_daily (
                 day TEXT NOT NULL,
                 visitor TEXT NOT NULL,
@@ -455,3 +462,39 @@ def get_usage_rows(since_day):
     p = [dict(r) for r in conn.execute("SELECT day, page, views FROM usage_pages WHERE day >= ?", (since_day,))]
     conn.close()
     return v, p
+
+
+# ── Paper Trading: one JSON document per key (account per user + segment, requests list) ──
+
+def paper_get(key):
+    import json
+    if USE_MONGO:
+        d = db.get_collection("paper_docs").find_one({"key": key}, {"_id": 0})
+        return json.loads(d["doc_json"]) if d else None
+    conn = get_db_connection()
+    row = conn.execute("SELECT doc_json FROM paper_docs WHERE key = ?", (key,)).fetchone()
+    conn.close()
+    return json.loads(row["doc_json"]) if row else None
+
+
+def paper_put(key, doc):
+    import json
+    js, at = json.dumps(doc), datetime.now().strftime("%d %b %Y %H:%M:%S")
+    if USE_MONGO:
+        db.get_collection("paper_docs").update_one({"key": key}, {"$set": {"doc_json": js, "updated_at": at}}, upsert=True)
+        return
+    conn = get_db_connection()
+    conn.execute("""INSERT INTO paper_docs (key, doc_json, updated_at) VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET doc_json=excluded.doc_json, updated_at=excluded.updated_at""", (key, js, at))
+    conn.commit()
+    conn.close()
+
+
+def paper_keys(prefix):
+    if USE_MONGO:
+        import re
+        return [d["key"] for d in db.get_collection("paper_docs").find({"key": {"$regex": "^" + re.escape(prefix)}}, {"key": 1})]
+    conn = get_db_connection()
+    rows = conn.execute("SELECT key FROM paper_docs WHERE key LIKE ?", (prefix.replace("%", "") + "%",)).fetchall()
+    conn.close()
+    return [r["key"] for r in rows]

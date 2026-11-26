@@ -3,7 +3,7 @@
  */
 
 const app = {
-    VERSION: 'v67',
+    VERSION: 'v68',
     // Root bug fixed: _isSignedIn was checking window.Auth (always undefined for
     // top-level `const Auth`), so it always returned false. Same bug had broken
     // the auth header on watchlist calls. Both fixed → gate can safely be ON.
@@ -258,7 +258,7 @@ const app = {
         const label = ({
             global: 'Global Market', 'war-news': 'War News', telegram: 'Telegram Feed',
             screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master', microcap: 'Micro Cap Scanner', gems: 'Hidden Gems', wyckoff: 'Wyckoff Momentum', multibagger: 'Multibagger Early Signal', orders: 'Corporate Actions', corp: 'Corporate Actions', 'admin-users': 'User Consents', 'admin-usage': 'Site Usage', results: 'Nifty50 Result Analyzer', autosales: 'Car Sales Tracker', stock: 'Stock Research',
-            overview: 'Stock Overview', reits: 'REITs & InvITs', action: 'Stock Action', heatmap: 'Indices Heatmap', chartink: 'Chartink Comparator',
+            overview: 'Stock Overview', reits: 'REITs & InvITs', action: 'Stock Action', heatmap: 'Indices Heatmap', chartink: 'Chartink Comparator', paper: 'Paper Trading', 'paper-admin': 'Paper Trading Requests',
             nifty: 'Nifty Analysis', watchlist: 'Watchlist',
         })[attemptedRoute] || 'this page';
         container.innerHTML = `
@@ -300,7 +300,7 @@ const app = {
     navigate(route) {
         this.updateNavState(route);
         this.track(route);
-        if (route === 'admin-users' || route === 'admin-usage') this._setAdminOpen(true);
+        if (route === 'admin-users' || route === 'admin-usage' || route === 'paper-admin') this._setAdminOpen(true);
         const container = document.getElementById('app-container');
         container.innerHTML = ''; // Clear current view
 
@@ -346,6 +346,12 @@ const app = {
                 break;
             case 'wyckoff':
                 this.renderWyckoff(container);
+                break;
+            case 'paper':                        // separate page, code in paper.js
+                Paper.render(container);
+                break;
+            case 'paper-admin':
+                Paper.render(container, 'ADMIN');
                 break;
             case 'daytrader':                    // separate page, code in daytrader.js
                 DayTrader.render(container);
@@ -1623,7 +1629,7 @@ const app = {
         const PAGE_NAMES = { home: 'Home', global: 'Global Market', nifty: 'Nifty Analysis', heatmap: 'Heatmap', reits: 'REITs/InvITs',
             'war-news': 'War News', telegram: 'Telegram Feed', screener: 'Stock Screener', master: 'Master Screener', smallmid: 'Small/Mid Master',
             microcap: 'Micro Cap', gems: 'Hidden Gems', multibagger: 'Multibagger Signal', corp: 'Corporate Actions', orders: 'Corporate Actions',
-            results: 'Nifty50 Result Analyzer', autosales: 'Car Sales', wyckoff: 'Wyckoff', overview: 'Stock Overview', chartink: 'Chartink Comparator', watchlist: 'Watchlist',
+            results: 'Nifty50 Result Analyzer', autosales: 'Car Sales', paper: 'Paper Trading', 'paper-admin': 'Paper Requests', daytrader: 'Day Trader Scanner', wyckoff: 'Wyckoff', overview: 'Stock Overview', chartink: 'Chartink Comparator', watchlist: 'Watchlist',
             'admin-users': 'User Consents', 'admin-usage': 'Site Usage', about: 'About', contact: 'Contact', disclaimer: 'Disclaimer' };
         const pageName = (p) => PAGE_NAMES[p] || (p.startsWith('gate-') ? 'Sign-in prompt · ' + (PAGE_NAMES[p.slice(5)] || p.slice(5)) : p);
 
